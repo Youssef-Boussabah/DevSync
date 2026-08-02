@@ -1,0 +1,49 @@
+# --- Dependencies ---
+node_modules/
+.pnpm-store/
+
+# --- Build outputs ---
+dist/
+build/
+out/
+
+# Next.js
+.next/
+.vercel/
+next-env.d.ts
+
+# NestJS / TypeScript
+*.tsbuildinfo
+
+# --- Turborepo ---
+.turbo/
+
+# --- Test and coverage outputs ---
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# --- Local environment files ---
+# `.env.example` is intentionally tracked; real environment files are not.
+.env
+.env.*
+!.env.example
+
+# --- Logs ---
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Editor and OS metadata ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Lockfiles are intentionally NOT ignored: pnpm-lock.yaml is committed.

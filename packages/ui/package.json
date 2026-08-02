@@ -1,0 +1,19 @@
+{
+  "name": "@devsync/ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Reusable user-interface components for DevSync.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node -e \"console.log('@devsync/ui: no tests yet (Phase A0).')\"",
+    "clean": "node -e \"['.turbo','tsconfig.tsbuildinfo'].forEach((p) => require('fs').rmSync(p, { recursive: true, force: true }))\""
+  },
+  "devDependencies": {
+    "@devsync/config": "workspace:*",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,11 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Transitive dependencies whose install scripts are explicitly approved.
+# pnpm blocks every other package's lifecycle scripts by default.
+allowBuilds:
+  # Next.js image optimisation.
+  sharp: true
+  # Native module resolver used by eslint-config-next.
+  unrs-resolver: true

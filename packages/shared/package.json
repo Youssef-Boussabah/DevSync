@@ -1,0 +1,19 @@
+{
+  "name": "@devsync/shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared schemas, types, constants, and protocol definitions for DevSync.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node -e \"console.log('@devsync/shared: no tests yet (Phase A0).')\"",
+    "clean": "node -e \"['.turbo','tsconfig.tsbuildinfo'].forEach((p) => require('fs').rmSync(p, { recursive: true, force: true }))\""
+  },
+  "devDependencies": {
+    "@devsync/config": "workspace:*",
+    "typescript": "^5.7.3"
+  }
+}
