@@ -4,7 +4,8 @@ How DevSync is tested, what each layer is responsible for proving, and — just 
 importantly — what is not tested yet.
 
 The testing architecture was introduced in **Phase A2 — testing foundation** and its shape is
-unchanged at **B3**, which added tests to it rather than layers. The product has no collaboration,
+unchanged at **Phase B complete**: the phase added tests to it rather than layers. The product has
+no collaboration,
 no persistence, no accounts, and no code execution, so none of those things are tested. What
 exists is the architecture that will hold those tests when they are written, plus real coverage of
 everything the two applications currently do.
@@ -177,21 +178,31 @@ Three properties of it are deliberate:
   whenever the controlled `value` and the live model disagree, so characters delivered faster than
   React can commit a render are overwritten by a value that has already gone stale. Playwright types
   with no delay by default; the test uses 50 ms per character, which is a fast typist. **This is a
-  real property of the integration, not a test artifact**: any future source of machine-speed edits
-  — a CRDT applying remote operations, in Phase E — will meet it, and that is the milestone that has
-  to answer it.
+  real property of the integration, not a test artifact** — but it is not reachable by a user
+  either. Typing at human speed is stable, and paste is unaffected because a paste arrives as a
+  single change rather than one per character; both were verified against the production container
+  at Phase B closure, including a multi-line paste that survived a language change. The exposure is
+  to machine-speed _programmatic_ edits — a CRDT applying remote operations, in Phase E — and that
+  is the milestone that has to answer it.
 
-**What this test proves, and what it does not.** It proves that a real keystroke in Chromium reaches
-Monaco's model and renders, that a legitimate workspace rerender does not restore stale content over
-it, and that a reload discards it. It does **not** prove that Monaco's change callback reaches React
-state, and the distinction is worth being exact about: `@monaco-editor/react` re-drives the
-controlled value into the editor only when that value actually changes, so an integration where the
-callback never fired would leave the editor behaving as an uncontrolled one and every assertion here
-would still pass. That direction is covered in jsdom instead — `code-editor.test.tsx` proves the
-wrapper forwards Monaco's change, and `local-editor-workspace.test.tsx` proves the workspace keeps
-what it is handed. Closing that gap in a real browser needs application state to be observable
-somewhere other than the editor, which nothing in the product currently requires; it is recorded
-here rather than solved with a test-only hook.
+**What this test proves, and what it does not.** Both halves of this were established by mutation
+rather than reasoned about, which is why they can be stated precisely.
+
+It proves that a real keystroke in Chromium reaches Monaco's model and renders, that a legitimate
+workspace rerender does not restore stale content over it, and that a reload discards it. Making the
+workspace hand `CodeEditor` the initial sample instead of the current content on a language change
+fails it, at the assertion that the typed line is still present.
+
+It does **not** prove that Monaco's change callback reaches React state. Stopping `CodeEditor` from
+forwarding a valid change leaves this test passing, because `@monaco-editor/react` re-drives the
+controlled value into the editor only when that value actually changes: if the callback never fires
+the prop never changes, nothing is ever pushed back, and Monaco simply behaves as an uncontrolled
+editor. That direction is proved compositionally in jsdom instead — `code-editor.test.tsx` for
+Monaco's change reaching `onChange`, and `local-editor-workspace.test.tsx` for `onChange` reaching
+the content state. That is sound layering, but the browser test must not be described as observing
+it. Closing the gap in a real browser would need application state visible somewhere other than the
+editor, which nothing in the product requires; it is recorded here rather than manufactured with a
+test-only hook.
 
 `specs/api/health.spec.ts` (1 test) requests `/health` from the compiled `dist/main.js` running
 on a real port and asserts status `200` and the exact expected payload.
@@ -279,7 +290,10 @@ Four properties of that setup are load-bearing:
   would also drag both builds into `pnpm test`.
 - **Readiness is polled, never slept on.** Each entry declares the URL that means "ready" — for
   the API, the very endpoint under test — with an explicit timeout (120 s for the web build,
-  60 s for the API). There are no fixed delays anywhere in the suite.
+  60 s for the API). **Nothing in the suite waits on a fixed delay**: every assertion auto-waits,
+  there is no `waitForTimeout`, and `retries` is `0`. The one timing value anywhere in it is the
+  50 ms between keystrokes in the real-editor test, which paces input like a person rather than
+  waiting for anything.
 - **`reuseExistingServer` is off.** A server already listening on a test port is an error, not
   an accidental test subject. The suite can never pass by talking to something a developer
   started by hand.
@@ -396,8 +410,9 @@ needs the collaboration transport to exist first.
   by the component suites against a stand-in.
 - **Machine-speed edits lose characters.** The controlled value is rewritten into the model whenever
   it disagrees with it, so edits arriving faster than React commits are overwritten by a stale
-  value. No user types that fast and paste arrives as one change, so nothing today is affected — but
-  Phase E applies remote CRDT operations programmatically, and that is where it has to be answered.
+  value. Human-paced typing and paste were both verified unaffected at Phase B closure, so no user
+  interaction today is exposed — but Phase E applies remote CRDT operations programmatically, and
+  that is where the model-ownership design has to be answered.
 - **No test asserts how Monaco highlights a language.** The suites prove that the selected language
   reaches Monaco and that the content survives the change; tokenisation is Monaco's, and asserting
   it here would test Microsoft's code through DevSync's.

@@ -34,10 +34,10 @@ describe('home page', () => {
   it('states which phase the repository is at', () => {
     render(<Home />);
 
-    // Matched by shape rather than by the exact milestone, so that advancing
-    // within a phase does not require editing a test that is not about the
-    // milestone number.
-    expect(screen.getByText(/Phase B\d/)).toBeInTheDocument();
+    // Matched by phase rather than by milestone. The page names the phase it is
+    // at, not the milestone within it, so that finishing a milestone does not
+    // require editing user-facing copy that was never about the number.
+    expect(screen.getByText(/Phase B\b/)).toBeInTheDocument();
   });
 
   it('gives the workspace a place on the page', () => {

@@ -9,9 +9,9 @@ export default function Home() {
           A browser-based collaborative development environment.
         </p>
         <p className="text-sm text-zinc-500">
-          Phase B2 — the local editing workspace. One file, open in one editor, with its contents
-          and the language they are read as held by the application in this tab. Everything else
-          about DevSync is still a plan.
+          Phase B — the local editing workspace. One file, open in one editor, with its contents and
+          the language they are read as held by the application in this tab. Everything else about
+          DevSync is still a plan.
         </p>
       </header>
 

@@ -13,15 +13,16 @@ architecture; A3 containerised both applications; A4 added a GitHub Actions pipe
 the quality checks, the browser tests, and a full Docker build-and-verify; A5 documented the
 architecture, the roadmap, the development workflow, and the decisions behind them.
 
-**Phase B in progress — local editor.** B0 put a real Monaco editor on the home page: one file,
-open in one pane, with syntax highlighting and Monaco's language services running in web workers.
-B1 gave that file's contents an owner — a small client workspace holding them in React state, with
-the editor controlled by it rather than keeping the text to itself. B2 let the user choose which of
-five languages that one file is read as — TypeScript, JavaScript, Python, JSON, or Markdown — from
-a labelled selector beside the file name, with the content passed through untouched when the
-language changes. That is the only product functionality in the repository. B3 added the browser
-test that types into the real editor, so every functional milestone of Phase B is now delivered —
-though the phase stays open until its separate closure and reconciliation pass.
+**Phase B complete — local editor.** B0 put a real Monaco editor on the home page: one file, open in
+one pane, with syntax highlighting and Monaco's language services running in web workers. B1 gave
+that file's contents an owner — a small client workspace holding them in React state, with the
+editor controlled by it rather than keeping the text to itself. B2 let the user choose which of five
+languages that one file is read as — TypeScript, JavaScript, Python, JSON, or Markdown — from a
+labelled selector beside the file name, with the content passed through untouched when the language
+changes. B3 added the browser test that types into the real editor, and B4 reconciled the
+documentation and closed the phase. That is the only product functionality in the repository.
+
+**Phase C — database-backed projects — has not started.**
 
 What exists today:
 

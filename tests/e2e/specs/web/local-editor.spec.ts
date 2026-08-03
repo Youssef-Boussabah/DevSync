@@ -3,9 +3,15 @@ import { expect, test } from '@playwright/test';
 // The layer that drives the real Monaco editor. Everything else in the suite
 // asserts markup DevSync owns; this file is the only place that reaches into
 // Monaco's rendered output, because it is the only way to prove what a keystroke
-// in a real browser does. The component suites in `apps/web` cover the same state
-// ownership against a stand-in for Monaco — which is exactly why they cannot prove
-// this: a stand-in cannot disagree with React about who owns the text.
+// in a real browser actually does to the editor.
+//
+// What it cannot see is React. `@monaco-editor/react` pushes the controlled value
+// into the model only when that value changes, so an integration whose `onChange`
+// never fired would leave Monaco behaving as an uncontrolled editor and every
+// assertion below would still pass — confirmed by mutation, not assumed. That the
+// callback reaches the workspace is proved in jsdom instead, by
+// `code-editor.test.tsx` and `local-editor-workspace.test.tsx` in `apps/web`.
+// `docs/testing.md` sets out the layering in full.
 
 // One line, and one the sample could not produce by accident. Single-line on
 // purpose: Monaco's suggestion widget captures `Enter`, so inserting a newline
@@ -25,7 +31,9 @@ const SAMPLE_FRAGMENT = 'export function greet';
 const TYPING_DELAY_MS = 50;
 
 test.describe('editing the real editor in the running web application', () => {
-  test('carries a typed edit into application state, and loses it on reload', async ({ page }) => {
+  test('edits real Monaco, keeps the edit across a language change, and resets on reload', async ({
+    page,
+  }) => {
     await page.goto('/');
 
     const editorRegion = page.getByRole('region', { name: 'Code editor' });
@@ -46,10 +54,10 @@ test.describe('editing the real editor in the running web application', () => {
 
     await expect(codeSurface).toContainText(TYPED_LINE);
 
-    // At this point the edit could still be nothing but Monaco's own model.
-    // Changing the language rerenders the workspace and hands `CodeEditor` its
-    // controlled value again — so if the keystrokes had never reached React state,
-    // this is where the sample would come back.
+    // Changing the language rerenders the workspace around the live editor. The
+    // edit has to survive it: a workspace that handed `CodeEditor` anything other
+    // than the current content here — the initial sample, say — would overwrite
+    // what the user typed, and this is the assertion that catches it.
     await languageSelector.selectOption('python');
 
     await expect(languageSelector).toHaveValue('python');
