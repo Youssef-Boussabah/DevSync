@@ -7,6 +7,8 @@ describes an intention rather than a system.
 
 - **[Testing](testing.md)** — the testing layers, which runner owns each one, what the current
   tests actually prove, and what is deliberately not tested yet.
+- **[Docker](docker.md)** — how the two applications are containerised, how to build, run, and
+  inspect them, and what the Compose setup deliberately leaves out.
 
 ## Planned for later Phase A milestones
 

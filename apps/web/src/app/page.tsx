@@ -6,7 +6,7 @@ export default function Home() {
         A browser-based collaborative development environment.
       </p>
       <p className="text-sm text-zinc-500">
-        Phase A2 — testing foundation. The collaborative editor, project persistence, and code
+        Phase A3 — Docker foundation. The collaborative editor, project persistence, and code
         execution are not implemented yet.
       </p>
     </main>

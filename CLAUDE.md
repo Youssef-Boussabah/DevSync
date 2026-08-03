@@ -106,6 +106,28 @@ substantive application logic to hold to them.
 [`docs/testing.md`](docs/testing.md) is the long-form version and must be updated in the same
 change that makes it inaccurate.
 
+## Docker
+
+Two production images, one Compose file at the root, and nothing else.
+
+- **Build context is always the repository root**, for both Dockerfiles. A pnpm workspace
+  cannot do a frozen install without the root lockfile, `pnpm-workspace.yaml`, and every
+  workspace manifest, so a per-app context cannot work.
+- Install from the committed lockfile with `--frozen-lockfile`, and get pnpm from Corepack so
+  the image uses the version pinned in `packageManager`.
+- Multi-stage, always: build tooling must not reach the runtime image. `apps/web` ships the
+  Next.js `standalone` output; `apps/api` ships `dist` plus a `--prod` install.
+- Run as the image's `node` user, never root. Run the compiled output, never a dev server.
+- Compose passes `API_PORT` explicitly. There is still no `.env` loading, so an unset variable
+  is unconfigured, not defaulted from a file.
+- Do not add a database, cache, queue, volume, or named network until something uses one, and
+  do not add a `depends_on` edge between `web` and `api` until `web` actually calls `api`.
+- Never run Playwright, install browsers, or add test tooling inside an application image.
+- `pnpm` commands must keep working outside Docker; Docker is an additional way to run
+  DevSync, not the way.
+
+[`docs/docker.md`](docs/docker.md) is the long-form version.
+
 ## Documentation
 
 `README.md` describes what exists, not what is planned. Do not describe collaboration,
@@ -122,8 +144,8 @@ the user's call.
 
 ## Current boundary
 
-The repository is at **Phase A2 — testing foundation**. No product functionality is
+The repository is at **Phase A3 — Docker foundation**. No product functionality is
 implemented. Do not implement later milestones early. Specifically, do not add a database or
-ORM, authentication, WebSockets, a code editor, a CRDT library, code execution, Docker, or CI
-configuration until the milestone that calls for it. If a task seems to require one of these,
-say so and stop rather than building ahead.
+ORM, authentication, WebSockets, a code editor, a CRDT library, code execution, Kubernetes,
+cloud deployment, or CI configuration until the milestone that calls for it. If a task seems
+to require one of these, say so and stop rather than building ahead.

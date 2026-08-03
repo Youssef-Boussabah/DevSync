@@ -1,0 +1,57 @@
+# What must NOT reach the build context.
+#
+# Docker matches these against the full path from the context root, so nested
+# matches need `**/`. Everything a frozen install or a production build needs —
+# `pnpm-lock.yaml`, every workspace `package.json`, `.npmrc`,
+# `pnpm-workspace.yaml`, and all source — is deliberately absent from this file.
+
+# --- Dependencies ---
+# Installed inside the image from the committed lockfile. Copying the host's
+# tree in would defeat that and can carry platform-specific native builds.
+**/node_modules
+.pnpm-store
+
+# --- Build outputs ---
+# Rebuilt inside the image; a stale host build must never be shipped.
+**/dist
+**/build
+**/out
+**/.next
+**/*.tsbuildinfo
+**/next-env.d.ts
+
+# --- Turborepo ---
+**/.turbo
+
+# --- Test and coverage artefacts ---
+**/coverage
+**/test-results
+**/playwright-report
+**/blob-report
+**/.playwright
+
+# --- Git metadata ---
+.git
+.gitignore
+.gitattributes
+
+# --- Local environment files ---
+# No image needs these, and none of them belongs in an image layer.
+**/.env
+**/.env.*
+
+# --- Editor and OS metadata ---
+.vscode
+.idea
+**/*.swp
+**/.DS_Store
+**/Thumbs.db
+
+# --- Logs ---
+**/*.log
+
+# --- Docker's own files ---
+# Read by the daemon directly, never needed inside an image.
+**/Dockerfile
+.dockerignore
+compose.yaml

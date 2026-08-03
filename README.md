@@ -7,11 +7,11 @@ that product will be built in.
 
 ## Repository status
 
-**Phase A2 — testing foundation.** Phase A0 established the monorepo, the workspace boundaries,
-and the toolchain; Phase A1 tightened the TypeScript settings and moved the shared TypeScript
-and ESLint configuration into `@devsync/config`. Phase A2 adds the testing architecture: Vitest
-for the frontend, Jest kept where it already works in the API, and Playwright for browser and
-full-stack smoke coverage. Like A0 and A1, it deliberately ships no product functionality.
+**Phase A3 — Docker foundation.** A0 established the monorepo and the toolchain; A1 tightened
+the TypeScript settings and centralised the shared configuration; A2 added the testing
+architecture. Phase A3 containerises the two applications: a production Dockerfile each, and a
+Compose file that builds and starts both from the repository root. Like the milestones before
+it, it ships no product functionality.
 
 What exists today:
 
@@ -25,10 +25,13 @@ What exists today:
 - `tests/e2e` — a Playwright workspace that builds both applications, starts them on dedicated
   ports, and checks that each answers.
 - Eight real tests across three layers. See [`docs/testing.md`](docs/testing.md).
+- A production Docker image for each application and a root `compose.yaml` that builds and runs
+  both. See [`docs/docker.md`](docs/docker.md).
 
 **Real-time collaboration has not been implemented.** Neither has multi-file project editing,
 remote cursors, project persistence, authentication, version history, or code execution. No
-database, message broker, container setup, or CI pipeline exists in this repository yet.
+database, message broker, or CI pipeline exists in this repository yet — the Compose file
+contains the two applications and nothing else.
 
 ## Planned architecture
 
@@ -60,12 +63,17 @@ devsync/
 ├── tests/
 │   └── e2e/                  Playwright browser and full-stack smoke tests
 ├── docs/                     Project documentation
+├── compose.yaml              Docker Compose: the web and API services
 ├── turbo.json                Turborepo task graph
 ├── pnpm-workspace.yaml       Workspace definition
 ├── prettier.config.mjs       Formatting, for the whole repository
 ├── CLAUDE.md                 Instructions for AI coding assistants
 └── README.md
 ```
+
+Each application carries its own `Dockerfile` (`apps/web/Dockerfile`, `apps/api/Dockerfile`),
+both built from the repository root because a pnpm workspace cannot do a frozen install without
+the root lockfile and every workspace manifest.
 
 The six `packages/*` workspaces exist to fix the module boundaries early. Apart from
 `@devsync/config`, which owns the shared TypeScript and ESLint configuration, they export
@@ -75,6 +83,8 @@ nothing — placeholder implementations would be worse than an honest empty modu
 
 - **Node.js 20.9 or newer.** Developed against Node 24.
 - **pnpm 11.** Other package managers are not supported; `npm` and `yarn` must not be used.
+- **Docker Engine 25 or newer with the Compose plugin — optional.** Only needed to run the
+  applications in containers; nothing else in this repository requires it.
 
 pnpm is pinned by the `packageManager` field. The simplest way to get the matching version is
 Corepack, which ships with Node:
@@ -157,6 +167,35 @@ pnpm test:e2e           # builds both applications, then drives them in a browse
 
 [`docs/testing.md`](docs/testing.md) explains what each layer proves, why the API stays on Jest,
 where test artifacts go, and what is deliberately not tested yet.
+
+## Running in Docker
+
+Both applications have a production image and can be started together from the repository root.
+Docker is an additional way to run DevSync, not a replacement for `pnpm dev` — every command
+above still works unchanged.
+
+```bash
+docker compose up -d --build   # build both images and start them
+docker compose ps              # state and health of each service
+docker compose logs -f api     # follow one service's output
+docker compose down            # stop and remove both
+```
+
+| Service | URL                          | What it serves                            |
+| ------- | ---------------------------- | ----------------------------------------- |
+| `web`   | http://127.0.0.1:3000/       | The Next.js production build              |
+| `api`   | http://127.0.0.1:3001/health | `{"status":"ok","service":"devsync-api"}` |
+
+Both images are multi-stage, install from the committed lockfile with `--frozen-lockfile`, run
+the compiled output rather than a dev server, and run as the image's non-root `node` user. Each
+service declares a health check that proves the HTTP application answers.
+
+The containers use the same ports as local development, so `docker compose up` and `pnpm dev`
+cannot run at the same time. **The Compose file contains the two applications and nothing
+else** — no database, cache, queue, or volume, because DevSync uses none of them yet.
+
+[`docs/docker.md`](docs/docker.md) covers the image structure, environment variables, clean
+rebuilds, and the current limitations.
 
 ## Code quality
 
