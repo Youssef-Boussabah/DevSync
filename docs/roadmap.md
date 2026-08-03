@@ -16,7 +16,7 @@ after it stopped being true.
 | Phase | Name                      | Status       |
 | ----- | ------------------------- | ------------ |
 | **A** | Project foundation        | **Complete** |
-| **B** | Local editor              | **B0 done**  |
+| **B** | Local editor              | **B1 done**  |
 | C     | Database-backed projects  | Not started  |
 | D     | Rooms and presence        | Not started  |
 | E     | Single-file collaboration | Not started  |
@@ -30,8 +30,9 @@ after it stopped being true.
 | M     | Production hardening      | Not started  |
 | N     | Portfolio closure         | Not started  |
 
-**One piece of product functionality exists**: the Monaco editor on the home page, delivered by
-milestone B0. Nothing else in the table above is built.
+**One piece of product functionality exists**: the Monaco editor on the home page and the
+single-file workspace holding its contents, delivered by milestones B0 and B1. Nothing else in the
+table above is built.
 
 ---
 
@@ -71,20 +72,28 @@ product-shaped thing DevSync does.
 | Milestone | Deliverable                                                                  | Status        |
 | --------- | ---------------------------------------------------------------------------- | ------------- |
 | B0        | Monaco integrated into `apps/web`, surviving the App Router, SSR, and Docker | **Delivered** |
-| B1        | The in-memory editing workspace the editor's content belongs to              | Not started   |
+| B1        | The in-memory editing workspace the editor's content belongs to              | **Delivered** |
 | B2        | A language selection over the open file                                      | Not started   |
 | B3        | A Playwright test that types into the real Monaco editor                     | Not started   |
 
-**B0, delivered.** The home page renders one Monaco editor holding a fixed TypeScript sample, with
-syntax highlighting and Monaco's language services running in web workers. Monaco is bundled from
-the `monaco-editor` package rather than fetched from a CDN, so the production image depends on no
-external host. The wrapper is covered by component tests against a mocked Monaco boundary, and the
-Playwright suite asserts the editor region reaches a real browser. Editor state is in browser
-memory only; there is no persistence, no file tree, no tabs, and no server involvement.
+**B0, delivered.** The home page renders one Monaco editor, with syntax highlighting and Monaco's
+language services running in web workers. Monaco is bundled from the `monaco-editor` package rather
+than fetched from a CDN, so the production image depends on no external host. The wrapper is
+covered by component tests against a mocked Monaco boundary, and the Playwright suite asserts the
+editor region reaches a real browser.
+
+**B1, delivered.** A client workspace component owns the open file's contents in React state and
+hands them to the editor, which is now controlled rather than left to manage a model nothing else
+can read. Edits flow back through a callback; a change Monaco reports without a value is dropped
+rather than allowed to blank the file, while an emptied file is kept, because empty is valid
+content. The workspace names its one file `main.ts` — a fixed identity, not a file system. State is
+browser memory only: **nothing is stored, sent, or synchronised**, and remounting or reloading
+starts again from the sample. There is still no persistence, no file tree, no tabs, no save action,
+and no server involvement.
 
 **Completion boundary.** A visitor can open the application, type code, and see it highlighted.
 Nothing is saved, nothing is shared, and a refresh discards the content — and the interface says
-so. **Not yet met:** B1 through B3 remain.
+so. **Not yet met:** B2 and B3 remain.
 
 **Exclusions and dependencies.** No persistence, no collaboration, no CRDT, no WebSocket, no
 file tree, no account. This phase deliberately writes no server code: it establishes that the

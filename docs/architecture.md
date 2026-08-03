@@ -108,18 +108,39 @@ and it means a package cannot go stale relative to its own build output, because
 | Alias        | `@/*` → `./src/*`                                         |
 | Dev port     | 3000                                                      |
 | Build output | `.next/`, including `.next/standalone` and `.next/static` |
-| Tests        | Vitest, jsdom, 14 component tests                         |
+| Tests        | Vitest, jsdom, 24 component tests                         |
 
 `src/app/layout.tsx` declares the document metadata and loads two fonts through
 `next/font/google`. `src/app/page.tsx` is a synchronous Server Component that renders the
 project's name, a one-line description, an honest statement of what is not built yet, and the
-editor. **There is no file tree, no project view, no editor tabs, no state management library, and
-no data fetching of any kind.**
+workspace. **There is no file tree, no project view, no editor tabs, no state management library,
+and no data fetching of any kind.**
+
+### The workspace — implemented
+
+`src/editor/local-editor-workspace.tsx` is a client component holding one string of React state:
+the contents of the single open file. It seeds that state from a short TypeScript sample, passes it
+to the editor, and takes edits back through a callback. That is the entire model — there is no file
+list, no file identifier, no project, and no store. The one file is named `main.ts` for the user's
+benefit; **nothing resolves that name**, and there is no path, directory, or second file it could
+be distinguished from.
+
+The state is browser memory and only browser memory. It is never read from or written to
+`localStorage`, IndexedDB, a cookie, or the network, so unmounting the component or reloading the
+page starts again from the sample. That is the behaviour, not a limitation waiting to be patched:
+the milestone that makes editing survive a reload is a later one, and it arrives with a real store
+behind it.
+
+Ownership matters more than it looks. Before this, the contents lived inside Monaco's model and no
+other part of the application could read them; a language switch, a second pane, or a CRDT binding
+would each have had to reach into the editor to find out what the user had typed. With the value in
+React state, those all become a matter of passing a prop.
 
 ### The editor — implemented
 
-`src/editor/code-editor.tsx` is the whole of it: one client component rendering one Monaco editor
-over a fixed TypeScript sample. Three properties of it are architectural rather than cosmetic.
+`src/editor/code-editor.tsx` renders one Monaco editor and is **controlled**: it displays the value
+its caller gives it and reports edits back, rather than owning content of its own. Four properties
+of it are architectural rather than cosmetic.
 
 - **Monaco never runs on the server.** A client component is still rendered during SSR, and
   `monaco-editor` reads browser globals as it initialises, so the package is imported from an
@@ -133,6 +154,10 @@ over a fixed TypeScript sample. Three properties of it are architectural rather 
   worker entry points, but Turbopack copies those out of `node_modules` as static files instead of
   compiling them, and they fail on their first import. `src/editor/workers/` holds two one-line
   re-exports that Turbopack does compile, and `MonacoEnvironment.getWorker` points at them.
+- **A change without a value is not a change.** Monaco's callback reports `string | undefined`, and
+  `undefined` means it had no content to hand over rather than that the file is now empty. It is
+  dropped, so it can never blank the caller's state. An empty string is forwarded, because a file
+  the user has cleared is a real edit.
 
 Editor content lives in the browser and nowhere else. **Nothing is saved, sent, or shared**, and a
 reload discards it.
@@ -229,7 +254,7 @@ The three testing layers as a whole:
 | HTTP-level application | Jest       | `apps/api`  | A Nest app on an ephemeral socket    |
 | Browser and full-stack | Playwright | `tests/e2e` | Both compiled applications, on ports |
 
-Nineteen real tests in total. [`testing.md`](testing.md) covers what each layer proves, why the
+Twenty-nine real tests in total. [`testing.md`](testing.md) covers what each layer proves, why the
 API stays on Jest, and what is deliberately untested.
 
 ## Request and process boundaries
@@ -431,8 +456,9 @@ flowchart TB
 Recorded so that their absence reads as a decision rather than an oversight. None of the
 following exists anywhere in this repository:
 
-- A database, ORM, migration tool, or any persistence — including browser storage: the editor
-  uses neither `localStorage` nor IndexedDB
+- A database, ORM, migration tool, or any persistence — including browser storage: the workspace
+  uses neither `localStorage`, `sessionStorage`, nor IndexedDB, and has no save action or
+  saved/unsaved state, because there is nowhere to save to
 - Authentication, sessions, accounts, or authorization
 - WebSockets, Socket.IO, or any real-time transport
 - A CRDT library or any collaboration code — the editor exists, but it is bound to nothing

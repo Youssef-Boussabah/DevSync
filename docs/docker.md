@@ -4,10 +4,11 @@ How the DevSync applications are containerised, how to build and run them, and w
 deliberately does not include.
 
 The container setup was introduced in **Phase A3 — Docker foundation** and is unchanged at
-**B0**: the editor ships inside the existing web image and needed no change to it, because Monaco
-is bundled into the client build rather than fetched at runtime. Docker is an additional way to
-run the two applications that already exist; it replaces nothing. Every `pnpm` command still
-works exactly as before, and the test architecture still runs on the host.
+**B1**: the editor and the workspace holding its contents ship inside the existing web image and
+needed no change to it, because Monaco is bundled into the client build rather than fetched at
+runtime and the workspace state never leaves the browser. Docker is an additional way to run the
+two applications that already exist; it replaces nothing. Every `pnpm` command still works exactly
+as before, and the test architecture still runs on the host.
 
 ## Prerequisites
 

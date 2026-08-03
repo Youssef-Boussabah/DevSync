@@ -147,9 +147,9 @@ code. jsdom for components.
 **Reason.** It shares Vite's transform pipeline with the tooling `apps/web` already uses, so TSX
 needs no additional configuration, and it starts fast enough to run on every save.
 
-**Consequence today.** Fourteen component tests across the home page and the editor wrapper, the
-latter against a mocked Monaco boundary because jsdom cannot run the real editor. `layout.tsx`
-cannot be
+**Consequence today.** Twenty-four component tests across the home page, the workspace, and the
+editor wrapper, the last two against mocked boundaries because jsdom cannot run the real editor.
+`layout.tsx` cannot be
 tested here — it imports `next/font/google`, which only the Next.js compiler resolves — so the
 metadata it declares is asserted by Playwright against the real document instead of being
 re-implemented in a mock.

@@ -1,19 +1,10 @@
 'use client';
 
+import type { OnChange } from '@monaco-editor/react';
 import Editor, { loader } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
-
-const INITIAL_LANGUAGE = 'typescript';
-
-const INITIAL_CONTENT = `// This file lives in your browser's memory. Refreshing the page discards it.
-export function greet(name: string): string {
-  return \`Hello, \${name}!\`;
-}
-
-console.log(greet('DevSync'));
-`;
+import { useCallback, useEffect, useState } from 'react';
 
 const EDITOR_OPTIONS: editor.IStandaloneEditorConstructionOptions = {
   // Monaco measures its container once and does not watch it afterwards, so
@@ -29,6 +20,12 @@ const EDITOR_OPTIONS: editor.IStandaloneEditorConstructionOptions = {
 };
 
 type EditorState = 'loading' | 'ready' | 'unavailable';
+
+export type CodeEditorProps = {
+  value: string;
+  language: string;
+  onChange: (value: string) => void;
+};
 
 // Monaco runs its language services in web workers and asks this global for them.
 // It declares its own worker entry points too, but they sit inside `monaco-editor`,
@@ -49,10 +46,12 @@ function registerMonacoWorkers() {
 }
 
 /**
- * The single editor pane the application currently has. Its content is held in
- * the browser and goes nowhere: nothing is saved, sent, or shared.
+ * The single editor pane the application currently has. The content belongs to
+ * the caller rather than to Monaco's own model, so the application can read and
+ * set what is being edited. It is held in the browser and goes nowhere: nothing
+ * is saved, sent, or shared.
  */
-export function CodeEditor() {
+export function CodeEditor({ value, language, onChange }: CodeEditorProps) {
   const [state, setState] = useState<EditorState>('loading');
 
   useEffect(() => {
@@ -81,6 +80,23 @@ export function CodeEditor() {
     };
   }, []);
 
+  // Monaco reports `undefined` when it has no content to hand over — while a model
+  // is being replaced, for instance. An empty file is a legitimate value and is
+  // passed straight through; `undefined` is not one, so it is dropped rather than
+  // allowed to overwrite what the caller is holding.
+  //
+  // Memoised because `@monaco-editor/react` disposes and re-registers its content
+  // listener whenever this identity changes, which would otherwise happen on every
+  // keystroke.
+  const handleChange = useCallback<OnChange>(
+    (nextValue) => {
+      if (nextValue !== undefined) {
+        onChange(nextValue);
+      }
+    },
+    [onChange],
+  );
+
   return (
     <section
       aria-label="Code editor"
@@ -88,8 +104,9 @@ export function CodeEditor() {
     >
       {state === 'ready' ? (
         <Editor
-          defaultLanguage={INITIAL_LANGUAGE}
-          defaultValue={INITIAL_CONTENT}
+          language={language}
+          value={value}
+          onChange={handleChange}
           options={EDITOR_OPTIONS}
           theme="vs-dark"
           loading={<EditorMessage>Starting the editor…</EditorMessage>}

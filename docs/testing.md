@@ -4,7 +4,7 @@ How DevSync is tested, what each layer is responsible for proving, and — just 
 importantly — what is not tested yet.
 
 The testing architecture was introduced in **Phase A2 — testing foundation** and its shape is
-unchanged at **B0**, which added tests to it rather than layers. The product has no collaboration,
+unchanged at **B1**, which added tests to it rather than layers. The product has no collaboration,
 no persistence, no accounts, and no code execution, so none of those things are tested. What
 exists is the architecture that will hold those tests when they are written, plus real coverage of
 everything the two applications currently do.
@@ -39,12 +39,12 @@ compiled output, binds ports, and drives a browser.
 
 Renders the real `src/app/page.tsx` with React Testing Library and asserts that the page
 identifies the product as DevSync, describes what DevSync is, states which phase the repository
-is at, gives the editor a place on the page, says that the editor is temporary and that a refresh
-discards its content, and does not claim that collaboration, persistence, or execution work yet.
+is at, gives the workspace a place on the page, says that the file is temporary and that a refresh
+discards the changes, and does not claim that collaboration, persistence, or execution work yet.
 
-The editor is stubbed to a bare element here. This file is about what the page says and what it
-places on the page; the wrapper has its own file below, and a page test that also drove the
-editor's loading behaviour would fail for two unrelated reasons at once.
+The workspace is stubbed to a bare element here. This file is about what the page says and what it
+places on the page; the workspace and the editor each have their own file below, and a page test
+that also drove Monaco's loading behaviour would fail for two unrelated reasons at once.
 
 The home page is a Server Component, but a synchronous one that touches no server-only API — it
 is an ordinary function returning JSX, so it mounts directly and no test-only wrapper had to be
@@ -52,7 +52,27 @@ invented for it. `layout.tsx` is different: it imports `next/font/google`, which
 Next.js compiler resolves, so Vitest cannot load it. The metadata it declares is therefore
 asserted by Playwright against the real document instead of being re-implemented in a mock.
 
-### `apps/web` — `tests/code-editor.test.tsx` (Vitest, jsdom, 8 tests)
+### `apps/web` — `tests/local-editor-workspace.test.tsx` (Vitest, jsdom, 7 tests)
+
+The state-ownership layer, and the reason B1 is testable at all. `CodeEditor` is replaced by a
+plain textarea honouring the same controlled contract, typed as the real `CodeEditorProps` so the
+stand-in cannot drift from the boundary without the type-check noticing. That is enough to act as a
+user typing, without pretending jsdom can run Monaco. What it proves:
+
+- the workspace opens the sample file, names it `main.ts`, and opens it as TypeScript;
+- what the user types is kept — the value is the workspace's, not the editor's;
+- a re-render does not reset it, which is what distinguishes owned state from a prop passed down
+  every render;
+- a file emptied to `''` stays empty, because empty is valid content;
+- **remounting starts again from the sample**, which is the positive proof that nothing is stored
+  anywhere.
+
+The workspace can never be handed an `undefined` value: `CodeEditorProps` promises a string, and
+the file below covers Monaco's `undefined` being dropped before it could reach here. That is a
+boundary the type system enforces, so it is tested where it is actually decided rather than
+re-asserted through a cast.
+
+### `apps/web` — `tests/code-editor.test.tsx` (Vitest, jsdom, 11 tests)
 
 **jsdom is not a browser Monaco can run in.** It has no canvas text metrics, no layout, and no
 web workers, so a test that tried to start the real editor would be testing jsdom's limits rather
@@ -64,7 +84,11 @@ the side of the boundary DevSync owns:
 - the editor mounts once Monaco has loaded, inside a region a user can identify by name;
 - Monaco comes from the bundled package rather than a CDN, which is what `loader.config` is
   called to arrange;
-- the file opened is TypeScript and already contains the sample;
+- the content and language it was given are the ones handed to Monaco, through the controlled
+  `value` rather than a default — an uncontrolled editor would leave `value` unset and fail here;
+- an edit is reported back to the caller, and an emptied file is reported as the real edit it is;
+- **a change Monaco reports without a value is ignored**, so a transient `undefined` can never
+  blank the file the caller is holding;
 - `automaticLayout` is on and the editor carries an accessible name — both DevSync's options, not
   the library's defaults;
 - a loading surface is handed to the integration for its own start-up;
@@ -96,8 +120,19 @@ what covers `layout.tsx`.
 The editor assertion is deliberately shallow. It proves the thing jsdom cannot: that a client
 component carrying Monaco survives server rendering, reaches a real browser, and paints. It
 matches the region DevSync labels rather than anything inside Monaco's own DOM, so a Monaco
-upgrade cannot break it for a reason that has nothing to do with DevSync. **Typing into the real
-editor is not covered yet** and arrives with the rest of Phase B.
+upgrade cannot break it for a reason that has nothing to do with DevSync.
+
+**Typing into the real editor is still not covered**, and that is the distinction to keep in mind
+when reading the component tests above: they prove that DevSync's state ownership is wired
+correctly, using a stand-in for Monaco. They cannot prove that a keystroke in Chromium travels
+through Monaco's model, into React state, and back into the editor without the two fighting each
+other. Only a real browser can, and that test is the milestone that closes Phase B.
+
+Two things found while checking that by hand are worth recording for whoever writes it. Monaco's
+accessible textbox is real but rendered off-view at zero size, so it can be found by role and never
+clicked — the click has to land on the rendered code surface. And Monaco's suggestion widget
+captures `Enter`, so a test that types a newline mid-identifier will silently accept a completion
+instead and assert against mangled text.
 
 `specs/api/health.spec.ts` (1 test) requests `/health` from the compiled `dist/main.js` running
 on a real port and asserts status `200` and the exact expected payload.
@@ -235,8 +270,8 @@ six workspaces with no implementation are not counted in either direction.
 As of this milestone:
 
 ```text
-apps/web                  75%  statements  (page.tsx 100%, code-editor.tsx 86.95%,
-                                            layout.tsx 0%)
+apps/web                  80%  statements  (page.tsx and local-editor-workspace.tsx 100%,
+                                            code-editor.tsx 87.5%, layout.tsx 0%)
 apps/api               68.75%  statements  (health.controller.ts and health.module.ts 100%,
                                             app.module.ts 0%)
 ```
@@ -250,13 +285,16 @@ Both numbers are reported as measured, including the parts that look bad:
   jsdom has no web workers, so the functions that construct them are never called; they run in
   Chromium, under Playwright, where nothing attributes them back either. The worker entry points
   in `src/editor/workers/` are not measured at all for the same reason.
+- **`apps/web/src/editor/local-editor-workspace.tsx` is at 100%**, which is what a component whose
+  only job is to hold one string should be. It is the least interesting number here and the easiest
+  to keep honest.
 - `apps/api/src/app.module.ts` is at 0% because the Jest test boots `HealthModule` directly. The
   Playwright suite boots the real `AppModule`, again without being attributed.
 - `apps/api/src/main.ts` is excluded from measurement rather than reported at 0%. It calls
   `app.listen`, so importing it from an in-process test would bind a port as a side effect of
   measuring it. Playwright runs it for real instead.
 
-**No coverage thresholds are configured, deliberately.** Three source files is still too small a
+**No coverage thresholds are configured, deliberately.** Four source files is still too small a
 base for a percentage to mean anything, and a threshold on a foundation this size mostly invites
 tests written to satisfy the number. Thresholds should be introduced with the first milestone
 that adds substantive application logic — a real service, a real reducer, a real protocol
@@ -290,9 +328,10 @@ needs the collaboration transport to exist first.
   `apps/api` today. The end-to-end suite proves each application serves correctly; it does not
   prove they talk to each other, because they do not.
 - **No test types into the real editor.** The Playwright suite proves the editor region reaches a
-  browser, and the component tests prove what the editor is asked to open, but nothing yet asserts
-  that a keystroke lands in Monaco and comes back highlighted. That test belongs to the milestone
-  that finishes Phase B.
+  browser, and the component tests prove that DevSync owns the content and wires it correctly
+  against a stand-in, but nothing yet asserts that a keystroke in a real browser lands in Monaco,
+  reaches React state, and comes back without the two overwriting each other. That test belongs to
+  the milestone that finishes Phase B.
 - **Monaco's own behaviour is not tested and should not be.** Tokenisation, the language service,
   and the worker protocol are Microsoft's to cover; DevSync tests the boundary it owns.
 - **Concurrent editing, persistence, authentication, reconnection, and code execution are
@@ -317,7 +356,7 @@ needs the collaboration transport to exist first.
 
 | Workspace                | Runner     | Real tests | Environment       | Coverage |
 | ------------------------ | ---------- | ---------- | ----------------- | -------- |
-| `@devsync/web`           | Vitest     | 14         | jsdom             | yes      |
+| `@devsync/web`           | Vitest     | 24         | jsdom             | yes      |
 | `@devsync/api`           | Jest       | 1          | node              | yes      |
 | `@devsync/e2e`           | Playwright | 4          | Chromium and HTTP | no       |
 | `@devsync/collaboration` | none       | 0          | —                 | no       |
@@ -327,7 +366,7 @@ needs the collaboration transport to exist first.
 | `@devsync/test-utils`    | none       | 0          | —                 | no       |
 | `@devsync/config`        | none       | 0          | —                 | no       |
 
-**Nineteen real tests in total.** The six workspaces without a runner print that they have no
+**Twenty-nine real tests in total.** The six workspaces without a runner print that they have no
 tests and exit successfully. That is the correct behaviour for a workspace with no implementation: a
 test runner installed into an empty package, or a test asserting that `true` is `true`, would
 make the table above look uniform while proving strictly less than the sentence it prints.

@@ -1,4 +1,4 @@
-import { CodeEditor } from '@/editor/code-editor';
+import { LocalEditorWorkspace } from '@/editor/local-editor-workspace';
 
 export default function Home() {
   return (
@@ -9,18 +9,18 @@ export default function Home() {
           A browser-based collaborative development environment.
         </p>
         <p className="text-sm text-zinc-500">
-          Phase B0 — Monaco integration. The editor below is the first product functionality in the
-          repository; everything else about DevSync is still a plan.
+          Phase B1 — the local editing workspace. One file, open in one editor, with its contents
+          held by the application in this tab. Everything else about DevSync is still a plan.
         </p>
       </header>
 
-      <CodeEditor />
+      <LocalEditorWorkspace />
 
       <p className="text-sm text-zinc-500">
-        This is one temporary editor, held in this browser tab and nowhere else. Refreshing the page
-        discards whatever you type. There are no files, no projects, no accounts, and no server
-        involvement — the editor talks to nothing, and collaboration, persistence, and code
-        execution are not implemented yet.
+        One temporary file, held in this browser tab&rsquo;s memory and nowhere else. Refreshing the
+        page discards your changes, because there is nowhere yet to save them to: no projects, no
+        accounts, and no database. Collaboration, persistence, and code execution are not
+        implemented yet.
       </p>
     </main>
   );

@@ -9,11 +9,11 @@ import Home from '@/app/page';
 // only the Next.js compiler resolves — so the metadata it declares is asserted by
 // the Playwright suite against the real document instead.
 //
-// The editor is stubbed here rather than mocked in detail: this file is about what
-// the page says and what it places on the page, and `code-editor.test.tsx` covers
-// the wrapper itself.
-vi.mock('@/editor/code-editor', () => ({
-  CodeEditor: () => <div data-testid="code-editor" />,
+// The workspace is stubbed here rather than mocked in detail: this file is about
+// what the page says and what it places on the page, and the workspace and the
+// editor wrapper each have their own file.
+vi.mock('@/editor/local-editor-workspace', () => ({
+  LocalEditorWorkspace: () => <div data-testid="local-editor-workspace" />,
 }));
 
 describe('home page', () => {
@@ -40,17 +40,17 @@ describe('home page', () => {
     expect(screen.getByText(/Phase B\d/)).toBeInTheDocument();
   });
 
-  it('gives the editor a place on the page', () => {
+  it('gives the workspace a place on the page', () => {
     render(<Home />);
 
-    expect(screen.getByTestId('code-editor')).toBeInTheDocument();
+    expect(screen.getByTestId('local-editor-workspace')).toBeInTheDocument();
   });
 
-  it('says that the editor is temporary and that a refresh discards its content', () => {
+  it('says that the file is temporary and that a refresh discards the changes', () => {
     render(<Home />);
 
-    expect(screen.getByText(/one temporary editor/i)).toBeInTheDocument();
-    expect(screen.getByText(/refreshing the page discards whatever you type/i)).toBeInTheDocument();
+    expect(screen.getByText(/one temporary file/i)).toBeInTheDocument();
+    expect(screen.getByText(/refreshing the page discards your changes/i)).toBeInTheDocument();
   });
 
   it('does not claim that collaboration, persistence, or execution work yet', () => {
