@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "@devsync/config — NestJS service",
+  "extends": "./tsconfig.base.json",
+
+  // NestJS compiles with `tsc` and relies on decorator metadata for dependency
+  // injection, so this config emits and keeps the two decorator options on.
+  //
+  // `verbatimModuleSyntax` is deliberately NOT set here: it forces type-only
+  // imports to be erased, and `emitDecoratorMetadata` needs the imported class to
+  // survive as a value so `design:paramtypes` resolves to the real constructor
+  // rather than `Object`.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "resolvePackageJsonExports": true,
+
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    "allowSyntheticDefaultImports": true,
+    "declaration": true,
+    "removeComments": true,
+    "sourceMap": true,
+    "incremental": true
+  }
+}

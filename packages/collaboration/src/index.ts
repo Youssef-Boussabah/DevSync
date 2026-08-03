@@ -3,7 +3,8 @@
  *
  * Public surface for DevSync's reusable real-time collaboration logic.
  *
- * Phase A0 establishes the package boundary only. This module is intentionally
- * empty; no collaboration engine has been chosen, wired, or implemented.
+ * This package exists to fix the module boundary early. The implementation is
+ * deliberately deferred: no collaboration engine has been chosen, wired, or
+ * implemented, and a placeholder would be worse than an honest empty module.
  */
 export {};

@@ -3,7 +3,8 @@
  *
  * Public surface for DevSync's persistence layer.
  *
- * Phase A0 establishes the package boundary only. This module is intentionally
- * empty; there is no schema, no client, and no database in this repository.
+ * This package exists to fix the module boundary early. The implementation is
+ * deliberately deferred: there is no schema, no client, and no database in this
+ * repository, and a placeholder would be worse than an honest empty module.
  */
 export {};

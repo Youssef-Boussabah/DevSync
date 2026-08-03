@@ -1,4 +1,4 @@
 {
-  "extends": "@devsync/config/tsconfig.base.json",
+  "extends": "@devsync/config/tsconfig.package.json",
   "include": ["src"]
 }

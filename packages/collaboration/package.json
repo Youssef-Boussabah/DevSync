@@ -8,12 +8,15 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
-    "test": "node -e \"console.log('@devsync/collaboration: no tests yet (Phase A0).')\"",
+    "test": "node -e \"console.log('@devsync/collaboration: no tests yet.')\"",
     "clean": "node -e \"['.turbo','tsconfig.tsbuildinfo'].forEach((p) => require('fs').rmSync(p, { recursive: true, force: true }))\""
   },
   "devDependencies": {
     "@devsync/config": "workspace:*",
+    "eslint": "^9.39.5",
     "typescript": "^5.7.3"
   }
 }

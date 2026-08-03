@@ -3,7 +3,8 @@
  *
  * Public surface for DevSync's reusable test helpers.
  *
- * Phase A0 establishes the package boundary only. This module is intentionally
- * empty; the single existing test in `apps/api` needs no shared scaffolding.
+ * This package exists to fix the module boundary early. The implementation is
+ * deliberately deferred: the single existing test in `apps/api` needs no shared
+ * scaffolding, and adding one now would be a fake abstraction.
  */
 export {};

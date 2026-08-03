@@ -35,8 +35,39 @@ Add a dependency only when something in the repository uses it now.
 
 Strict mode everywhere. Do not introduce `any` to make an error go away, and do not silence
 errors with `@ts-ignore`, `@ts-expect-error`, or by disabling a lint rule — fix the underlying
-type. Shared packages extend `@devsync/config/tsconfig.base.json`; the two apps keep the
-framework-generated configuration their toolchains expect.
+type.
+
+Every workspace extends a configuration from `@devsync/config`, which owns the strictness
+settings: `tsconfig.package.json` for `packages/*`, `tsconfig.nest.json` for `apps/api`,
+`tsconfig.next.json` for `apps/web`. A workspace's own `tsconfig.json` should only hold what
+is genuinely local to it — `include`, `outDir`, `paths`, the `next` plugin. If a compiler
+option belongs to more than one workspace, it belongs in `@devsync/config`.
+
+Two overrides there are load-bearing and must not be "tidied up": `tsconfig.nest.json`
+deliberately omits `verbatimModuleSyntax` and `lib`, because `emitDecoratorMetadata` needs
+injected classes to survive as values. `packages/config/README.md` explains why.
+
+## Quality configuration
+
+- **ESLint** is flat config only. Shared rules live in `@devsync/config/eslint/base`, with
+  `@devsync/config/eslint/nest` layered on for `apps/api`. `apps/web` composes the shared
+  rules with `eslint-config-next`. Add a rule in `@devsync/config`, not in a workspace.
+- **Prettier** is configured once, in `prettier.config.mjs` at the root. Do not add a second
+  Prettier config anywhere, and do not run Prettier as an ESLint rule.
+- **`pnpm lint` and `pnpm format:check` must stay read-only.** `pnpm lint:fix` and
+  `pnpm format` are the only commands that may modify files.
+- Every TypeScript workspace participates in `lint` and `typecheck`. Do not add a workspace
+  that opts out of either, and do not silence a rule repository-wide to make a command pass.
+
+## Import aliases
+
+`apps/web` uses `@/*` → `./src/*`; Next.js resolves it at type-check, dev, and build time.
+
+`apps/api` has no internal alias on purpose: `tsc` does not rewrite path aliases when it
+emits, so one would work in the editor and fail at runtime. Do not add an alias to `apps/api`
+without also adding the runtime resolution that makes it real.
+
+Across workspaces, import the package (`@devsync/shared`), never a deep relative path.
 
 ## Testing
 
@@ -61,7 +92,9 @@ the user's call.
 
 ## Current boundary
 
-The repository is at **Phase A0 — repository foundation**. Do not implement later milestones
-early. Specifically, do not add a database or ORM, authentication, WebSockets, a code editor,
-a CRDT library, code execution, Docker, or CI configuration until the milestone that calls for
-it. If a task seems to require one of these, say so and stop rather than building ahead.
+The repository is at **Phase A1 — TypeScript and quality configuration**. No product
+functionality is implemented. Do not implement later milestones early. Specifically, do not
+add a database or ORM, authentication, WebSockets, a code editor, a CRDT library, code
+execution, Docker, or CI configuration until the milestone that calls for it. Testing
+standardisation, including any move away from Jest in `apps/api`, belongs to Phase A2. If a
+task seems to require one of these, say so and stop rather than building ahead.
