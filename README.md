@@ -7,11 +7,14 @@ that product will be built in.
 
 ## Repository status
 
-**Phase A4 — CI foundation.** A0 established the monorepo and the toolchain; A1 tightened the
-TypeScript settings and centralised the shared configuration; A2 added the testing architecture;
-A3 containerised both applications. Phase A4 adds a GitHub Actions pipeline that runs the
-quality checks, the browser tests, and a full Docker build-and-verify on every pull request.
-Like the milestones before it, it ships no product functionality.
+**Phase A complete — project foundation.** A0 established the monorepo and the toolchain; A1
+tightened the TypeScript settings and centralised the shared configuration; A2 added the testing
+architecture; A3 containerised both applications; A4 added a GitHub Actions pipeline that runs
+the quality checks, the browser tests, and a full Docker build-and-verify; A5 documented the
+architecture, the roadmap, the development workflow, and the decisions behind them.
+
+**No product functionality has been implemented.** Phase A built the repository the product will
+be written in, and nothing else. Phase B — the first product milestone — has not started.
 
 What exists today:
 
@@ -29,15 +32,29 @@ What exists today:
   both. See [`docs/docker.md`](docs/docker.md).
 - A GitHub Actions pipeline with three jobs — quality, end-to-end, and Docker. See
   [`docs/ci.md`](docs/ci.md).
+- Documentation covering the architecture, the milestone roadmap, the development workflow, and
+  the decisions behind them. See [`docs/`](docs/README.md).
 
-**Real-time collaboration has not been implemented.** Neither has multi-file project editing,
-remote cursors, project persistence, authentication, version history, or code execution. No
-database or message broker exists in this repository yet — the Compose file contains the two
-applications and nothing else.
+**Real-time collaboration has not been implemented.** Neither has a code editor, multi-file
+project editing, remote cursors, project persistence, authentication, version history, or code
+execution. No database or message broker exists in this repository yet — the Compose file
+contains the two applications and nothing else.
+
+## Documentation
+
+| Document                             | Covers                                                  |
+| ------------------------------------ | ------------------------------------------------------- |
+| [Architecture](docs/architecture.md) | What exists, what is reserved, what is planned, and why |
+| [Development](docs/development.md)   | Prerequisites, commands, ports, and daily workflow      |
+| [Roadmap](docs/roadmap.md)           | The milestone sequence, Phase A through Phase N         |
+| [Decisions](docs/decisions.md)       | Choices already made, and what would justify revisiting |
+| [Testing](docs/testing.md)           | The three testing layers and what each proves           |
+| [Docker](docs/docker.md)             | Images, Compose, and container limitations              |
+| [Continuous integration](docs/ci.md) | The GitHub Actions workflow and its jobs                |
 
 ## Planned architecture
 
-The intended shape of the system, none of which is built yet:
+The intended shape of the system, **none of which is built yet**:
 
 - A Next.js client hosting a code editor, driven by a CRDT-backed shared document.
 - A NestJS service owning project data, access control, and the collaboration transport.
@@ -46,7 +63,9 @@ The intended shape of the system, none of which is built yet:
 - Shared contracts — types, schemas, and the collaboration protocol — published from
   `packages/shared` so client and server cannot drift apart.
 
-Each of these arrives in a later milestone, and this README will be updated as it does.
+Each arrives in a later milestone, and this README is updated as it does.
+[`docs/architecture.md`](docs/architecture.md) separates the implemented architecture from the
+reserved boundaries and the planned design; [`docs/roadmap.md`](docs/roadmap.md) is the sequence.
 
 ## Workspace layout
 
@@ -135,6 +154,9 @@ Run these from the repository root; Turborepo fans each one out across the works
 
 `pnpm lint` and `pnpm format:check` are read-only. `pnpm lint:fix` and `pnpm format` are the
 two commands that modify files.
+
+[`docs/development.md`](docs/development.md) covers the same ground in more depth: workspace
+filtering, generated artifacts, adding a workspace, and the repository's Git conventions.
 
 To work on one workspace at a time:
 

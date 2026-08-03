@@ -3,8 +3,9 @@
 How the DevSync applications are containerised, how to build and run them, and what the setup
 deliberately does not include.
 
-This describes the repository at **Phase A3 — Docker foundation**. Docker is an additional way
-to run the two applications that already exist; it replaces nothing. Every `pnpm` command still
+The container setup was introduced in **Phase A3 — Docker foundation** and is unchanged at
+**Phase A complete**. Docker is an additional way to run the two applications that already
+exist; it replaces nothing. Every `pnpm` command still
 works exactly as before, and the test architecture still runs on the host.
 
 ## Prerequisites
@@ -228,11 +229,13 @@ authenticate against.
 - **`linux/amd64` and `linux/arm64` are whatever the host provides.** The images build for the
   local platform; no multi-platform build or registry push is configured.
 - **No image is published anywhere.** There is no registry, no tagging scheme beyond Compose's
-  `devsync-web:latest` / `devsync-api:latest`, and no deployment configuration. Kubernetes,
-  cloud deployment, and CI are all outside this milestone.
-- **Nothing tests the containers automatically.** The Playwright suite runs against host
-  processes on ports 4310 and 4311 and is deliberately not moved into Docker; no browser is
-  installed in an application image, and no container-specific test was invented.
+  `devsync-web:latest` / `devsync-api:latest`, and no deployment configuration. Kubernetes and
+  cloud deployment belong to a later milestone. CI builds and exercises both images but pushes
+  nothing — see [`ci.md`](ci.md).
+- **No test suite runs inside a container.** CI's `docker` job builds both images, starts them,
+  waits for their health checks, and verifies both endpoints — but the Playwright suite itself
+  runs against host processes on ports 4310 and 4311 and is deliberately not moved into Docker.
+  No browser is installed in an application image, and no container-specific test was invented.
 
 ## Shutdown
 

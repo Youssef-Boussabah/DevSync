@@ -2,7 +2,8 @@
 
 What runs on GitHub Actions, what each job proves, and how to reproduce any of it locally.
 
-This describes the repository at **Phase A4 — CI foundation**. CI adds no capability to DevSync;
+The workflow was introduced in **Phase A4 — CI foundation** and is unchanged at **Phase A
+complete**. CI adds no capability to DevSync;
 it runs the checks that already existed, on someone else's machine, on every change. Every
 command in the workflow is one you can run yourself, which is the point — a red run should never
 require reading CI internals to reproduce.
@@ -254,9 +255,9 @@ pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typeche
 ## Current limitations
 
 - **This workflow has not yet been observed running on GitHub.** It was validated with
-  `actionlint` (0 errors, including the shell in every `run:` block) and every command in it was
-  run locally against this commit, but no run exists yet because nothing has been pushed. The
-  first real run is the first genuine proof.
+  `actionlint` (0 errors, including the shell in every `run:` block) and every command in it has
+  been run locally against the current commit. The first run against a real pull request is the
+  first genuine proof.
 - **No branch protection is configured**, so a failing run does not yet block a merge. That is a
   repository setting rather than a file, and it is not something this milestone can add.
 - **Playwright browsers are downloaded on every `e2e` run** — roughly 300 MB and a minute or so.

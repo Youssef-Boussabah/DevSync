@@ -6,7 +6,13 @@ export default function Home() {
         A browser-based collaborative development environment.
       </p>
       <p className="text-sm text-zinc-500">
-        Phase A4 — CI foundation. The collaborative editor, project persistence, and code execution
+        Phase A5 — architecture documentation, closing the Phase A foundation: a pnpm and Turborepo
+        monorepo, centralised configuration, three testing layers, production container images, and
+        continuous integration.
+      </p>
+      <p className="text-sm text-zinc-500">
+        No product functionality exists — this page and a health endpoint are the whole application.
+        Real-time collaboration, the collaborative editor, project persistence, and code execution
         are not implemented yet.
       </p>
     </main>

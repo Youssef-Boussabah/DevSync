@@ -159,6 +159,25 @@ One workflow, `.github/workflows/ci.yml`, with three independent jobs: `quality`
 persistence, accounts, version history, or code execution as working until they are.
 Update documentation in the same change that makes it inaccurate.
 
+Seven documents, each owning one subject. Link to them rather than restating their content, so
+there is exactly one place to correct.
+
+- [`docs/architecture.md`](docs/architecture.md) — the implemented architecture, the reserved
+  package boundaries, the request and process boundaries, the durable architectural principles,
+  and the planned architecture. Every claim is labelled implemented, reserved, or planned.
+- [`docs/development.md`](docs/development.md) — prerequisites, commands, ports, artifacts,
+  adding a workspace, and repository-level Git conventions.
+- [`docs/roadmap.md`](docs/roadmap.md) — the milestone sequence, Phase A through Phase N.
+- [`docs/decisions.md`](docs/decisions.md) — decisions already made, with the reason, the current
+  consequence, and what would justify revisiting each. One file; do not turn it into an ADR
+  directory.
+- [`docs/testing.md`](docs/testing.md), [`docs/docker.md`](docs/docker.md), and
+  [`docs/ci.md`](docs/ci.md) — the long-form versions of the three sections above.
+
+Anything describing a system that does not exist must be explicitly marked as planned or as
+direction. Present tense is reserved for what runs. A document that describes a planned system as
+if it were built is worse than no document.
+
 ## Git
 
 **Claude must not create commits, push branches, open pull requests, merge branches, or delete
@@ -167,10 +186,36 @@ branches. The user controls all Git publishing operations.**
 Staging, inspecting, and diffing are fine. Anything that writes history or reaches a remote is
 the user's call.
 
+## Architectural commitments
+
+These are boundaries for future work, not descriptions of code. None of the technologies named
+here is installed, and none may be installed ahead of the milestone that calls for it.
+
+- Web, API, collaboration, database, shared contracts, and UI concerns stay separated. Code with
+  a second consumer moves into `packages/`; it is not duplicated across applications.
+- The server enforces authorization. No client-supplied claim about identity, membership, or role
+  is trusted, and that applies to collaboration messages exactly as it does to HTTP requests.
+- Real-time collaboration synchronises CRDT document updates, never whole file contents. Yjs is
+  the intended library, and the initial model is one Yjs document per project.
+- Presence and awareness are ephemeral. They live for the duration of a connection and are never
+  written to the durable store.
+- PostgreSQL owns durable application records once persistence exists. **Redis is not introduced
+  until horizontal scaling requires it** — a single API instance needs no shared cache.
+- Code execution runs outside the `apps/web` and `apps/api` processes, in an isolated,
+  resource-limited runner.
+
+[`docs/architecture.md`](docs/architecture.md) is the long-form version, and
+[`docs/decisions.md`](docs/decisions.md) records why each was chosen.
+
 ## Current boundary
 
-The repository is at **Phase A4 — CI foundation**. No product functionality is implemented.
+The repository is at **Phase A complete — project foundation**: monorepo scaffold, centralised
+TypeScript and quality configuration, three testing layers, two production Docker images, GitHub
+Actions CI, and the documentation above. **No product functionality is implemented, and Phase B
+has not started.**
+
 Do not implement later milestones early. Specifically, do not add a database or ORM,
 authentication, WebSockets, a code editor, a CRDT library, code execution, Kubernetes, cloud
 deployment, release automation, or a dependency bot until the milestone that calls for it. If
 a task seems to require one of these, say so and stop rather than building ahead.
+[`docs/roadmap.md`](docs/roadmap.md) is the sequence and the boundary each milestone must meet.

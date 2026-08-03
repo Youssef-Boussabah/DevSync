@@ -3,8 +3,9 @@
 How DevSync is tested, what each layer is responsible for proving, and — just as
 importantly — what is not tested yet.
 
-This document describes the repository as it stands at **Phase A2 — testing foundation**. The
-product has no collaborative editor, no persistence, no accounts, and no code execution, so
+The testing architecture was introduced in **Phase A2 — testing foundation** and is unchanged at
+**Phase A complete**. The product has no collaborative editor, no persistence, no accounts, and
+no code execution, so
 none of those things are tested. What exists is the architecture that will hold those tests
 when they are written, plus real coverage of everything the two applications currently do.
 
@@ -253,8 +254,9 @@ needs the collaboration transport to exist first.
 - **Chromium only.** Firefox and WebKit are not installed or run. One engine is enough to prove
   a page renders and an endpoint answers; cross-browser coverage earns its place once there is
   browser-specific behaviour to disagree about.
-- **No CI pipeline runs any of this.** Every command in this document is run by a developer, by
-  hand. Automating them belongs to the milestone that introduces CI.
+- **CI runs every command in this document, but on Ubuntu only.** Nothing validates that the
+  suite passes on Windows or macOS, even though the repository is developed on Windows. See
+  [`ci.md`](ci.md).
 - **`@devsync/test-utils` is still empty.** No current test needs a shared helper — the three
   layers use three different runners and each assertion is a few lines — and inventing one now
   would be an abstraction with no user.
