@@ -209,7 +209,9 @@ here is installed, and none may be installed ahead of the milestone that calls f
 
 ## Current boundary
 
-The repository is at **Phase B, milestone B2 — language selection over the open file**. Phase A's
+The repository is at **Phase B, milestone B3 — real-browser Monaco editing coverage**. Every
+functional milestone of Phase B is delivered; the phase itself stays open until its separate
+closure, reconciliation, and hardening pass has been done. Phase A's
 foundation is in place — monorepo scaffold, centralised TypeScript and quality configuration, three
 testing layers, two production Docker images, GitHub Actions CI, and the documentation above — and
 `apps/web` renders one Monaco editor over one file whose contents and language a client workspace

@@ -4,7 +4,7 @@ How the DevSync applications are containerised, how to build and run them, and w
 deliberately does not include.
 
 The container setup was introduced in **Phase A3 — Docker foundation** and is unchanged at
-**B2**: the editor, the workspace holding its contents, and the language selection over them all
+**B3**: the editor, the workspace holding its contents, and the language selection over them all
 ship inside the existing web image and needed no change to it, because Monaco and its language
 workers are bundled into the client build rather than fetched at runtime, and the workspace state
 never leaves the browser. Docker is an additional way to run the

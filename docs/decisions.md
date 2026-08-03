@@ -188,9 +188,10 @@ cannot be proved by a single-client test. `browser.newContext()` produces fully 
 inside one browser process, so a single test can act as two users — which is exactly the shape
 the collaboration tests will need. Nothing else in the ecosystem makes that as direct.
 
-**Consequence today.** Seven tests that build both applications, start them on ports 4310 and
-4311, and check that each answers, that the editor region paints, and that the language selector
-over it works in a real browser. The suite polls HTTP readiness rather than sleeping, and
+**Consequence today.** Eight tests that build both applications, start them on ports 4310 and
+4311, and check that each answers, that the editor region paints, that the language selector over it
+works in a real browser, and that a real keystroke reaches the real Monaco editor. The suite polls
+HTTP readiness rather than sleeping, and
 `reuseExistingServer` is off so it can never pass by talking to a server someone started by hand.
 One manual step per machine, `pnpm test:e2e:install`, is the price.
 

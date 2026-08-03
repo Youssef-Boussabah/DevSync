@@ -16,7 +16,7 @@ after it stopped being true.
 | Phase | Name                      | Status       |
 | ----- | ------------------------- | ------------ |
 | **A** | Project foundation        | **Complete** |
-| **B** | Local editor              | **B2 done**  |
+| **B** | Local editor              | **B3 done**  |
 | C     | Database-backed projects  | Not started  |
 | D     | Rooms and presence        | Not started  |
 | E     | Single-file collaboration | Not started  |
@@ -32,7 +32,7 @@ after it stopped being true.
 
 **One piece of product functionality exists**: the Monaco editor on the home page, the single-file
 workspace holding its contents, and the language that file is read as — delivered by milestones B0,
-B1, and B2. Nothing else in the table above is built.
+B1, and B2, and covered in a real browser by B3. Nothing else in the table above is built.
 
 ---
 
@@ -74,7 +74,7 @@ product-shaped thing DevSync does.
 | B0        | Monaco integrated into `apps/web`, surviving the App Router, SSR, and Docker | **Delivered** |
 | B1        | The in-memory editing workspace the editor's content belongs to              | **Delivered** |
 | B2        | A language selection over the open file                                      | **Delivered** |
-| B3        | A Playwright test that types into the real Monaco editor                     | Not started   |
+| B3        | A Playwright test that types into the real Monaco editor                     | **Delivered** |
 
 **B0, delivered.** The home page renders one Monaco editor, with syntax highlighting and Monaco's
 language services running in web workers. Monaco is bundled from the `monaco-editor` package rather
@@ -101,9 +101,26 @@ starter template exists for any of them. The language is never inferred from a f
 detected from the content. Like the content, it is browser memory only — a reload starts again from
 TypeScript and the sample.
 
+**B3, delivered.** A Playwright test drives the real Monaco editor in Chromium against the
+production build: it clicks the rendered code surface, selects the buffer, types a single unique
+line, and asserts the line appears. It then changes the language and asserts the typed line is
+still there rather than replaced by the sample — which is what proves the controlled `value` the
+workspace supplies is the live one — and finally reloads and asserts the sample is back and the
+typed line is gone. One line and no `Enter`, because Monaco's suggestion widget captures it.
+
+**Functional milestones: all delivered.** The completion boundary below has been demonstrated in a
+real browser rather than argued from component tests.
+
 **Completion boundary.** A visitor can open the application, type code, and see it highlighted.
 Nothing is saved, nothing is shared, and a refresh discards the content — and the interface says
-so. **Not yet met:** B3 remains.
+so. **Demonstrated.**
+
+**Phase B is not closed.** A separate closure pass — documentation reconciliation across every
+document, a final consistency check, and the hardening review — is still outstanding, and the phase
+stays in progress until it has been done. One limitation found by B3 belongs to that pass:
+[`testing.md`](testing.md) records that the Monaco → React direction of the round-trip is still
+proved only in jsdom, because with the current library the controlled value is re-driven into the
+editor only when it actually changes.
 
 **Exclusions and dependencies.** No persistence, no collaboration, no CRDT, no WebSocket, no
 file tree, no account. This phase deliberately writes no server code: it establishes that the

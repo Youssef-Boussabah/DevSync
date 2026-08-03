@@ -4,7 +4,7 @@ How DevSync is tested, what each layer is responsible for proving, and — just 
 importantly — what is not tested yet.
 
 The testing architecture was introduced in **Phase A2 — testing foundation** and its shape is
-unchanged at **B2**, which added tests to it rather than layers. The product has no collaboration,
+unchanged at **B3**, which added tests to it rather than layers. The product has no collaboration,
 no persistence, no accounts, and no code execution, so none of those things are tested. What
 exists is the architecture that will hold those tests when they are written, plus real coverage of
 everything the two applications currently do.
@@ -133,7 +133,7 @@ It deliberately does not prove that `main.ts` bootstraps, that `AppModule` impor
 `HealthModule`, or that the compiled output in `dist` serves anything. Those are failure modes
 of the built process rather than of the health feature, and they belong to the layer below.
 
-### `tests/e2e` — Playwright, 7 tests
+### `tests/e2e` — Playwright, 8 tests
 
 `specs/web/home.spec.ts` (6 tests) loads `/` from the production build served by `next start`
 and asserts the response status is `200`, that the document title is `DevSync`, that the
@@ -153,18 +153,45 @@ the name to TypeScript and `main.ts`, because nothing is stored. The selector is
 label, and the assertions stay on DevSync's own values — how Monaco then highlights the text is
 Monaco's business.
 
-**Typing into the real editor is still not covered**, and that is the distinction to keep in mind
-when reading everything above. The selector tests drive a real control in Chromium; the component
-tests prove DevSync's state ownership against a stand-in for Monaco. Neither proves that a keystroke
-in Chromium travels through Monaco's model, into React state, and back into the editor without the
-two fighting each other. Only a real browser typing into the real editor can, and that test is B3 —
-the milestone that closes Phase B.
+### `tests/e2e` — `specs/web/local-editor.spec.ts` (Playwright, 1 test)
 
-Two things found while checking that by hand are worth recording for whoever writes it. Monaco's
-accessible textbox is real but rendered off-view at zero size, so it can be found by role and never
-clicked — the click has to land on the rendered code surface. And Monaco's suggestion widget
-captures `Enter`, so a test that types a newline mid-identifier will silently accept a completion
-instead and assert against mangled text.
+The only place in the repository that drives the real Monaco editor. One test, because the guarantee
+is one sequence: a browser user types, changes the language, and reloads. It clicks the rendered
+code surface, selects the buffer with `ControlOrMeta+A`, types `const browserEdit = 42;`, and
+asserts the line appears in the editor. It then selects Python and asserts the selector, the file
+name, **and that the typed line is still there and the sample is not**. Finally it reloads and
+asserts the sample is back, the typed line is gone, and the selector and name have returned to
+TypeScript and `main.ts`.
+
+Three properties of it are deliberate:
+
+- **One Monaco-owned selector, scoped beneath the region DevSync labels.** Monaco's accessible
+  textbox is real but drawn off-view at effectively zero size, so it can be found by role and never
+  clicked; the click has to land on the rendered code surface. `.view-lines` under
+  `role="region"[name="Code editor"]` is the least Monaco-specific knowledge that allows a click and
+  a read, and the application-owned region stays the stable outer boundary.
+- **One line, and no `Enter`.** Monaco's suggestion widget captures `Enter`, so a test that typed a
+  newline mid-identifier could silently accept a completion and assert against text nobody typed. A
+  single-line edit proves the same thing with none of that exposure.
+- **Typed at a person's pace, not a machine's.** `@monaco-editor/react` rewrites the whole model
+  whenever the controlled `value` and the live model disagree, so characters delivered faster than
+  React can commit a render are overwritten by a value that has already gone stale. Playwright types
+  with no delay by default; the test uses 50 ms per character, which is a fast typist. **This is a
+  real property of the integration, not a test artifact**: any future source of machine-speed edits
+  — a CRDT applying remote operations, in Phase E — will meet it, and that is the milestone that has
+  to answer it.
+
+**What this test proves, and what it does not.** It proves that a real keystroke in Chromium reaches
+Monaco's model and renders, that a legitimate workspace rerender does not restore stale content over
+it, and that a reload discards it. It does **not** prove that Monaco's change callback reaches React
+state, and the distinction is worth being exact about: `@monaco-editor/react` re-drives the
+controlled value into the editor only when that value actually changes, so an integration where the
+callback never fired would leave the editor behaving as an uncontrolled one and every assertion here
+would still pass. That direction is covered in jsdom instead — `code-editor.test.tsx` proves the
+wrapper forwards Monaco's change, and `local-editor-workspace.test.tsx` proves the workspace keeps
+what it is handed. Closing that gap in a real browser needs application state to be observable
+somewhere other than the editor, which nothing in the product currently requires; it is recorded
+here rather than solved with a test-only hook.
 
 `specs/api/health.spec.ts` (1 test) requests `/health` from the compiled `dist/main.js` running
 on a real port and asserts status `200` and the exact expected payload.
@@ -363,14 +390,20 @@ needs the collaboration transport to exist first.
 - **No cross-application test exists**, because no such behaviour exists: `apps/web` never calls
   `apps/api` today. The end-to-end suite proves each application serves correctly; it does not
   prove they talk to each other, because they do not.
-- **No test types into the real editor.** The Playwright suite proves the editor region reaches a
-  browser and that the language selector works there, and the component tests prove that DevSync
-  owns the content and the language and wires both correctly against a stand-in, but nothing yet
-  asserts that a keystroke in a real browser lands in Monaco, reaches React state, and comes back
-  without the two overwriting each other. That test is B3, the milestone that finishes Phase B.
+- **Monaco's change callback is proved in jsdom, not in a browser.** `specs/web/local-editor.spec.ts`
+  proves a real keystroke reaches Monaco and survives a workspace rerender; it cannot prove the
+  Monaco → React half, for the reason set out in that test's section above. The direction is covered
+  by the component suites against a stand-in.
+- **Machine-speed edits lose characters.** The controlled value is rewritten into the model whenever
+  it disagrees with it, so edits arriving faster than React commits are overwritten by a stale
+  value. No user types that fast and paste arrives as one change, so nothing today is affected — but
+  Phase E applies remote CRDT operations programmatically, and that is where it has to be answered.
 - **No test asserts how Monaco highlights a language.** The suites prove that the selected language
   reaches Monaco and that the content survives the change; tokenisation is Monaco's, and asserting
   it here would test Microsoft's code through DevSync's.
+- **Monaco's own editing behaviour is not re-tested.** Undo, selection, multi-cursor, suggestions,
+  search, and copy-paste are Microsoft's to cover. B3 asserts one line typed through one integration
+  boundary, which is the part DevSync owns.
 - **Monaco's own behaviour is not tested and should not be.** Tokenisation, the language service,
   and the worker protocol are Microsoft's to cover; DevSync tests the boundary it owns.
 - **Concurrent editing, persistence, authentication, reconnection, and code execution are
@@ -397,7 +430,7 @@ needs the collaboration transport to exist first.
 | ------------------------ | ---------- | ---------- | ----------------- | -------- |
 | `@devsync/web`           | Vitest     | 36         | jsdom             | yes      |
 | `@devsync/api`           | Jest       | 1          | node              | yes      |
-| `@devsync/e2e`           | Playwright | 7          | Chromium and HTTP | no       |
+| `@devsync/e2e`           | Playwright | 8          | Chromium and HTTP | no       |
 | `@devsync/collaboration` | none       | 0          | —                 | no       |
 | `@devsync/database`      | none       | 0          | —                 | no       |
 | `@devsync/shared`        | none       | 0          | —                 | no       |
@@ -405,7 +438,7 @@ needs the collaboration transport to exist first.
 | `@devsync/test-utils`    | none       | 0          | —                 | no       |
 | `@devsync/config`        | none       | 0          | —                 | no       |
 
-**Forty-four real tests in total.** The six workspaces without a runner print that they have no
+**Forty-five real tests in total.** The six workspaces without a runner print that they have no
 tests and exit successfully. That is the correct behaviour for a workspace with no implementation: a
 test runner installed into an empty package, or a test asserting that `true` is `true`, would
 make the table above look uniform while proving strictly less than the sentence it prints.

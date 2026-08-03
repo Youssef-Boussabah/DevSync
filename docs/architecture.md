@@ -277,9 +277,10 @@ would have to be unlearned before it could be used.
 
 ## `tests/e2e` — implemented
 
-The only workspace allowed to start real processes. Playwright, Chromium only, seven tests across
-two specs. It builds both applications, starts them on ports 4310 and 4311, waits on HTTP
-readiness checks — never a fixed sleep — and shuts them down afterwards.
+The only workspace allowed to start real processes. Playwright, Chromium only, eight tests across
+three specs. It builds both applications, starts them on ports 4310 and 4311, waits on HTTP
+readiness checks — never a fixed sleep — and shuts them down afterwards. `specs/web/local-editor.spec.ts`
+is the one place that drives the real Monaco editor rather than markup DevSync owns.
 
 The three testing layers as a whole:
 
@@ -289,7 +290,7 @@ The three testing layers as a whole:
 | HTTP-level application | Jest       | `apps/api`  | A Nest app on an ephemeral socket    |
 | Browser and full-stack | Playwright | `tests/e2e` | Both compiled applications, on ports |
 
-Forty-four real tests in total. [`testing.md`](testing.md) covers what each layer proves, why the
+Forty-five real tests in total. [`testing.md`](testing.md) covers what each layer proves, why the
 API stays on Jest, and what is deliberately untested.
 
 ## Request and process boundaries

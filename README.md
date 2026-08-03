@@ -19,8 +19,9 @@ B1 gave that file's contents an owner — a small client workspace holding them 
 the editor controlled by it rather than keeping the text to itself. B2 let the user choose which of
 five languages that one file is read as — TypeScript, JavaScript, Python, JSON, or Markdown — from
 a labelled selector beside the file name, with the content passed through untouched when the
-language changes. That is the only product functionality in the repository. The rest of Phase B — a
-browser test that types into the real editor — has not been built.
+language changes. That is the only product functionality in the repository. B3 added the browser
+test that types into the real editor, so every functional milestone of Phase B is now delivered —
+though the phase stays open until its separate closure and reconciliation pass.
 
 What exists today:
 
@@ -34,7 +35,7 @@ What exists today:
   which owns the shared TypeScript and ESLint configuration.
 - `tests/e2e` — a Playwright workspace that builds both applications, starts them on dedicated
   ports, and checks that each answers.
-- Forty-four real tests across three layers. See [`docs/testing.md`](docs/testing.md).
+- Forty-five real tests across three layers. See [`docs/testing.md`](docs/testing.md).
 - A production Docker image for each application and a root `compose.yaml` that builds and runs
   both. See [`docs/docker.md`](docs/docker.md).
 - A GitHub Actions pipeline with three jobs — quality, end-to-end, and Docker. See
@@ -186,15 +187,15 @@ curl http://localhost:3001/health
 
 ## Testing
 
-Three layers, three runners, forty-four real tests:
+Three layers, three runners, forty-five real tests:
 
 - **Vitest** covers `apps/web` — thirty-six component tests that render the real home page, the
   workspace, and the editor wrapper in jsdom, with Monaco itself mocked at its narrowest boundary.
 - **Jest** covers `apps/api` — one HTTP-level test that boots a Nest application and checks
   `GET /health` returns the exact expected payload.
-- **Playwright** covers both applications end to end — seven tests that build the applications,
+- **Playwright** covers both applications end to end — eight tests that build the applications,
   start them on ports `4310` and `4311`, and check that the page, the editor region, the language
-  selector, and the endpoint answer.
+  selector, and the endpoint answer. One of them types into the real Monaco editor in Chromium.
 
 Workspaces with no implementation print that they have no tests and exit successfully, rather
 than pretending to run a suite.
@@ -270,7 +271,7 @@ and no generated output is linted.
 | ------------------------ | ---- | --------- | ---------------------- | -------- |
 | `@devsync/web`           | yes  | yes       | 36 Vitest tests        | `next`   |
 | `@devsync/api`           | yes  | yes       | 1 Jest test            | `nest`   |
-| `@devsync/e2e`           | yes  | yes       | 7, via `pnpm test:e2e` | no build |
+| `@devsync/e2e`           | yes  | yes       | 8, via `pnpm test:e2e` | no build |
 | `@devsync/collaboration` | yes  | yes       | none yet               | no build |
 | `@devsync/database`      | yes  | yes       | none yet               | no build |
 | `@devsync/shared`        | yes  | yes       | none yet               | no build |
