@@ -209,13 +209,35 @@ here is installed, and none may be installed ahead of the milestone that calls f
 
 ## Current boundary
 
-The repository is at **Phase A complete — project foundation**: monorepo scaffold, centralised
-TypeScript and quality configuration, three testing layers, two production Docker images, GitHub
-Actions CI, and the documentation above. **No product functionality is implemented, and Phase B
-has not started.**
+**Phase A and Phase B are complete. Phase C — database-backed projects — is next and has not
+started.** Phase A's foundation is in place: monorepo scaffold, centralised TypeScript and quality
+configuration, three testing layers, two production Docker images, GitHub Actions CI, and the
+documentation above. Phase B added the local editor: `apps/web` renders one Monaco editor over one
+file whose contents and language a client workspace component holds in React state, and Playwright
+types into the real editor in Chromium against the production build.
+
+**That workspace is the only product functionality.** Its content and its language live in browser
+memory and are never read, written, or sent anywhere; remounting or reloading starts again from the
+sample, as TypeScript. The five languages in `apps/web/src/editor/languages.ts` — TypeScript,
+JavaScript, Python, JSON, Markdown — are five readings of the one buffer: the file name is derived
+from the language, changing the language leaves the content untouched, and nothing is detected,
+generated, or translated. There is no second file, no file tree, no tabs, no save action or
+saved/unsaved state, no persistence of any kind — not `localStorage`, not `sessionStorage`, not
+IndexedDB — and no API call.
+
+Two Monaco integration facts are worth knowing before changing the editor:
+
+- **`@monaco-editor/react` pushes the controlled value into the model only when that value
+  changes.** The browser test therefore cannot observe Monaco's `onChange` reaching React state;
+  that direction is proved by the component suites instead. Do not "fix" this with a state mirror,
+  a `window` global, or any other production test hook.
+- **It rewrites the whole model whenever the controlled value and the live model disagree**, so
+  edits arriving faster than React commits are overwritten by a stale value. User-paced typing and
+  paste are unaffected. Phase E applies remote CRDT operations programmatically and is where the
+  model-ownership design has to be reconsidered.
 
 Do not implement later milestones early. Specifically, do not add a database or ORM,
-authentication, WebSockets, a code editor, a CRDT library, code execution, Kubernetes, cloud
-deployment, release automation, or a dependency bot until the milestone that calls for it. If
-a task seems to require one of these, say so and stop rather than building ahead.
+authentication, WebSockets, a CRDT library, code execution, Kubernetes, cloud deployment, release
+automation, or a dependency bot until the milestone that calls for it. If a task seems to require
+one of these, say so and stop rather than building ahead.
 [`docs/roadmap.md`](docs/roadmap.md) is the sequence and the boundary each milestone must meet.

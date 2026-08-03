@@ -5,8 +5,9 @@ describes an intention rather than a system. Where a document does describe dire
 architecture DevSync is being built towards, or the milestones ahead — it says so explicitly and
 keeps it separate from what exists.
 
-The repository is at **Phase A complete — project foundation**. No product functionality has been
-implemented.
+**Phases A and B are complete; Phase C has not started.** One Monaco editor on the home page, over
+one file the application holds in browser memory and reads as one of five languages, is the only
+product functionality that exists.
 
 ## Start here
 

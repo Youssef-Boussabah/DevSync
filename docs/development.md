@@ -141,7 +141,7 @@ curl http://localhost:3001/health
 
 ## Testing
 
-Three layers, three runners, eight real tests — Vitest in `apps/web`, Jest in `apps/api`, and
+Three layers, three runners, forty-five real tests — Vitest in `apps/web`, Jest in `apps/api`, and
 Playwright in `tests/e2e`.
 
 ```bash

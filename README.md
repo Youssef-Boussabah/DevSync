@@ -13,21 +13,30 @@ architecture; A3 containerised both applications; A4 added a GitHub Actions pipe
 the quality checks, the browser tests, and a full Docker build-and-verify; A5 documented the
 architecture, the roadmap, the development workflow, and the decisions behind them.
 
-**No product functionality has been implemented.** Phase A built the repository the product will
-be written in, and nothing else. Phase B — the first product milestone — has not started.
+**Phase B complete — local editor.** B0 put a real Monaco editor on the home page: one file, open in
+one pane, with syntax highlighting and Monaco's language services running in web workers. B1 gave
+that file's contents an owner — a small client workspace holding them in React state, with the
+editor controlled by it rather than keeping the text to itself. B2 let the user choose which of five
+languages that one file is read as — TypeScript, JavaScript, Python, JSON, or Markdown — from a
+labelled selector beside the file name, with the content passed through untouched when the language
+changes. B3 added the browser test that types into the real editor, and B4 reconciled the
+documentation and closed the phase. That is the only product functionality in the repository.
+
+**Phase C — database-backed projects — has not started.**
 
 What exists today:
 
 - A pnpm + Turborepo workspace with root-level `dev`, `build`, `lint`, `lint:fix`, `typecheck`,
   `test`, `test:unit`, `test:e2e`, `test:all`, `test:coverage`, `format`, `format:check`, and
   `clean` commands.
-- `apps/web` — a minimal Next.js application whose home page identifies the project.
+- `apps/web` — a Next.js application whose home page identifies the project and hosts one Monaco
+  editor over a single in-memory file, read as one of five selectable languages.
 - `apps/api` — a minimal NestJS service exposing a single `GET /health` endpoint.
 - Six package boundaries under `packages/`: five deliberately empty, plus `@devsync/config`,
   which owns the shared TypeScript and ESLint configuration.
 - `tests/e2e` — a Playwright workspace that builds both applications, starts them on dedicated
   ports, and checks that each answers.
-- Eight real tests across three layers. See [`docs/testing.md`](docs/testing.md).
+- Forty-five real tests across three layers. See [`docs/testing.md`](docs/testing.md).
 - A production Docker image for each application and a root `compose.yaml` that builds and runs
   both. See [`docs/docker.md`](docs/docker.md).
 - A GitHub Actions pipeline with three jobs — quality, end-to-end, and Docker. See
@@ -35,10 +44,14 @@ What exists today:
 - Documentation covering the architecture, the milestone roadmap, the development workflow, and
   the decisions behind them. See [`docs/`](docs/README.md).
 
-**Real-time collaboration has not been implemented.** Neither has a code editor, multi-file
-project editing, remote cursors, project persistence, authentication, version history, or code
-execution. No database or message broker exists in this repository yet — the Compose file
-contains the two applications and nothing else.
+**Real-time collaboration has not been implemented.** Neither has multi-file project editing, a
+file tree, editor tabs, remote cursors, project persistence, authentication, version history, or
+code execution. There is no save action and no saved-or-unsaved state, because there is nowhere to
+save to. The five languages are five readings of one file, not five files: nothing is detected from
+a name, and no content is generated or translated when the language changes. The editor talks to
+nothing: `apps/web` still makes no call to `apps/api`, and refreshing the page discards whatever was
+typed and returns the file to TypeScript. No database or message broker exists in this repository
+yet — the Compose file contains the two applications and nothing else.
 
 ## Documentation
 
@@ -54,9 +67,10 @@ contains the two applications and nothing else.
 
 ## Planned architecture
 
-The intended shape of the system, **none of which is built yet**:
+The intended shape of the system. The editor is now real; **nothing else below is built yet**:
 
-- A Next.js client hosting a code editor, driven by a CRDT-backed shared document.
+- A Next.js client hosting a code editor, driven by a CRDT-backed shared document. The editor
+  exists; the shared document does not.
 - A NestJS service owning project data, access control, and the collaboration transport.
 - A relational database reached through a single data-access package.
 - A separate, sandboxed runner service for executing user code, isolated from the API.
@@ -174,13 +188,15 @@ curl http://localhost:3001/health
 
 ## Testing
 
-Three layers, three runners, eight real tests:
+Three layers, three runners, forty-five real tests:
 
-- **Vitest** covers `apps/web` — four component tests that render the real home page in jsdom.
+- **Vitest** covers `apps/web` — thirty-six component tests that render the real home page, the
+  workspace, and the editor wrapper in jsdom, with Monaco itself mocked at its narrowest boundary.
 - **Jest** covers `apps/api` — one HTTP-level test that boots a Nest application and checks
   `GET /health` returns the exact expected payload.
-- **Playwright** covers both applications end to end — three tests that build the applications,
-  start them on ports `4310` and `4311`, and check that the page and the endpoint answer.
+- **Playwright** covers both applications end to end — eight tests that build the applications,
+  start them on ports `4310` and `4311`, and check that the page, the editor region, the language
+  selector, and the endpoint answer. One of them types into the real Monaco editor in Chromium.
 
 Workspaces with no implementation print that they have no tests and exit successfully, rather
 than pretending to run a suite.
@@ -254,9 +270,9 @@ and no generated output is linted.
 
 | Workspace                | lint | typecheck | test                   | build    |
 | ------------------------ | ---- | --------- | ---------------------- | -------- |
-| `@devsync/web`           | yes  | yes       | 4 Vitest tests         | `next`   |
+| `@devsync/web`           | yes  | yes       | 36 Vitest tests        | `next`   |
 | `@devsync/api`           | yes  | yes       | 1 Jest test            | `nest`   |
-| `@devsync/e2e`           | yes  | yes       | 3, via `pnpm test:e2e` | no build |
+| `@devsync/e2e`           | yes  | yes       | 8, via `pnpm test:e2e` | no build |
 | `@devsync/collaboration` | yes  | yes       | none yet               | no build |
 | `@devsync/database`      | yes  | yes       | none yet               | no build |
 | `@devsync/shared`        | yes  | yes       | none yet               | no build |

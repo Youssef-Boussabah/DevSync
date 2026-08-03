@@ -2,9 +2,10 @@
 
 The milestone sequence DevSync is being built in, and the current position within it.
 
-**Only Phase A exists.** Everything from Phase B onward is a plan: no code, no dependency, and no
-workspace content for any of it is present in this repository. A phase is described here so that
-the order and the boundaries are decided in advance, not so that it can be mistaken for progress.
+**Phases A and B are complete.** Everything from Phase C onward is a plan: no
+code, no dependency, and no workspace content for any of it is present in this repository. A phase
+is described here so that the order and the boundaries are decided in advance, not so that it can
+be mistaken for progress.
 
 No dates or durations appear in this document, deliberately. A phase is done when its completion
 boundary is met, and estimating that in advance would produce a number that gets quoted long
@@ -15,7 +16,7 @@ after it stopped being true.
 | Phase | Name                      | Status       |
 | ----- | ------------------------- | ------------ |
 | **A** | Project foundation        | **Complete** |
-| B     | Local editor              | Not started  |
+| **B** | Local editor              | **Complete** |
 | C     | Database-backed projects  | Not started  |
 | D     | Rooms and presence        | Not started  |
 | E     | Single-file collaboration | Not started  |
@@ -29,8 +30,10 @@ after it stopped being true.
 | M     | Production hardening      | Not started  |
 | N     | Portfolio closure         | Not started  |
 
-**No product functionality has been implemented.** Phase A built the repository the product will
-be written in, and nothing else.
+**One piece of product functionality exists**: the Monaco editor on the home page, the single-file
+workspace holding its contents, and the language that file is read as — delivered by milestones B0,
+B1, and B2, covered in a real browser by B3, and closed by B4. Nothing else in the table above is
+built, and Phase C has not started.
 
 ---
 
@@ -60,21 +63,74 @@ no real-time transport, no execution. Phase A ships two applications serving one
 
 ---
 
-## Phase B — local editor
+## Phase B — local editor ✅ Complete
 
 **Goal.** A real code editor in the browser, with no server involvement at all — the first
 product-shaped thing DevSync does.
 
 **Major deliverables**
 
-- Monaco integrated into `apps/web`, loaded in a way that survives the App Router and SSR.
-- A single file open in an editor pane, with syntax highlighting and a language selection.
-- Editor state held in browser memory only.
-- Component tests for the editor wrapper; a Playwright test that types into the real editor.
+| Milestone | Deliverable                                                                  | Status        |
+| --------- | ---------------------------------------------------------------------------- | ------------- |
+| B0        | Monaco integrated into `apps/web`, surviving the App Router, SSR, and Docker | **Delivered** |
+| B1        | The in-memory editing workspace the editor's content belongs to              | **Delivered** |
+| B2        | A language selection over the open file                                      | **Delivered** |
+| B3        | A Playwright test that types into the real Monaco editor                     | **Delivered** |
+| B4        | Phase reconciliation, hardening, and closure                                 | **Delivered** |
+
+**B0, delivered.** The home page renders one Monaco editor, with syntax highlighting and Monaco's
+language services running in web workers. Monaco is bundled from the `monaco-editor` package rather
+than fetched from a CDN, so the production image depends on no external host. The wrapper is
+covered by component tests against a mocked Monaco boundary, and the Playwright suite asserts the
+editor region reaches a real browser.
+
+**B1, delivered.** A client workspace component owns the open file's contents in React state and
+hands them to the editor, which is now controlled rather than left to manage a model nothing else
+can read. Edits flow back through a callback; a change Monaco reports without a value is dropped
+rather than allowed to blank the file, while an emptied file is kept, because empty is valid
+content. The workspace names its one file `main.ts` — a fixed identity, not a file system. State is
+browser memory only: **nothing is stored, sent, or synchronised**, and remounting or reloading
+starts again from the sample. There is still no persistence, no file tree, no tabs, no save action,
+and no server involvement.
+
+**B2, delivered.** The workspace also owns the language its one file is read as, and a labelled
+native `<select>` beside the file name changes it. Five languages are offered — TypeScript,
+JavaScript, Python, JSON, and Markdown — each with the name the file is shown under while it is
+being read that way: `main.ts`, `main.js`, `main.py`, `data.json`, `README.md`. **That is one file
+under five readings, not five files.** Changing the language re-interprets the text that is already
+in the buffer: the content is untouched, so nothing is reset, translated, or replaced, and no
+starter template exists for any of them. The language is never inferred from a file name and never
+detected from the content. Like the content, it is browser memory only — a reload starts again from
+TypeScript and the sample.
+
+**B3, delivered.** A Playwright test drives the real Monaco editor in Chromium against the
+production build: it clicks the rendered code surface, selects the buffer, types a single unique
+line, and asserts the line appears. It then changes the language and asserts the typed line is
+still there rather than replaced by the sample — which catches a workspace that hands the editor
+stale content on a rerender — and finally reloads and asserts the sample is back and the typed line
+is gone. One line and no `Enter`, because Monaco's suggestion widget captures it. What the test
+cannot see is recorded below.
+
+**B4, delivered.** The closure pass. It reconciled what the tests claim with what they prove —
+B3's browser test was renamed and its comments corrected, because mutation testing had shown it
+cannot observe Monaco's `onChange` reaching React state and it had said otherwise. It audited the
+implementation and the architecture boundaries: no API edge, no persistence, reserved packages
+still empty, two runtime dependencies added across the whole phase. It corrected the stale
+milestone number in the home page's own copy. It confirmed every document against the code, reran
+the full validation suite including a Docker runtime verification, and closed the phase.
 
 **Completion boundary.** A visitor can open the application, type code, and see it highlighted.
 Nothing is saved, nothing is shared, and a refresh discards the content — and the interface says
-so.
+so. **Met.**
+
+**A testing boundary, recorded rather than left implied.** The browser test proves a real keystroke
+reaches the real Monaco editor, survives a language change, and is discarded by a reload. It does
+not independently prove that Monaco's change callback reaches React state: `@monaco-editor/react`
+pushes the controlled value into the model only when that value changes, so an integration whose
+callback never fired would still pass every browser assertion. That direction is proved
+compositionally by the component suites — `code-editor.test.tsx` for the callback, and
+`local-editor-workspace.test.tsx` for the state it lands in. This is test layering, not missing
+product behaviour; the editor works, and [`testing.md`](testing.md) is the full account.
 
 **Exclusions and dependencies.** No persistence, no collaboration, no CRDT, no WebSocket, no
 file tree, no account. This phase deliberately writes no server code: it establishes that the

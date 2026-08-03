@@ -16,6 +16,8 @@
     "clean": "node -e \"['.next','coverage','.turbo','tsconfig.tsbuildinfo'].forEach((p) => require('fs').rmSync(p, { recursive: true, force: true }))\""
   },
   "dependencies": {
+    "@monaco-editor/react": "4.7.0",
+    "monaco-editor": "0.56.0",
     "next": "16.2.12",
     "react": "19.2.4",
     "react-dom": "19.2.4"

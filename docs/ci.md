@@ -2,8 +2,8 @@
 
 What runs on GitHub Actions, what each job proves, and how to reproduce any of it locally.
 
-The workflow was introduced in **Phase A4 — CI foundation** and is unchanged at **Phase A
-complete**. CI adds no capability to DevSync;
+The workflow was introduced in **Phase A4 — CI foundation** and is unchanged at **Phase B
+complete**: the local editor needed no new job, step, or secret. CI adds no capability to DevSync;
 it runs the checks that already existed, on someone else's machine, on every change. Every
 command in the workflow is one you can run yourself, which is the point — a red run should never
 require reading CI internals to reproduce.
