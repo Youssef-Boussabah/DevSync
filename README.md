@@ -7,19 +7,24 @@ that product will be built in.
 
 ## Repository status
 
-**Phase A1 — TypeScript and quality configuration.** Phase A0 established the monorepo, the
-workspace boundaries, and the toolchain. Phase A1 tightens the TypeScript settings, moves the
-shared TypeScript and ESLint configuration into `@devsync/config`, and puts every workspace
-under both linting and type-checking. Like A0, it deliberately ships no product functionality.
+**Phase A2 — testing foundation.** Phase A0 established the monorepo, the workspace boundaries,
+and the toolchain; Phase A1 tightened the TypeScript settings and moved the shared TypeScript
+and ESLint configuration into `@devsync/config`. Phase A2 adds the testing architecture: Vitest
+for the frontend, Jest kept where it already works in the API, and Playwright for browser and
+full-stack smoke coverage. Like A0 and A1, it deliberately ships no product functionality.
 
 What exists today:
 
-- A pnpm + Turborepo workspace with root-level `dev`, `build`, `lint`, `lint:fix`,
-  `typecheck`, `test`, `format`, `format:check`, and `clean` commands.
+- A pnpm + Turborepo workspace with root-level `dev`, `build`, `lint`, `lint:fix`, `typecheck`,
+  `test`, `test:unit`, `test:e2e`, `test:all`, `test:coverage`, `format`, `format:check`, and
+  `clean` commands.
 - `apps/web` — a minimal Next.js application whose home page identifies the project.
 - `apps/api` — a minimal NestJS service exposing a single `GET /health` endpoint.
 - Six package boundaries under `packages/`: five deliberately empty, plus `@devsync/config`,
   which owns the shared TypeScript and ESLint configuration.
+- `tests/e2e` — a Playwright workspace that builds both applications, starts them on dedicated
+  ports, and checks that each answers.
+- Eight real tests across three layers. See [`docs/testing.md`](docs/testing.md).
 
 **Real-time collaboration has not been implemented.** Neither has multi-file project editing,
 remote cursors, project persistence, authentication, version history, or code execution. No
@@ -52,6 +57,8 @@ devsync/
 │   ├── ui/                   Future: reusable interface components
 │   ├── config/               Shared development configuration
 │   └── test-utils/           Future: reusable test helpers
+├── tests/
+│   └── e2e/                  Playwright browser and full-stack smoke tests
 ├── docs/                     Project documentation
 ├── turbo.json                Turborepo task graph
 ├── pnpm-workspace.yaml       Workspace definition
@@ -95,17 +102,22 @@ pnpm install
 
 Run these from the repository root; Turborepo fans each one out across the workspaces.
 
-| Command             | What it does                                    |
-| ------------------- | ----------------------------------------------- |
-| `pnpm dev`          | Starts the web and API development servers      |
-| `pnpm build`        | Builds every workspace that has a build step    |
-| `pnpm lint`         | Lints all eight workspaces; never writes        |
-| `pnpm lint:fix`     | The same rules, applying every auto-fixable one |
-| `pnpm typecheck`    | Type-checks all eight workspaces                |
-| `pnpm test`         | Runs the test suites                            |
-| `pnpm format`       | Formats the repository with Prettier            |
-| `pnpm format:check` | Verifies formatting without writing             |
-| `pnpm clean`        | Removes build outputs and Turborepo caches      |
+| Command                 | What it does                                              |
+| ----------------------- | --------------------------------------------------------- |
+| `pnpm dev`              | Starts the web and API development servers                |
+| `pnpm build`            | Builds every workspace that has a build step              |
+| `pnpm lint`             | Lints all nine workspaces; never writes                   |
+| `pnpm lint:fix`         | The same rules, applying every auto-fixable one           |
+| `pnpm typecheck`        | Type-checks all nine workspaces                           |
+| `pnpm test`             | Every in-process suite — Vitest and Jest, no browsers     |
+| `pnpm test:unit`        | The Vitest layer only                                     |
+| `pnpm test:e2e`         | Playwright, against freshly built applications            |
+| `pnpm test:all`         | `test` and `test:e2e` together                            |
+| `pnpm test:coverage`    | Coverage for the two workspaces that have code to measure |
+| `pnpm test:e2e:install` | Downloads Chromium for Playwright; run once per machine   |
+| `pnpm format`           | Formats the repository with Prettier                      |
+| `pnpm format:check`     | Verifies formatting without writing                       |
+| `pnpm clean`            | Removes build outputs and Turborepo caches                |
 
 `pnpm lint` and `pnpm format:check` are read-only. `pnpm lint:fix` and `pnpm format` are the
 two commands that modify files.
@@ -124,24 +136,44 @@ curl http://localhost:3001/health
 # {"status":"ok","service":"devsync-api"}
 ```
 
-`pnpm test` currently runs one real test — the `GET /health` check in `apps/api`. Workspaces
-with no tests print that fact and exit successfully rather than pretending to run a suite.
+## Testing
+
+Three layers, three runners, eight real tests:
+
+- **Vitest** covers `apps/web` — four component tests that render the real home page in jsdom.
+- **Jest** covers `apps/api` — one HTTP-level test that boots a Nest application and checks
+  `GET /health` returns the exact expected payload.
+- **Playwright** covers both applications end to end — three tests that build the applications,
+  start them on ports `4310` and `4311`, and check that the page and the endpoint answer.
+
+Workspaces with no implementation print that they have no tests and exit successfully, rather
+than pretending to run a suite.
+
+```bash
+pnpm test               # fast: Vitest and Jest, no browsers
+pnpm test:e2e:install   # once per machine — downloads Chromium
+pnpm test:e2e           # builds both applications, then drives them in a browser
+```
+
+[`docs/testing.md`](docs/testing.md) explains what each layer proves, why the API stays on Jest,
+where test artifacts go, and what is deliberately not tested yet.
 
 ## Code quality
 
 Every workspace participates in both linting and type-checking. Nothing is silently skipped,
 and no generated output is linted.
 
-| Workspace                | lint | typecheck | test            | build    |
-| ------------------------ | ---- | --------- | --------------- | -------- |
-| `@devsync/web`           | yes  | yes       | none yet        | `next`   |
-| `@devsync/api`           | yes  | yes       | 1 Jest test     | `nest`   |
-| `@devsync/collaboration` | yes  | yes       | none yet        | no build |
-| `@devsync/database`      | yes  | yes       | none yet        | no build |
-| `@devsync/shared`        | yes  | yes       | none yet        | no build |
-| `@devsync/ui`            | yes  | yes       | none yet        | no build |
-| `@devsync/test-utils`    | yes  | yes       | none yet        | no build |
-| `@devsync/config`        | yes  | yes       | nothing to test | no build |
+| Workspace                | lint | typecheck | test                   | build    |
+| ------------------------ | ---- | --------- | ---------------------- | -------- |
+| `@devsync/web`           | yes  | yes       | 4 Vitest tests         | `next`   |
+| `@devsync/api`           | yes  | yes       | 1 Jest test            | `nest`   |
+| `@devsync/e2e`           | yes  | yes       | 3, via `pnpm test:e2e` | no build |
+| `@devsync/collaboration` | yes  | yes       | none yet               | no build |
+| `@devsync/database`      | yes  | yes       | none yet               | no build |
+| `@devsync/shared`        | yes  | yes       | none yet               | no build |
+| `@devsync/ui`            | yes  | yes       | none yet               | no build |
+| `@devsync/test-utils`    | yes  | yes       | none yet               | no build |
+| `@devsync/config`        | yes  | yes       | nothing to test        | no build |
 
 The `packages/*` libraries are consumed as TypeScript source through their `exports` map, so
 they are type-checked in place and never emit — the application that imports them compiles
@@ -164,7 +196,9 @@ exactly one tool reformats code.
 ### Import aliases
 
 - **`apps/web` uses `@/*` → `./src/*`.** Next.js resolves it identically in `next dev`,
-  `next build`, and `tsc`, so it works everywhere it appears.
+  `next build`, and `tsc`, so it works everywhere it appears. Vitest does not read
+  `tsconfig.json`, so `apps/web/vitest.config.mts` restates the same alias — one place to keep
+  in step if it ever changes.
 - **`apps/api` has no internal alias, on purpose.** NestJS compiles with `tsc`, and `tsc` does
   not rewrite path aliases when it emits. An alias configured in `tsconfig.json` would satisfy
   the editor and the type-check, then fail at runtime with an unresolved module. Adding one
@@ -185,6 +219,9 @@ the variable in your shell instead:
 ```bash
 API_PORT=4000 pnpm --filter @devsync/api dev
 ```
+
+The Playwright suite follows the same rule: it sets `API_PORT` through its `webServer`
+configuration rather than expecting a file on disk to be read.
 
 `.env` is git-ignored and reserved for the milestone that introduces configuration loading.
 This repository contains no secrets, credentials, or external service configuration.

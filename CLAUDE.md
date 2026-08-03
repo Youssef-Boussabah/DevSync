@@ -17,6 +17,7 @@ monorepo it is being built in.
 - `packages/ui` — reusable interface components.
 - `packages/config` — shared development configuration.
 - `packages/test-utils` — reusable test helpers.
+- `tests/e2e` (`@devsync/e2e`) — Playwright browser and full-stack tests.
 - `docs/` — project documentation.
 
 Code shared by more than one workspace belongs in `packages/`, not duplicated across apps.
@@ -39,7 +40,8 @@ type.
 
 Every workspace extends a configuration from `@devsync/config`, which owns the strictness
 settings: `tsconfig.package.json` for `packages/*`, `tsconfig.nest.json` for `apps/api`,
-`tsconfig.next.json` for `apps/web`. A workspace's own `tsconfig.json` should only hold what
+`tsconfig.next.json` for `apps/web`, `tsconfig.playwright.json` for `tests/e2e`. A workspace's
+own `tsconfig.json` should only hold what
 is genuinely local to it — `include`, `outDir`, `paths`, the `next` plugin. If a compiler
 option belongs to more than one workspace, it belongs in `@devsync/config`.
 
@@ -76,6 +78,34 @@ order to make a command pass. A workspace with nothing worth testing yet is expe
 and exit cleanly, which is what its `test` script already does — leave it that way until there
 is real behaviour to cover.
 
+Three runners, each with a boundary:
+
+- **Vitest** — `apps/web`, and any `packages/*` that gains testable code. jsdom for components.
+- **Jest** — `apps/api` only. It stays there because `@nestjs/testing` targets Jest's API and
+  `ts-jest` already honours `emitDecoratorMetadata`. Do not migrate it for uniformity; a
+  migration needs a concrete technical reason.
+- **Playwright** — `tests/e2e` only, and it is the only layer allowed to start real processes.
+  Chromium only for now. Do not add a second browser-testing framework.
+
+`pnpm test` must stay fast: in-process suites only, no builds, no browsers. Browser runs live
+behind `pnpm test:e2e`, and the browser download behind `pnpm test:e2e:install` — never inside
+an ordinary test command.
+
+End-to-end tests start their own servers on ports 4310 and 4311, wait on an HTTP readiness
+check, and must never reuse a server a developer started by hand or sleep for a fixed interval.
+Development ports 3000 and 3001 are off limits to them.
+
+Every root test script needs a matching task in `turbo.json`. Anything depending on live
+processes or a browser must set `cache: false`.
+
+Test artifacts — `coverage/`, `test-results/`, `playwright-report/` — stay git-ignored, and a
+test run must never modify a tracked file. Coverage is measured in `apps/web` and `apps/api`
+only; do not describe it as repository-wide, and do not add thresholds until there is
+substantive application logic to hold to them.
+
+[`docs/testing.md`](docs/testing.md) is the long-form version and must be updated in the same
+change that makes it inaccurate.
+
 ## Documentation
 
 `README.md` describes what exists, not what is planned. Do not describe collaboration,
@@ -92,9 +122,8 @@ the user's call.
 
 ## Current boundary
 
-The repository is at **Phase A1 — TypeScript and quality configuration**. No product
-functionality is implemented. Do not implement later milestones early. Specifically, do not
-add a database or ORM, authentication, WebSockets, a code editor, a CRDT library, code
-execution, Docker, or CI configuration until the milestone that calls for it. Testing
-standardisation, including any move away from Jest in `apps/api`, belongs to Phase A2. If a
-task seems to require one of these, say so and stop rather than building ahead.
+The repository is at **Phase A2 — testing foundation**. No product functionality is
+implemented. Do not implement later milestones early. Specifically, do not add a database or
+ORM, authentication, WebSockets, a code editor, a CRDT library, code execution, Docker, or CI
+configuration until the milestone that calls for it. If a task seems to require one of these,
+say so and stop rather than building ahead.

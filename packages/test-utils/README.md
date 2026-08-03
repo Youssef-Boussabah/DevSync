@@ -11,5 +11,13 @@ written once rather than copied.
 
 ## Current state
 
-Boundary only. `apps/api` owns the repository's only test today and it requires
-no shared helper, so adding one now would be a fake abstraction.
+Boundary only, still. Phase A2 gave the repository three testing layers — Vitest in
+`apps/web`, Jest in `apps/api`, Playwright in `tests/e2e` — and none of them needs a
+shared helper: they run on three different runners, and each assertion is a handful
+of lines against a page or an endpoint. A helper published from here today would have
+no caller, and a fixture factory with no fixture to build is an abstraction pretending
+to be infrastructure.
+
+The realistic trigger is a harness that boots the API for tests in more than one
+workspace, or shared fixture data once `@devsync/database` and `@devsync/shared` carry
+real types. See [`docs/testing.md`](../../docs/testing.md) for the current layout.

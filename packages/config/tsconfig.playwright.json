@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "@devsync/config — Playwright test workspace",
+  "extends": "./tsconfig.base.json",
+
+  // Playwright loads `.ts` files through its own transpiler rather than through
+  // `tsc`, and resolves imports the way a bundler does: extensionless relative
+  // specifiers, and no distinction between an ESM and a CommonJS source file.
+  // `moduleResolution: "bundler"` is the setting that describes that accurately,
+  // which is why this cannot simply extend `tsconfig.package.json` —
+  // `verbatimModuleSyntax` there rejects ESM syntax in a CommonJS package, and a
+  // Playwright workspace is CommonJS by default.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true
+  }
+}

@@ -1,6 +1,7 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+  - 'tests/*'
 
 # Transitive dependencies whose install scripts are explicitly approved.
 # pnpm blocks every other package's lifecycle scripts by default.
