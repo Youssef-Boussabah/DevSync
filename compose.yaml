@@ -1,0 +1,71 @@
+# Docker Compose for the DevSync applications.
+#
+#   docker compose up -d --build
+#
+# Two services, both built from the repository root because this is a pnpm
+# workspace. There is no `version:` key: it has been obsolete since the Compose
+# Specification, and Compose warns about it.
+#
+# There is no database, cache, queue, message broker, or named volume here,
+# because DevSync currently has none. Neither application stores anything, so an
+# empty PostgreSQL container would be scaffolding pretending to be architecture.
+
+name: devsync
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    # Runs the container's process under an init that forwards SIGTERM and reaps
+    # children. Without it the server is PID 1, where the kernel drops signals
+    # that have no explicit handler, and `docker compose down` waits the full
+    # grace period before killing it.
+    init: true
+    ports:
+      - '3000:3000'
+    environment:
+      NODE_ENV: production
+      # Read by the Next.js standalone server. HOSTNAME is what makes it listen on
+      # every interface inside the container rather than on loopback only.
+      PORT: '3000'
+      HOSTNAME: 0.0.0.0
+    healthcheck:
+      # Proves the HTTP application actually answers, not merely that a process is
+      # alive. Uses Node's built-in fetch, so the image needs no curl or wget.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    init: true
+    ports:
+      - '3001:3001'
+    environment:
+      NODE_ENV: production
+      # Passed explicitly. DevSync has no configuration module and loads no `.env`
+      # file, so a port that is not stated here is not configured at all.
+      API_PORT: '3001'
+    healthcheck:
+      # The endpoint under test is the health endpoint itself.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+# No `depends_on` between the two services, deliberately. `apps/web` does not call
+# `apps/api` yet, so declaring an ordering would describe a dependency that does
+# not exist and would silently become wrong once a real one appears.

@@ -17,6 +17,10 @@ export const ignores = [
   '**/.next/**',
   '**/.turbo/**',
   '**/next-env.d.ts',
+  // Playwright artefacts: reports, traces, screenshots, and blob output.
+  '**/test-results/**',
+  '**/playwright-report/**',
+  '**/blob-report/**',
 ];
 
 /** TypeScript sources. Only these receive type-aware rules. */

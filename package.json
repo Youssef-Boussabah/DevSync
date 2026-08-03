@@ -15,6 +15,11 @@
     "lint:fix": "turbo run lint:fix",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:unit": "turbo run test:unit",
+    "test:e2e": "turbo run test:e2e",
+    "test:e2e:install": "pnpm --filter @devsync/e2e run test:e2e:install",
+    "test:all": "turbo run test test:e2e",
+    "test:coverage": "turbo run test:coverage",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "clean": "turbo run clean && node -e \"require('fs').rmSync('.turbo',{recursive:true,force:true})\""

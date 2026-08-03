@@ -8,6 +8,7 @@
     "./tsconfig.package.json": "./tsconfig.package.json",
     "./tsconfig.nest.json": "./tsconfig.nest.json",
     "./tsconfig.next.json": "./tsconfig.next.json",
+    "./tsconfig.playwright.json": "./tsconfig.playwright.json",
     "./eslint/base": "./eslint/base.mjs",
     "./eslint/nest": "./eslint/nest.mjs"
   },
@@ -16,7 +17,8 @@
     "tsconfig.base.json",
     "tsconfig.package.json",
     "tsconfig.nest.json",
-    "tsconfig.next.json"
+    "tsconfig.next.json",
+    "tsconfig.playwright.json"
   ],
   "scripts": {
     "lint": "eslint .",

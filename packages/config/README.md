@@ -8,15 +8,16 @@ it exports is consumed at build, lint, or type-check time.
 
 ## TypeScript
 
-Four configurations, layered so that a framework only overrides what it genuinely
+Five configurations, layered so that a framework only overrides what it genuinely
 owns.
 
-| File                    | Extends              | Used by                                                      |
-| ----------------------- | -------------------- | ------------------------------------------------------------ |
-| `tsconfig.base.json`    | —                    | The three configs below; not extended directly by workspaces |
-| `tsconfig.package.json` | `tsconfig.base.json` | Every `packages/*` library                                   |
-| `tsconfig.nest.json`    | `tsconfig.base.json` | `apps/api`                                                   |
-| `tsconfig.next.json`    | `tsconfig.base.json` | `apps/web`                                                   |
+| File                       | Extends              | Used by                                                     |
+| -------------------------- | -------------------- | ----------------------------------------------------------- |
+| `tsconfig.base.json`       | —                    | The four configs below; not extended directly by workspaces |
+| `tsconfig.package.json`    | `tsconfig.base.json` | Every `packages/*` library                                  |
+| `tsconfig.nest.json`       | `tsconfig.base.json` | `apps/api`                                                  |
+| `tsconfig.next.json`       | `tsconfig.base.json` | `apps/web`                                                  |
+| `tsconfig.playwright.json` | `tsconfig.base.json` | `tests/e2e`                                                 |
 
 `tsconfig.base.json` carries **only** correctness settings — `strict`,
 `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noImplicitOverride`,
@@ -42,6 +43,12 @@ Two deviations are intentional and load-bearing:
 - **`tsconfig.nest.json` does not set `lib`.** It inherits the default library for
   its `target`, which is what `@types/express` and `@types/node` are checked
   against today.
+
+`tsconfig.playwright.json` exists because `tests/e2e` cannot extend
+`tsconfig.package.json`: Playwright transpiles `.ts` files itself and resolves imports the way
+a bundler does, whereas `verbatimModuleSyntax` there rejects ESM syntax in a CommonJS package,
+which is what a Playwright workspace is by default. It sets `moduleResolution: "bundler"`, which
+describes Playwright's loader accurately, and inherits every strictness setting from the base.
 
 ### Consuming it
 
@@ -102,6 +109,11 @@ stays on everywhere else.
 afterwards, so the repository-wide rules win where the two overlap. Keeping
 `eslint-config-next` in `apps/web` avoids pinning this package to a Next.js version.
 
+The shared `ignores` list is where generated output is excluded once for every
+workspace: dependencies, build output, `.next`, `.turbo`, coverage, and the
+Playwright artefact directories (`test-results`, `playwright-report`,
+`blob-report`). A workspace should never need to restate any of them.
+
 ## What this package does not own
 
 **Prettier.** Formatting is configured once, at the repository root, in
@@ -109,3 +121,13 @@ afterwards, so the repository-wide rules win where the two overlap. Keeping
 from each file, so routing it through this package would add indirection without a
 second consumer. ESLint does not run Prettier as a rule, so exactly one tool
 reformats code.
+
+**Test runner configuration.** `apps/web/vitest.config.mts` is self-contained, and
+`apps/api/jest.config.mjs` is too. Each has exactly one consumer today, so a shared
+base would add a layer of indirection while removing no duplication — the same
+argument as for Prettier above. The trigger for changing that is concrete: when a
+second workspace needs Vitest, the runner-agnostic parts of `apps/web`'s config —
+the include globs and the coverage settings — move here, the way the TypeScript and
+ESLint configuration moved here in Phase A1. What this package does own is
+`tsconfig.playwright.json`, because TypeScript strictness is centrally owned for
+every workspace regardless of how many there are.

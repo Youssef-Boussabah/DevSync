@@ -20,6 +20,24 @@
     "test": {
       "dependsOn": ["^build"]
     },
+    "test:unit": {
+      "dependsOn": ["^build"]
+    },
+    "test:coverage": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"]
+    },
+    "test:e2e": {
+      // Named explicitly rather than through `^build`, because `@devsync/e2e` does
+      // not import the applications — it starts them. Declaring them as package
+      // dependencies to obtain the same ordering would also drag both builds into
+      // `pnpm test`, which is meant to stay fast and build nothing.
+      "dependsOn": ["@devsync/web#build", "@devsync/api#build"],
+      // Never cached. The result depends on real processes binding real ports and
+      // on a browser being installed, none of which is part of the input hash, so a
+      // cache hit here would report a pass without having proved anything.
+      "cache": false
+    },
     "dev": {
       "cache": false,
       "persistent": true
