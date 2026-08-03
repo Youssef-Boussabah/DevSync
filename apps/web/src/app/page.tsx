@@ -6,8 +6,8 @@ export default function Home() {
         A browser-based collaborative development environment.
       </p>
       <p className="text-sm text-zinc-500">
-        Phase A0 — repository foundation. The collaborative editor, project persistence, and code
-        execution are not implemented yet.
+        Phase A1 — TypeScript and quality configuration. The collaborative editor, project
+        persistence, and code execution are not implemented yet.
       </p>
     </main>
   );

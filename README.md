@@ -7,16 +7,19 @@ that product will be built in.
 
 ## Repository status
 
-**Phase A0 — repository foundation.** This milestone establishes the monorepo, the workspace
-boundaries, and the toolchain. It deliberately ships no product functionality.
+**Phase A1 — TypeScript and quality configuration.** Phase A0 established the monorepo, the
+workspace boundaries, and the toolchain. Phase A1 tightens the TypeScript settings, moves the
+shared TypeScript and ESLint configuration into `@devsync/config`, and puts every workspace
+under both linting and type-checking. Like A0, it deliberately ships no product functionality.
 
 What exists today:
 
-- A pnpm + Turborepo workspace with root-level `dev`, `build`, `lint`, `typecheck`, `test`,
-  `format`, `format:check`, and `clean` commands.
+- A pnpm + Turborepo workspace with root-level `dev`, `build`, `lint`, `lint:fix`,
+  `typecheck`, `test`, `format`, `format:check`, and `clean` commands.
 - `apps/web` — a minimal Next.js application whose home page identifies the project.
 - `apps/api` — a minimal NestJS service exposing a single `GET /health` endpoint.
-- Six empty-by-design package boundaries under `packages/`.
+- Six package boundaries under `packages/`: five deliberately empty, plus `@devsync/config`,
+  which owns the shared TypeScript and ESLint configuration.
 
 **Real-time collaboration has not been implemented.** Neither has multi-file project editing,
 remote cursors, project persistence, authentication, version history, or code execution. No
@@ -52,13 +55,14 @@ devsync/
 ├── docs/                     Project documentation
 ├── turbo.json                Turborepo task graph
 ├── pnpm-workspace.yaml       Workspace definition
+├── prettier.config.mjs       Formatting, for the whole repository
 ├── CLAUDE.md                 Instructions for AI coding assistants
 └── README.md
 ```
 
 The six `packages/*` workspaces exist to fix the module boundaries early. Apart from
-`@devsync/config`, which owns the shared TypeScript base, they export nothing — placeholder
-implementations would be worse than an honest empty module.
+`@devsync/config`, which owns the shared TypeScript and ESLint configuration, they export
+nothing — placeholder implementations would be worse than an honest empty module.
 
 ## Prerequisites
 
@@ -91,16 +95,20 @@ pnpm install
 
 Run these from the repository root; Turborepo fans each one out across the workspaces.
 
-| Command             | What it does                                 |
-| ------------------- | -------------------------------------------- |
-| `pnpm dev`          | Starts the web and API development servers   |
-| `pnpm build`        | Builds every workspace that has a build step |
-| `pnpm lint`         | Lints `apps/web` and `apps/api`              |
-| `pnpm typecheck`    | Type-checks every TypeScript workspace       |
-| `pnpm test`         | Runs the test suites                         |
-| `pnpm format`       | Formats the repository with Prettier         |
-| `pnpm format:check` | Verifies formatting without writing          |
-| `pnpm clean`        | Removes build outputs and Turborepo caches   |
+| Command             | What it does                                    |
+| ------------------- | ----------------------------------------------- |
+| `pnpm dev`          | Starts the web and API development servers      |
+| `pnpm build`        | Builds every workspace that has a build step    |
+| `pnpm lint`         | Lints all eight workspaces; never writes        |
+| `pnpm lint:fix`     | The same rules, applying every auto-fixable one |
+| `pnpm typecheck`    | Type-checks all eight workspaces                |
+| `pnpm test`         | Runs the test suites                            |
+| `pnpm format`       | Formats the repository with Prettier            |
+| `pnpm format:check` | Verifies formatting without writing             |
+| `pnpm clean`        | Removes build outputs and Turborepo caches      |
+
+`pnpm lint` and `pnpm format:check` are read-only. `pnpm lint:fix` and `pnpm format` are the
+two commands that modify files.
 
 To work on one workspace at a time:
 
@@ -119,10 +127,56 @@ curl http://localhost:3001/health
 `pnpm test` currently runs one real test — the `GET /health` check in `apps/api`. Workspaces
 with no tests print that fact and exit successfully rather than pretending to run a suite.
 
+## Code quality
+
+Every workspace participates in both linting and type-checking. Nothing is silently skipped,
+and no generated output is linted.
+
+| Workspace                | lint | typecheck | test            | build    |
+| ------------------------ | ---- | --------- | --------------- | -------- |
+| `@devsync/web`           | yes  | yes       | none yet        | `next`   |
+| `@devsync/api`           | yes  | yes       | 1 Jest test     | `nest`   |
+| `@devsync/collaboration` | yes  | yes       | none yet        | no build |
+| `@devsync/database`      | yes  | yes       | none yet        | no build |
+| `@devsync/shared`        | yes  | yes       | none yet        | no build |
+| `@devsync/ui`            | yes  | yes       | none yet        | no build |
+| `@devsync/test-utils`    | yes  | yes       | none yet        | no build |
+| `@devsync/config`        | yes  | yes       | nothing to test | no build |
+
+The `packages/*` libraries are consumed as TypeScript source through their `exports` map, so
+they are type-checked in place and never emit — the application that imports them compiles
+them. `@devsync/config` ships `.mjs`, which is why its type-check runs with `checkJs`.
+
+**TypeScript.** `@devsync/config` owns a strict base and three configurations layered on top
+of it, one per kind of workspace. See
+[`packages/config/README.md`](packages/config/README.md) for what each one sets and for the
+two places where NestJS's requirements deliberately diverge from the base.
+
+**ESLint.** Flat config throughout. `@devsync/config` exports the shared TypeScript rules;
+`apps/api` extends them with the NestJS variant, and `apps/web` composes them with
+`eslint-config-next`. Rules are type-aware on `.ts`/`.tsx` and plain on tooling files such as
+`postcss.config.mjs`, which live outside every tsconfig.
+
+**Prettier.** One source of truth: `prettier.config.mjs` at the repository root, with
+`.prettierignore` excluding build output. ESLint does not run Prettier as a lint rule, so
+exactly one tool reformats code.
+
+### Import aliases
+
+- **`apps/web` uses `@/*` → `./src/*`.** Next.js resolves it identically in `next dev`,
+  `next build`, and `tsc`, so it works everywhere it appears.
+- **`apps/api` has no internal alias, on purpose.** NestJS compiles with `tsc`, and `tsc` does
+  not rewrite path aliases when it emits. An alias configured in `tsconfig.json` would satisfy
+  the editor and the type-check, then fail at runtime with an unresolved module. Adding one
+  would mean adding a runtime resolver, which this milestone does not call for.
+- **Across workspaces, import the package, not the path.** `@devsync/shared` rather than
+  `../../packages/shared/src`. No such import exists yet, because no package exports anything
+  yet; the rule is the policy for when one does.
+
 ## Configuration
 
 `.env.example` is the documented inventory of the environment variables DevSync understands.
-In Phase A0 that is exactly one: `API_PORT`, which the NestJS service reads on startup and
+That is currently exactly one: `API_PORT`, which the NestJS service reads on startup and
 which defaults to `3001`.
 
 There is no configuration module yet, so **`.env` files are not loaded automatically**. Set

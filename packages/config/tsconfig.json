@@ -1,0 +1,11 @@
+{
+  // This package ships JavaScript, not TypeScript: the ESLint configs below are
+  // `.mjs` carrying `// @ts-check`. Checking them here is what makes that
+  // annotation mean something outside an editor.
+  "extends": "./tsconfig.package.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["eslint/**/*.mjs", "eslint.config.mjs"]
+}

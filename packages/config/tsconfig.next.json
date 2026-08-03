@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "@devsync/config — Next.js application",
+  "extends": "./tsconfig.base.json",
+
+  // The compiler options Next.js requires of an app it type-checks. The `next`
+  // language-service plugin, the `@/*` path alias, and the `include` globs stay in
+  // `apps/web/tsconfig.json`: `paths` resolve relative to the file that declares
+  // them, and Next.js maintains the include list itself.
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "incremental": true,
+    "noEmit": true
+  }
+}

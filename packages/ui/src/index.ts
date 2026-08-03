@@ -3,7 +3,8 @@
  *
  * Public surface for DevSync's reusable interface components.
  *
- * Phase A0 establishes the package boundary only. This module is intentionally
- * empty; `apps/web` currently owns the little markup that exists.
+ * This package exists to fix the module boundary early. The implementation is
+ * deliberately deferred: `apps/web` currently owns the little markup that
+ * exists, and a component belongs here once a second consumer needs it.
  */
 export {};
