@@ -4,9 +4,10 @@ What DevSync is made of today, where the boundaries are drawn, and which of thos
 real code rather than reserved space.
 
 DevSync is intended to become a browser-based collaborative development environment. **Almost
-none of that product exists yet.** What exists is a monorepo, two small applications, a shared
-configuration package, three testing layers, two production images, and a CI workflow. This
-document describes that, and separates it from the design the repository is being shaped towards.
+none of that product exists yet.** What exists is a monorepo, two small applications — one of
+which now hosts a Monaco editor — a shared configuration package, three testing layers, two
+production images, and a CI workflow. This document describes that, and separates it from the
+design the repository is being shaped towards.
 
 ## How to read this document
 
@@ -34,15 +35,16 @@ flowchart LR
         api["apps/api<br/>NestJS 11 on Express<br/>port 3001"]
     end
 
-    client -->|"GET / — the home page"| web
+    client -->|"GET / — the home page and its editor"| web
     client -->|"GET /health — JSON status"| api
     web -.->|"no call exists yet"| api
 ```
 
-That dotted edge is the whole of the current inter-service story: `apps/web` renders a static
-page and never contacts `apps/api`. There is no shared session, no proxy, no API client, and no
-serialisation format agreed between them. The first real edge between the two applications
-belongs to the milestone that gives them something to say to each other.
+That dotted edge is the whole of the current inter-service story: `apps/web` serves a prerendered
+page whose editor runs entirely in the browser, and never contacts `apps/api`. There is no shared
+session, no proxy, no API client, and no serialisation format agreed between them. The first real
+edge between the two applications belongs to the milestone that gives them something to say to
+each other.
 
 There is also no database, cache, queue, message broker, background worker, or scheduler
 anywhere in the repository. Nothing DevSync runs today writes to persistent storage of any kind.
@@ -101,17 +103,39 @@ and it means a package cannot go stale relative to its own build output, because
 | ------------ | --------------------------------------------------------- |
 | Framework    | Next.js 16, App Router, React 19                          |
 | Styling      | Tailwind CSS v4, through `@tailwindcss/postcss`           |
+| Editor       | Monaco, through `@monaco-editor/react`                    |
 | Routes       | `/` only                                                  |
 | Alias        | `@/*` → `./src/*`                                         |
 | Dev port     | 3000                                                      |
 | Build output | `.next/`, including `.next/standalone` and `.next/static` |
-| Tests        | Vitest, jsdom, 4 component tests                          |
+| Tests        | Vitest, jsdom, 14 component tests                         |
 
 `src/app/layout.tsx` declares the document metadata and loads two fonts through
 `next/font/google`. `src/app/page.tsx` is a synchronous Server Component that renders the
-project's name, a one-line description, and an honest statement of what is not built yet. That
-is the entire client: **there is no editor, no file tree, no project view, no state management,
-and no data fetching of any kind.**
+project's name, a one-line description, an honest statement of what is not built yet, and the
+editor. **There is no file tree, no project view, no editor tabs, no state management library, and
+no data fetching of any kind.**
+
+### The editor — implemented
+
+`src/editor/code-editor.tsx` is the whole of it: one client component rendering one Monaco editor
+over a fixed TypeScript sample. Three properties of it are architectural rather than cosmetic.
+
+- **Monaco never runs on the server.** A client component is still rendered during SSR, and
+  `monaco-editor` reads browser globals as it initialises, so the package is imported from an
+  effect rather than at module scope. The route therefore still prerenders as static content, and
+  the page's first paint is a loading message rather than an editor.
+- **Monaco is bundled, not fetched.** `@monaco-editor/react` loads Monaco from a CDN by default;
+  the component overrides that with `loader.config({ monaco })` so the copy in `node_modules` is
+  the one used. Without this the production image would depend on a third-party host at runtime,
+  which no other part of DevSync does.
+- **Monaco's language workers are declared in application source.** Monaco points at its own
+  worker entry points, but Turbopack copies those out of `node_modules` as static files instead of
+  compiling them, and they fail on their first import. `src/editor/workers/` holds two one-line
+  re-exports that Turbopack does compile, and `MonacoEnvironment.getWorker` points at them.
+
+Editor content lives in the browser and nowhere else. **Nothing is saved, sent, or shared**, and a
+reload discards it.
 
 Two configuration choices in `next.config.ts` matter to the rest of the system:
 
@@ -193,9 +217,9 @@ would have to be unlearned before it could be used.
 
 ## `tests/e2e` — implemented
 
-The only workspace allowed to start real processes. Playwright, Chromium only, three specs. It
-builds both applications, starts them on ports 4310 and 4311, waits on HTTP readiness checks —
-never a fixed sleep — and shuts them down afterwards.
+The only workspace allowed to start real processes. Playwright, Chromium only, four tests across
+two specs. It builds both applications, starts them on ports 4310 and 4311, waits on HTTP
+readiness checks — never a fixed sleep — and shuts them down afterwards.
 
 The three testing layers as a whole:
 
@@ -205,8 +229,8 @@ The three testing layers as a whole:
 | HTTP-level application | Jest       | `apps/api`  | A Nest app on an ephemeral socket    |
 | Browser and full-stack | Playwright | `tests/e2e` | Both compiled applications, on ports |
 
-Eight real tests in total. [`testing.md`](testing.md) covers what each layer proves, why the API
-stays on Jest, and what is deliberately untested.
+Nineteen real tests in total. [`testing.md`](testing.md) covers what each layer proves, why the
+API stays on Jest, and what is deliberately untested.
 
 ## Request and process boundaries
 
@@ -390,8 +414,8 @@ flowchart TB
     api2 -->|"submit job, read result"| runner
 ```
 
-- **A code editor in the client**, driven by a CRDT-backed shared document. Monaco is the
-  intended editor and Yjs the intended CRDT; neither is installed.
+- **The code editor driven by a CRDT-backed shared document.** Monaco is in the client already;
+  Yjs is the intended CRDT and is not installed, so the editor is bound to nothing.
 - **The API as the authority** over project data, membership, access control, and the
   collaboration transport. The transport is expected to be WebSocket-based; no WebSocket
   dependency exists.
@@ -407,10 +431,11 @@ flowchart TB
 Recorded so that their absence reads as a decision rather than an oversight. None of the
 following exists anywhere in this repository:
 
-- A database, ORM, migration tool, or any persistence
+- A database, ORM, migration tool, or any persistence — including browser storage: the editor
+  uses neither `localStorage` nor IndexedDB
 - Authentication, sessions, accounts, or authorization
 - WebSockets, Socket.IO, or any real-time transport
-- A CRDT library, an editor component, or any collaboration code
+- A CRDT library or any collaboration code — the editor exists, but it is bound to nothing
 - Code execution, sandboxing, or a runner service
 - Redis, a cache, a queue, or a message broker
 - A shared type, schema, or protocol definition — `@devsync/shared` exports nothing

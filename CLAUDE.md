@@ -209,13 +209,18 @@ here is installed, and none may be installed ahead of the milestone that calls f
 
 ## Current boundary
 
-The repository is at **Phase A complete — project foundation**: monorepo scaffold, centralised
-TypeScript and quality configuration, three testing layers, two production Docker images, GitHub
-Actions CI, and the documentation above. **No product functionality is implemented, and Phase B
-has not started.**
+The repository is at **Phase B, milestone B0 — Monaco integration**. Phase A's foundation is in
+place — monorepo scaffold, centralised TypeScript and quality configuration, three testing layers,
+two production Docker images, GitHub Actions CI, and the documentation above — and `apps/web` now
+renders one Monaco editor over a fixed sample file.
+
+**That editor is the only product functionality.** Its content lives in browser memory and is
+never read, written, or sent anywhere. There is no editing workspace beyond the one file, no
+language selection, no file tree, no tabs, no persistence of any kind — not `localStorage`, not
+IndexedDB — no API call, and no test that types into the real editor.
 
 Do not implement later milestones early. Specifically, do not add a database or ORM,
-authentication, WebSockets, a code editor, a CRDT library, code execution, Kubernetes, cloud
-deployment, release automation, or a dependency bot until the milestone that calls for it. If
-a task seems to require one of these, say so and stop rather than building ahead.
+authentication, WebSockets, a CRDT library, code execution, Kubernetes, cloud deployment, release
+automation, or a dependency bot until the milestone that calls for it. If a task seems to require
+one of these, say so and stop rather than building ahead.
 [`docs/roadmap.md`](docs/roadmap.md) is the sequence and the boundary each milestone must meet.

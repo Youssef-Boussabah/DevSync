@@ -2,9 +2,10 @@
 
 The milestone sequence DevSync is being built in, and the current position within it.
 
-**Only Phase A exists.** Everything from Phase B onward is a plan: no code, no dependency, and no
-workspace content for any of it is present in this repository. A phase is described here so that
-the order and the boundaries are decided in advance, not so that it can be mistaken for progress.
+**Phase A is complete and Phase B has started.** Everything from Phase C onward is a plan: no
+code, no dependency, and no workspace content for any of it is present in this repository. A phase
+is described here so that the order and the boundaries are decided in advance, not so that it can
+be mistaken for progress.
 
 No dates or durations appear in this document, deliberately. A phase is done when its completion
 boundary is met, and estimating that in advance would produce a number that gets quoted long
@@ -15,7 +16,7 @@ after it stopped being true.
 | Phase | Name                      | Status       |
 | ----- | ------------------------- | ------------ |
 | **A** | Project foundation        | **Complete** |
-| B     | Local editor              | Not started  |
+| **B** | Local editor              | **B0 done**  |
 | C     | Database-backed projects  | Not started  |
 | D     | Rooms and presence        | Not started  |
 | E     | Single-file collaboration | Not started  |
@@ -29,8 +30,8 @@ after it stopped being true.
 | M     | Production hardening      | Not started  |
 | N     | Portfolio closure         | Not started  |
 
-**No product functionality has been implemented.** Phase A built the repository the product will
-be written in, and nothing else.
+**One piece of product functionality exists**: the Monaco editor on the home page, delivered by
+milestone B0. Nothing else in the table above is built.
 
 ---
 
@@ -60,21 +61,30 @@ no real-time transport, no execution. Phase A ships two applications serving one
 
 ---
 
-## Phase B — local editor
+## Phase B — local editor 🚧 In progress
 
 **Goal.** A real code editor in the browser, with no server involvement at all — the first
 product-shaped thing DevSync does.
 
 **Major deliverables**
 
-- Monaco integrated into `apps/web`, loaded in a way that survives the App Router and SSR.
-- A single file open in an editor pane, with syntax highlighting and a language selection.
-- Editor state held in browser memory only.
-- Component tests for the editor wrapper; a Playwright test that types into the real editor.
+| Milestone | Deliverable                                                                  | Status        |
+| --------- | ---------------------------------------------------------------------------- | ------------- |
+| B0        | Monaco integrated into `apps/web`, surviving the App Router, SSR, and Docker | **Delivered** |
+| B1        | The in-memory editing workspace the editor's content belongs to              | Not started   |
+| B2        | A language selection over the open file                                      | Not started   |
+| B3        | A Playwright test that types into the real Monaco editor                     | Not started   |
+
+**B0, delivered.** The home page renders one Monaco editor holding a fixed TypeScript sample, with
+syntax highlighting and Monaco's language services running in web workers. Monaco is bundled from
+the `monaco-editor` package rather than fetched from a CDN, so the production image depends on no
+external host. The wrapper is covered by component tests against a mocked Monaco boundary, and the
+Playwright suite asserts the editor region reaches a real browser. Editor state is in browser
+memory only; there is no persistence, no file tree, no tabs, and no server involvement.
 
 **Completion boundary.** A visitor can open the application, type code, and see it highlighted.
 Nothing is saved, nothing is shared, and a refresh discards the content — and the interface says
-so.
+so. **Not yet met:** B1 through B3 remain.
 
 **Exclusions and dependencies.** No persistence, no collaboration, no CRDT, no WebSocket, no
 file tree, no account. This phase deliberately writes no server code: it establishes that the

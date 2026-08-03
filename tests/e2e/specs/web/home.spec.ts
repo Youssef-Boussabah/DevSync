@@ -19,4 +19,14 @@ test.describe('home page of the running web application', () => {
     await expect(page).toHaveTitle('DevSync');
     await expect(page.getByRole('heading', { level: 1, name: 'DevSync' })).toBeVisible();
   });
+
+  // Monaco is a client-side component, so this is the layer that proves the editor
+  // survives being server-rendered and reaches the browser at all. It asserts the
+  // region the application owns rather than anything inside Monaco's own DOM;
+  // typing into the real editor arrives with the rest of Phase B.
+  test('shows the editor region', async ({ page }) => {
+    await page.goto('/');
+
+    await expect(page.getByRole('region', { name: 'Code editor' })).toBeVisible();
+  });
 });

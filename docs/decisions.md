@@ -27,6 +27,7 @@ exists. Nothing in a direction entry is installed.
 | [D12](#d12--direction-monaco-and-yjs-for-collaborative-editing) | **Direction:** Monaco + Yjs               |
 | [D13](#d13--direction-postgresql-before-redis)                  | **Direction:** PostgreSQL before Redis    |
 | [D14](#d14--direction-an-isolated-execution-runner)             | **Direction:** an isolated runner         |
+| [D15](#d15--monaco-is-bundled-not-loaded-from-a-cdn)            | Monaco is bundled, not loaded from a CDN  |
 
 ---
 
@@ -146,7 +147,9 @@ code. jsdom for components.
 **Reason.** It shares Vite's transform pipeline with the tooling `apps/web` already uses, so TSX
 needs no additional configuration, and it starts fast enough to run on every save.
 
-**Consequence today.** Four component tests rendering the real home page. `layout.tsx` cannot be
+**Consequence today.** Fourteen component tests across the home page and the editor wrapper, the
+latter against a mocked Monaco boundary because jsdom cannot run the real editor. `layout.tsx`
+cannot be
 tested here — it imports `next/font/google`, which only the Next.js compiler resolves — so the
 metadata it declares is asserted by Playwright against the real document instead of being
 re-implemented in a mock.
@@ -185,8 +188,8 @@ cannot be proved by a single-client test. `browser.newContext()` produces fully 
 inside one browser process, so a single test can act as two users — which is exactly the shape
 the collaboration tests will need. Nothing else in the ecosystem makes that as direct.
 
-**Consequence today.** Three tests that build both applications, start them on ports 4310 and
-4311, and check that each answers. The suite polls HTTP readiness rather than sleeping, and
+**Consequence today.** Four tests that build both applications, start them on ports 4310 and
+4311, and check that each answers and that the editor region paints. The suite polls HTTP readiness rather than sleeping, and
 `reuseExistingServer` is off so it can never pass by talking to a server someone started by hand.
 One manual step per machine, `pnpm test:e2e:install`, is the price.
 
@@ -271,9 +274,10 @@ of the data structure rather than of message ordering, which is what makes concu
 offline reconnection tractable at all. Broadcasting whole files scales with file size instead of
 edit size and cannot resolve simultaneous edits.
 
-**Consequence today.** **Neither is installed and no collaboration code exists.** The consequence
-is confined to shape: `@devsync/collaboration` exists as the destination, and Playwright is in
-place because two-context convergence tests are how this will be proved.
+**Consequence today.** **Monaco is installed and rendering; Yjs is not, and no collaboration code
+exists.** The editor is bound to nothing, `@devsync/collaboration` is still empty, and Playwright
+is in place because two-context convergence tests are how the rest of this will be proved. How
+Monaco itself is loaded is [D15](#d15--monaco-is-bundled-not-loaded-from-a-cdn).
 
 **Revisit if.** Monaco's bundle size proves unworkable in the client, or a benchmark on a real
 project shows one document per project does not hold — per-file documents are the recorded
@@ -320,6 +324,35 @@ execution without an accountable identity is not something to ship.
 **Revisit if.** Never, in substance. The mechanism — container per job, microVM, WebAssembly —
 is genuinely open and gets chosen in Phase L against real requirements. The boundary itself is
 not negotiable.
+
+---
+
+### D15 — Monaco is bundled, not loaded from a CDN
+
+**Decision.** `apps/web` depends on `monaco-editor` directly and hands that instance to
+`@monaco-editor/react` through `loader.config({ monaco })`. The library's default — fetching
+Monaco from jsDelivr at runtime — is deliberately overridden.
+
+**Reason.** `monaco-editor` is a required peer dependency of `@monaco-editor/react`, so it is
+installed either way; the only question is whether the copy in `node_modules` is the one the
+browser runs. Leaving the default would make the application unable to start its editor without
+reaching a third-party host — in a container, behind a strict content-security policy, or on a
+network that does not allow it — and would make the end-to-end suite depend on a CDN being up,
+which is exactly the kind of intermittent failure `retries: 0` exists to expose rather than
+absorb. Nothing else in DevSync contacts an external service, and the editor is a poor place to
+start.
+
+**Consequence today.** Monaco's full language set ships in the client bundle, which is the largest
+single cost in `apps/web` and is accepted rather than optimised away at this size. Monaco's own
+worker entry points cannot be used as they are: Turbopack copies them out of `node_modules` as
+static files instead of compiling them, so `src/editor/workers/` re-declares them in application
+source and `MonacoEnvironment.getWorker` points there. The production image and the Playwright
+suite both work with no network access beyond their own ports.
+
+**Revisit if.** The bundle proves too large — the recorded first move is importing a subset of
+Monaco's languages rather than the whole package, not returning to the CDN. A change in Turbopack
+that compiles worker entry points inside dependencies would let `src/editor/workers/` be deleted;
+that is a simplification to take, not a reason to revisit the decision itself.
 
 ---
 
