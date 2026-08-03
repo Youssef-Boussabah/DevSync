@@ -209,17 +209,20 @@ here is installed, and none may be installed ahead of the milestone that calls f
 
 ## Current boundary
 
-The repository is at **Phase B, milestone B1 — the in-memory single-file workspace**. Phase A's
+The repository is at **Phase B, milestone B2 — language selection over the open file**. Phase A's
 foundation is in place — monorepo scaffold, centralised TypeScript and quality configuration, three
 testing layers, two production Docker images, GitHub Actions CI, and the documentation above — and
-`apps/web` renders one Monaco editor over one file whose contents a client workspace component
-holds in React state.
+`apps/web` renders one Monaco editor over one file whose contents and language a client workspace
+component holds in React state.
 
-**That workspace is the only product functionality.** Its content lives in browser memory and is
-never read, written, or sent anywhere; remounting or reloading starts again from the sample. There
-is no second file, no language selection, no file tree, no tabs, no save action or saved/unsaved
-state, no persistence of any kind — not `localStorage`, not `sessionStorage`, not IndexedDB — no
-API call, and no test that types into the real editor.
+**That workspace is the only product functionality.** Its content and its language live in browser
+memory and are never read, written, or sent anywhere; remounting or reloading starts again from the
+sample, as TypeScript. The five languages in `apps/web/src/editor/languages.ts` — TypeScript,
+JavaScript, Python, JSON, Markdown — are five readings of the one buffer: the file name is derived
+from the language, changing the language leaves the content untouched, and nothing is detected,
+generated, or translated. There is no second file, no file tree, no tabs, no save action or
+saved/unsaved state, no persistence of any kind — not `localStorage`, not `sessionStorage`, not
+IndexedDB — no API call, and no test that types into the real editor.
 
 Do not implement later milestones early. Specifically, do not add a database or ORM,
 authentication, WebSockets, a CRDT library, code execution, Kubernetes, cloud deployment, release

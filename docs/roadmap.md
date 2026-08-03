@@ -16,7 +16,7 @@ after it stopped being true.
 | Phase | Name                      | Status       |
 | ----- | ------------------------- | ------------ |
 | **A** | Project foundation        | **Complete** |
-| **B** | Local editor              | **B1 done**  |
+| **B** | Local editor              | **B2 done**  |
 | C     | Database-backed projects  | Not started  |
 | D     | Rooms and presence        | Not started  |
 | E     | Single-file collaboration | Not started  |
@@ -30,9 +30,9 @@ after it stopped being true.
 | M     | Production hardening      | Not started  |
 | N     | Portfolio closure         | Not started  |
 
-**One piece of product functionality exists**: the Monaco editor on the home page and the
-single-file workspace holding its contents, delivered by milestones B0 and B1. Nothing else in the
-table above is built.
+**One piece of product functionality exists**: the Monaco editor on the home page, the single-file
+workspace holding its contents, and the language that file is read as — delivered by milestones B0,
+B1, and B2. Nothing else in the table above is built.
 
 ---
 
@@ -73,7 +73,7 @@ product-shaped thing DevSync does.
 | --------- | ---------------------------------------------------------------------------- | ------------- |
 | B0        | Monaco integrated into `apps/web`, surviving the App Router, SSR, and Docker | **Delivered** |
 | B1        | The in-memory editing workspace the editor's content belongs to              | **Delivered** |
-| B2        | A language selection over the open file                                      | Not started   |
+| B2        | A language selection over the open file                                      | **Delivered** |
 | B3        | A Playwright test that types into the real Monaco editor                     | Not started   |
 
 **B0, delivered.** The home page renders one Monaco editor, with syntax highlighting and Monaco's
@@ -91,9 +91,19 @@ browser memory only: **nothing is stored, sent, or synchronised**, and remountin
 starts again from the sample. There is still no persistence, no file tree, no tabs, no save action,
 and no server involvement.
 
+**B2, delivered.** The workspace also owns the language its one file is read as, and a labelled
+native `<select>` beside the file name changes it. Five languages are offered — TypeScript,
+JavaScript, Python, JSON, and Markdown — each with the name the file is shown under while it is
+being read that way: `main.ts`, `main.js`, `main.py`, `data.json`, `README.md`. **That is one file
+under five readings, not five files.** Changing the language re-interprets the text that is already
+in the buffer: the content is untouched, so nothing is reset, translated, or replaced, and no
+starter template exists for any of them. The language is never inferred from a file name and never
+detected from the content. Like the content, it is browser memory only — a reload starts again from
+TypeScript and the sample.
+
 **Completion boundary.** A visitor can open the application, type code, and see it highlighted.
 Nothing is saved, nothing is shared, and a refresh discards the content — and the interface says
-so. **Not yet met:** B2 and B3 remain.
+so. **Not yet met:** B3 remains.
 
 **Exclusions and dependencies.** No persistence, no collaboration, no CRDT, no WebSocket, no
 file tree, no account. This phase deliberately writes no server code: it establishes that the

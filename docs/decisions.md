@@ -147,7 +147,7 @@ code. jsdom for components.
 **Reason.** It shares Vite's transform pipeline with the tooling `apps/web` already uses, so TSX
 needs no additional configuration, and it starts fast enough to run on every save.
 
-**Consequence today.** Twenty-four component tests across the home page, the workspace, and the
+**Consequence today.** Thirty-six component tests across the home page, the workspace, and the
 editor wrapper, the last two against mocked boundaries because jsdom cannot run the real editor.
 `layout.tsx` cannot be
 tested here — it imports `next/font/google`, which only the Next.js compiler resolves — so the
@@ -188,8 +188,9 @@ cannot be proved by a single-client test. `browser.newContext()` produces fully 
 inside one browser process, so a single test can act as two users — which is exactly the shape
 the collaboration tests will need. Nothing else in the ecosystem makes that as direct.
 
-**Consequence today.** Four tests that build both applications, start them on ports 4310 and
-4311, and check that each answers and that the editor region paints. The suite polls HTTP readiness rather than sleeping, and
+**Consequence today.** Seven tests that build both applications, start them on ports 4310 and
+4311, and check that each answers, that the editor region paints, and that the language selector
+over it works in a real browser. The suite polls HTTP readiness rather than sleeping, and
 `reuseExistingServer` is off so it can never pass by talking to a server someone started by hand.
 One manual step per machine, `pnpm test:e2e:install`, is the price.
 
@@ -346,7 +347,9 @@ start.
 single cost in `apps/web` and is accepted rather than optimised away at this size. Monaco's own
 worker entry points cannot be used as they are: Turbopack copies them out of `node_modules` as
 static files instead of compiling them, so `src/editor/workers/` re-declares them in application
-source and `MonacoEnvironment.getWorker` points there. The production image and the Playwright
+source and `MonacoEnvironment.getWorker` points there — one entry per language service that has a
+worker of its own, which is why offering JSON in B2 meant adding a third alongside the editor's own
+and TypeScript's. The production image and the Playwright
 suite both work with no network access beyond their own ports.
 
 **Revisit if.** The bundle proves too large — the recorded first move is importing a subset of

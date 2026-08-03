@@ -5,9 +5,9 @@ describes an intention rather than a system. Where a document does describe dire
 architecture DevSync is being built towards, or the milestones ahead — it says so explicitly and
 keeps it separate from what exists.
 
-The repository is at **Phase B, milestone B1 — the in-memory single-file workspace**, on the Phase
-A foundation. One Monaco editor on the home page, over one file the application holds in browser
-memory, is the only product functionality that exists.
+The repository is at **Phase B, milestone B2 — language selection over the open file**, on the
+Phase A foundation. One Monaco editor on the home page, over one file the application holds in
+browser memory and reads as one of five languages, is the only product functionality that exists.
 
 ## Start here
 

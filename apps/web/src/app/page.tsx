@@ -9,18 +9,20 @@ export default function Home() {
           A browser-based collaborative development environment.
         </p>
         <p className="text-sm text-zinc-500">
-          Phase B1 — the local editing workspace. One file, open in one editor, with its contents
-          held by the application in this tab. Everything else about DevSync is still a plan.
+          Phase B2 — the local editing workspace. One file, open in one editor, with its contents
+          and the language they are read as held by the application in this tab. Everything else
+          about DevSync is still a plan.
         </p>
       </header>
 
       <LocalEditorWorkspace />
 
       <p className="text-sm text-zinc-500">
-        One temporary file, held in this browser tab&rsquo;s memory and nowhere else. Refreshing the
-        page discards your changes, because there is nowhere yet to save them to: no projects, no
-        accounts, and no database. Collaboration, persistence, and code execution are not
-        implemented yet.
+        One temporary file, held in this browser tab&rsquo;s memory and nowhere else. Choosing a
+        language changes how the editor reads what you have already typed; it does not open a
+        different file. Refreshing the page discards your changes and starts again from TypeScript,
+        because there is nowhere yet to save them to: no projects, no accounts, and no database.
+        Collaboration, persistence, and code execution are not implemented yet.
       </p>
     </main>
   );

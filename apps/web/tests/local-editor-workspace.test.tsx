@@ -26,6 +26,16 @@ vi.mock('@/editor/code-editor', () => ({
   ),
 }));
 
+// The languages the workspace is expected to offer, restated here rather than
+// imported: a test that read the same list the component renders from would
+// agree with it whatever it contained.
+const OTHER_LANGUAGES = [
+  { label: 'JavaScript', id: 'javascript', fileName: 'main.js' },
+  { label: 'Python', id: 'python', fileName: 'main.py' },
+  { label: 'JSON', id: 'json', fileName: 'data.json' },
+  { label: 'Markdown', id: 'markdown', fileName: 'README.md' },
+];
+
 function editorContent(): HTMLTextAreaElement {
   const element = screen.getByRole('textbox', { name: 'Editor content' });
 
@@ -36,8 +46,22 @@ function editorContent(): HTMLTextAreaElement {
   return element;
 }
 
+function languageSelect(): HTMLSelectElement {
+  const element = screen.getByRole('combobox', { name: 'Language' });
+
+  if (!(element instanceof HTMLSelectElement)) {
+    throw new Error('The workspace did not render a language selector.');
+  }
+
+  return element;
+}
+
 function type(text: string) {
   fireEvent.change(editorContent(), { target: { value: text } });
+}
+
+function selectLanguage(id: string) {
+  fireEvent.change(languageSelect(), { target: { value: id } });
 }
 
 describe('local editor workspace', () => {
@@ -59,6 +83,50 @@ describe('local editor workspace', () => {
     expect(screen.getByTestId('editor-language')).toHaveTextContent('typescript');
   });
 
+  it('starts with TypeScript chosen in the selector', () => {
+    render(<LocalEditorWorkspace />);
+
+    expect(languageSelect()).toHaveValue('typescript');
+  });
+
+  it('offers the languages the file can be read as', () => {
+    render(<LocalEditorWorkspace />);
+
+    const labels = screen.getAllByRole('option').map((option) => option.textContent);
+
+    expect(labels).toEqual(['TypeScript', 'JavaScript', 'Python', 'JSON', 'Markdown']);
+  });
+
+  it.each(OTHER_LANGUAGES)('reads the file as $label when $label is selected', (language) => {
+    render(<LocalEditorWorkspace />);
+
+    selectLanguage(language.id);
+
+    expect(screen.getByTestId('editor-language')).toHaveTextContent(language.id);
+    expect(screen.getByText(language.fileName)).toBeInTheDocument();
+  });
+
+  it('keeps the content when the language changes, because it is the same file', () => {
+    render(<LocalEditorWorkspace />);
+
+    type('const kept = true;');
+    selectLanguage('python');
+
+    expect(editorContent().value).toBe('const kept = true;');
+    expect(screen.getByTestId('editor-language')).toHaveTextContent('python');
+  });
+
+  it('ignores a selection that is not one of its languages', () => {
+    render(<LocalEditorWorkspace />);
+
+    // A `<select>` reports a value its markup never offered as an empty string,
+    // which is what the workspace has to reject rather than store.
+    selectLanguage('cobol');
+
+    expect(screen.getByTestId('editor-language')).toHaveTextContent('typescript');
+    expect(screen.getByText('main.ts')).toBeInTheDocument();
+  });
+
   it('keeps what the user types', () => {
     render(<LocalEditorWorkspace />);
 
@@ -74,6 +142,16 @@ describe('local editor workspace', () => {
     rerender(<LocalEditorWorkspace />);
 
     expect(editorContent().value).toBe('const survives = true;');
+  });
+
+  it('does not lose the selected language when it renders again', () => {
+    const { rerender } = render(<LocalEditorWorkspace />);
+
+    selectLanguage('markdown');
+    rerender(<LocalEditorWorkspace />);
+
+    expect(languageSelect()).toHaveValue('markdown');
+    expect(screen.getByText('README.md')).toBeInTheDocument();
   });
 
   it('lets the file be emptied, because empty is valid content', () => {
@@ -94,5 +172,17 @@ describe('local editor workspace', () => {
 
     expect(editorContent().value).not.toBe('const discarded = true;');
     expect(editorContent().value).toMatch(/export function greet\(name: string\): string/);
+  });
+
+  it('opens as TypeScript again when remounted, for the same reason', () => {
+    const { unmount } = render(<LocalEditorWorkspace />);
+
+    selectLanguage('python');
+    unmount();
+
+    render(<LocalEditorWorkspace />);
+
+    expect(languageSelect()).toHaveValue('typescript');
+    expect(screen.getByText('main.ts')).toBeInTheDocument();
   });
 });

@@ -53,6 +53,18 @@ describe('home page', () => {
     expect(screen.getByText(/refreshing the page discards your changes/i)).toBeInTheDocument();
   });
 
+  it('says that a refresh also returns the file to TypeScript', () => {
+    render(<Home />);
+
+    expect(screen.getByText(/starts again from TypeScript/i)).toBeInTheDocument();
+  });
+
+  it('says that choosing a language re-reads the one file rather than opening another', () => {
+    render(<Home />);
+
+    expect(screen.getByText(/does not open a different file/i)).toBeInTheDocument();
+  });
+
   it('does not claim that collaboration, persistence, or execution work yet', () => {
     render(<Home />);
 

@@ -33,11 +33,21 @@ export type CodeEditorProps = {
 // workers then fail on their first import. Pointing at entry points in application
 // source is what makes Turbopack build them properly; the file extensions are part
 // of that, because it only recognises a worker from a fully resolved specifier.
+//
+// A language whose service has a worker of its own needs a branch here: the
+// fallback is the editor's own worker, which answers the generic requests every
+// language makes and none of the language-specific ones. The languages without a
+// branch — Python and Markdown — are tokenised in the main thread and ask for no
+// worker of their own.
 function registerMonacoWorkers() {
   globalThis.MonacoEnvironment = {
     getWorker(_workerId, label) {
       if (label === 'typescript' || label === 'javascript') {
         return new Worker(new URL('./workers/typescript.worker.ts', import.meta.url));
+      }
+
+      if (label === 'json') {
+        return new Worker(new URL('./workers/json.worker.ts', import.meta.url));
       }
 
       return new Worker(new URL('./workers/editor.worker.ts', import.meta.url));

@@ -108,7 +108,7 @@ and it means a package cannot go stale relative to its own build output, because
 | Alias        | `@/*` → `./src/*`                                         |
 | Dev port     | 3000                                                      |
 | Build output | `.next/`, including `.next/standalone` and `.next/static` |
-| Tests        | Vitest, jsdom, 24 component tests                         |
+| Tests        | Vitest, jsdom, 36 component tests                         |
 
 `src/app/layout.tsx` declares the document metadata and loads two fonts through
 `next/font/google`. `src/app/page.tsx` is a synchronous Server Component that renders the
@@ -118,23 +118,54 @@ and no data fetching of any kind.**
 
 ### The workspace — implemented
 
-`src/editor/local-editor-workspace.tsx` is a client component holding one string of React state:
-the contents of the single open file. It seeds that state from a short TypeScript sample, passes it
-to the editor, and takes edits back through a callback. That is the entire model — there is no file
-list, no file identifier, no project, and no store. The one file is named `main.ts` for the user's
-benefit; **nothing resolves that name**, and there is no path, directory, or second file it could
-be distinguished from.
+`src/editor/local-editor-workspace.tsx` is a client component holding two pieces of React state:
+the contents of the single open file, and the language those contents are read as. It seeds them
+from a short TypeScript sample and TypeScript, passes both to the editor, and takes edits back
+through a callback. That is the entire model — there is no file list, no file identifier, no
+project, and no store.
 
-The state is browser memory and only browser memory. It is never read from or written to
+Both are browser memory and only browser memory. Neither is ever read from or written to
 `localStorage`, IndexedDB, a cookie, or the network, so unmounting the component or reloading the
-page starts again from the sample. That is the behaviour, not a limitation waiting to be patched:
-the milestone that makes editing survive a reload is a later one, and it arrives with a real store
-behind it.
+page starts again from the sample, as TypeScript. That is the behaviour, not a limitation waiting
+to be patched: the milestone that makes editing survive a reload is a later one, and it arrives
+with a real store behind it.
 
 Ownership matters more than it looks. Before this, the contents lived inside Monaco's model and no
 other part of the application could read them; a language switch, a second pane, or a CRDT binding
 would each have had to reach into the editor to find out what the user had typed. With the value in
-React state, those all become a matter of passing a prop.
+React state, those become a matter of passing a prop — which is exactly what the language selection
+below turned out to be.
+
+### The language selection — implemented
+
+`src/editor/languages.ts` is a five-entry readonly list, and it is the only source of truth for
+what a language is: its Monaco identifier, the label a user reads, and the name the file is shown
+under while it is being read that way.
+
+| Label      | Monaco language | File shown as |
+| ---------- | --------------- | ------------- |
+| TypeScript | `typescript`    | `main.ts`     |
+| JavaScript | `javascript`    | `main.js`     |
+| Python     | `python`        | `main.py`     |
+| JSON       | `json`          | `data.json`   |
+| Markdown   | `markdown`      | `README.md`   |
+
+**This is one file under five readings, not five files.** There is one buffer, and changing the
+language changes only how Monaco interprets it: the content is passed through untouched, so nothing
+is reset, translated, or replaced. There is no starter template per language, no language
+detection, and no inference from a file name — the name is derived from the language, never the
+other way round, and **nothing resolves it**. There is no path, directory, or second file it could
+be distinguished from.
+
+The control is a native `<select>` with a visible `<label>`, which is what a five-option choice
+should be: keyboard behaviour, the accessible name, and the platform's own picker come for free,
+and no component library was added to reproduce them. The DOM reports the chosen value as an
+ordinary string, so it is resolved back against the list rather than asserted to belong to it; a
+value that is not offered is ignored, which is what keeps the state narrowly typed with no cast.
+
+The list lives in `apps/web` because it has exactly one consumer. It moves to `packages/` when a
+second one exists, under the rule in [Boundaries stay separated](#boundaries-stay-separated) — not
+before, and it needs no registry, plugin point, or configuration layer to get there.
 
 ### The editor — implemented
 
@@ -152,8 +183,12 @@ of it are architectural rather than cosmetic.
   which no other part of DevSync does.
 - **Monaco's language workers are declared in application source.** Monaco points at its own
   worker entry points, but Turbopack copies those out of `node_modules` as static files instead of
-  compiling them, and they fail on their first import. `src/editor/workers/` holds two one-line
-  re-exports that Turbopack does compile, and `MonacoEnvironment.getWorker` points at them.
+  compiling them, and they fail on their first import. `src/editor/workers/` holds three one-line
+  re-exports that Turbopack does compile — the editor's own worker, the TypeScript and JavaScript
+  language service, and JSON's — and `MonacoEnvironment.getWorker` routes to them by label. A
+  language service with a worker of its own needs an entry there, because the fallback answers the
+  generic requests and none of the language-specific ones; Python and Markdown need none, as both
+  are tokenised in the main thread.
 - **A change without a value is not a change.** Monaco's callback reports `string | undefined`, and
   `undefined` means it had no content to hand over rather than that the file is now empty. It is
   dropped, so it can never blank the caller's state. An empty string is forwarded, because a file
@@ -242,7 +277,7 @@ would have to be unlearned before it could be used.
 
 ## `tests/e2e` — implemented
 
-The only workspace allowed to start real processes. Playwright, Chromium only, four tests across
+The only workspace allowed to start real processes. Playwright, Chromium only, seven tests across
 two specs. It builds both applications, starts them on ports 4310 and 4311, waits on HTTP
 readiness checks — never a fixed sleep — and shuts them down afterwards.
 
@@ -254,7 +289,7 @@ The three testing layers as a whole:
 | HTTP-level application | Jest       | `apps/api`  | A Nest app on an ephemeral socket    |
 | Browser and full-stack | Playwright | `tests/e2e` | Both compiled applications, on ports |
 
-Twenty-nine real tests in total. [`testing.md`](testing.md) covers what each layer proves, why the
+Forty-four real tests in total. [`testing.md`](testing.md) covers what each layer proves, why the
 API stays on Jest, and what is deliberately untested.
 
 ## Request and process boundaries
