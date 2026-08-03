@@ -7,11 +7,11 @@ that product will be built in.
 
 ## Repository status
 
-**Phase A3 — Docker foundation.** A0 established the monorepo and the toolchain; A1 tightened
-the TypeScript settings and centralised the shared configuration; A2 added the testing
-architecture. Phase A3 containerises the two applications: a production Dockerfile each, and a
-Compose file that builds and starts both from the repository root. Like the milestones before
-it, it ships no product functionality.
+**Phase A4 — CI foundation.** A0 established the monorepo and the toolchain; A1 tightened the
+TypeScript settings and centralised the shared configuration; A2 added the testing architecture;
+A3 containerised both applications. Phase A4 adds a GitHub Actions pipeline that runs the
+quality checks, the browser tests, and a full Docker build-and-verify on every pull request.
+Like the milestones before it, it ships no product functionality.
 
 What exists today:
 
@@ -27,11 +27,13 @@ What exists today:
 - Eight real tests across three layers. See [`docs/testing.md`](docs/testing.md).
 - A production Docker image for each application and a root `compose.yaml` that builds and runs
   both. See [`docs/docker.md`](docs/docker.md).
+- A GitHub Actions pipeline with three jobs — quality, end-to-end, and Docker. See
+  [`docs/ci.md`](docs/ci.md).
 
 **Real-time collaboration has not been implemented.** Neither has multi-file project editing,
 remote cursors, project persistence, authentication, version history, or code execution. No
-database, message broker, or CI pipeline exists in this repository yet — the Compose file
-contains the two applications and nothing else.
+database or message broker exists in this repository yet — the Compose file contains the two
+applications and nothing else.
 
 ## Planned architecture
 
@@ -50,6 +52,8 @@ Each of these arrives in a later milestone, and this README will be updated as i
 
 ```text
 devsync/
+├── .github/
+│   └── workflows/ci.yml      GitHub Actions: quality, end-to-end, and Docker jobs
 ├── apps/
 │   ├── web/                  Next.js client
 │   └── api/                  NestJS service
@@ -196,6 +200,30 @@ else** — no database, cache, queue, or volume, because DevSync uses none of th
 
 [`docs/docker.md`](docs/docker.md) covers the image structure, environment variables, clean
 rebuilds, and the current limitations.
+
+## Continuous integration
+
+One GitHub Actions workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on
+every pull request, on pushes to `main`, and on demand. Three independent jobs:
+
+| Job       | What it proves                                                             |
+| --------- | -------------------------------------------------------------------------- |
+| `quality` | Formatting, lint, types, in-process tests, and both builds                 |
+| `e2e`     | Both applications start from a real build and answer in Chromium           |
+| `docker`  | Both images build, start, become healthy, and serve the expected responses |
+
+CI runs the same commands you run locally — there is no CI-only script — and it only ever
+reports: `format:check` and `lint`, never `format` or `lint:fix`. The workflow holds
+`contents: read` and no secrets, uses only official `actions/*`, and pushes no image anywhere.
+
+To reproduce the `quality` job in one line:
+
+```bash
+pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+```
+
+[`docs/ci.md`](docs/ci.md) covers the triggers, caching, Playwright browser installation, the
+failure artifacts, and the current limitations.
 
 ## Code quality
 

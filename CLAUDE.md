@@ -128,6 +128,31 @@ Two production images, one Compose file at the root, and nothing else.
 
 [`docs/docker.md`](docs/docker.md) is the long-form version.
 
+## Continuous integration
+
+One workflow, `.github/workflows/ci.yml`, with three independent jobs: `quality`, `e2e`,
+`docker`.
+
+- **CI runs the same commands a developer runs.** Do not add a CI-only script, and do not let a
+  workflow step drift from the `package.json` script it mirrors. If a job needs a new command,
+  the command belongs in `package.json` first.
+- **CI reports, it never rewrites.** `format:check` and `lint` only — never `format` or
+  `lint:fix`, and never a step that commits, pushes, or tags.
+- `permissions: contents: read` at the workflow level. Do not grant write scopes, and do not
+  introduce secrets — nothing here authenticates to anything.
+- Official `actions/*` only, pinned to a major version. No third-party action where an official
+  one or a direct command will do.
+- Node comes from a workflow-level `NODE_VERSION`; pnpm comes from Corepack reading
+  `packageManager`. Never hard-code a pnpm version in the workflow.
+- `corepack enable` must stay **before** `actions/setup-node`, because its pnpm cache runs
+  `pnpm store path`.
+- Keep the jobs independent. Do not pass a build between them to save time; each job proving a
+  complete workflow is the point.
+- Upload failure artifacts only, and only the small ones that explain a failure.
+- The Docker job must clean up under `if: always()`, with the log-dumping step before it.
+
+[`docs/ci.md`](docs/ci.md) is the long-form version.
+
 ## Documentation
 
 `README.md` describes what exists, not what is planned. Do not describe collaboration,
@@ -144,8 +169,8 @@ the user's call.
 
 ## Current boundary
 
-The repository is at **Phase A3 — Docker foundation**. No product functionality is
-implemented. Do not implement later milestones early. Specifically, do not add a database or
-ORM, authentication, WebSockets, a code editor, a CRDT library, code execution, Kubernetes,
-cloud deployment, or CI configuration until the milestone that calls for it. If a task seems
-to require one of these, say so and stop rather than building ahead.
+The repository is at **Phase A4 — CI foundation**. No product functionality is implemented.
+Do not implement later milestones early. Specifically, do not add a database or ORM,
+authentication, WebSockets, a code editor, a CRDT library, code execution, Kubernetes, cloud
+deployment, release automation, or a dependency bot until the milestone that calls for it. If
+a task seems to require one of these, say so and stop rather than building ahead.

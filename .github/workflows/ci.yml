@@ -1,0 +1,166 @@
+# Continuous integration for DevSync.
+#
+# Three independent jobs, each proving a different thing and each running the same
+# commands a developer runs locally. Nothing here is CI-only: if a job fails, the
+# way to reproduce it is to run the step's command on your own machine.
+#
+# The jobs deliberately do not depend on one another. Sharing a build between them
+# would make the end-to-end and Docker jobs prove less than they appear to — each
+# would then be testing an artifact assembled elsewhere rather than the workflow a
+# developer or a production image actually follows.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only. Nothing in this workflow comments, pushes, tags, or publishes, so no
+# job needs a token that can write to the repository.
+permissions:
+  contents: read
+
+# One run at a time per pull request or branch; a newer push cancels the older run
+# rather than queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Node 24, matching the `node:24.13.0-alpine` the production images pin and
+  # satisfying the `>=20.9.0` floor in the root package.json.
+  NODE_VERSION: '24'
+  # Corepack otherwise asks for confirmation before downloading the pinned pnpm.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Before setup-node, because its pnpm cache resolves the store by running
+      # `pnpm store path` — which needs the Corepack shim to already exist.
+      # Corepack installs the exact pnpm pinned by the root `packageManager` field.
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Separate steps rather than one chained command, so a red run names the gate
+      # that failed instead of making someone read the log to find out.
+      # `format:check` and `lint`, never `format` or `lint:fix`: CI reports, it does
+      # not rewrite the tree.
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type-check
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  e2e:
+    name: End-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Chromium only — the suite runs no other engine, so no other engine is
+      # downloaded. `--with-deps` additionally installs the system libraries a bare
+      # Ubuntu runner lacks; the local `pnpm test:e2e:install` omits it because a
+      # developer machine already has them.
+      - name: Install Chromium and its Linux dependencies
+        run: pnpm --filter @devsync/e2e exec playwright install --with-deps chromium
+
+      # Builds both applications first (the `test:e2e` Turborepo task depends on
+      # them) and starts them on ports 4310 and 4311.
+      - name: Run end-to-end tests
+        run: pnpm test:e2e
+
+      # Only on failure, and only the two directories that explain one: the HTML
+      # report, and the traces and screenshots Playwright retains for failed tests.
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            tests/e2e/playwright-report/
+            tests/e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      # No Node or pnpm setup in this job: both images install and build everything
+      # they need internally, which is the property being tested.
+      - name: Validate the Compose file
+        run: docker compose config --quiet
+
+      - name: Build images
+        run: docker compose build
+
+      # `--wait` blocks until every service reports healthy and exits non-zero if one
+      # does not, so the health checks declared in compose.yaml are the gate rather
+      # than a fixed sleep.
+      - name: Start services and wait for health
+        run: docker compose up --detach --wait --wait-timeout 180
+
+      - name: Verify the web application responds
+        run: |
+          status="$(curl --silent --show-error --max-time 10 --output /tmp/web.html --write-out '%{http_code}' http://127.0.0.1:3000/)"
+          echo "HTTP $status"
+          [ "$status" = "200" ]
+          grep -q '<title>DevSync</title>' /tmp/web.html
+          grep -qE '<h1[^>]*>DevSync</h1>' /tmp/web.html
+
+      - name: Verify the API health endpoint
+        run: |
+          body="$(curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3001/health)"
+          echo "$body"
+          [ "$body" = '{"status":"ok","service":"devsync-api"}' ]
+
+      # Before the cleanup step below, so the containers still exist to be read from.
+      - name: Show container status and logs
+        if: failure()
+        run: |
+          docker compose ps --all
+          docker compose logs --no-color
+
+      - name: Stop and remove containers
+        if: always()
+        run: docker compose down --volumes --remove-orphans

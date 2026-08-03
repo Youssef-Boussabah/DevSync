@@ -9,6 +9,8 @@ describes an intention rather than a system.
   tests actually prove, and what is deliberately not tested yet.
 - **[Docker](docker.md)** — how the two applications are containerised, how to build, run, and
   inspect them, and what the Compose setup deliberately leaves out.
+- **[Continuous integration](ci.md)** — what runs on GitHub Actions, what each job proves, and
+  how to reproduce any of it locally.
 
 ## Planned for later Phase A milestones
 
