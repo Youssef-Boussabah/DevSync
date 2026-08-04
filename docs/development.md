@@ -228,6 +228,30 @@ them.
 repository contains no secrets, and none belong in it. If a future change needs one, it arrives
 with the loading mechanism, the documentation, and the ignore rules together — not on its own.
 
+### Planned — configuration and migrations in Phase C
+
+**None of the following works yet.** There is no `DATABASE_URL`, no Prisma, no migration, and no
+script for any of it; running any command in this subsection today fails, and it is written down so
+that C1 implements one plan rather than three.
+
+C1 adds two variables, and they are validated at different moments. **`DATABASE_URL` is required**:
+the API and the database package read it, it is checked when that runtime starts, and a missing or
+malformed value fails startup with a message naming the variable — never a silent fallback to
+another database. **`TEST_DATABASE_URL` is read only by the database-backed test tooling** and
+checked only when those tests run; leaving it unset is not a misconfiguration and must never stop
+the API from starting. C1 adds them together with the `.env` loading this repository has
+deliberately gone without, and `.env.example` gains both in the same change, with non-secret example
+values.
+
+Migrations will be created locally with `prisma migrate dev`, applied everywhere else with
+`prisma migrate deploy`, committed to the repository, and treated as immutable once they have run:
+a mistake is corrected by a new migration. `prisma db push` is not the workflow for the tracked
+schema. Database tests will run behind their own explicit command against a database that has been
+declared disposable — never `pnpm test`, which keeps building nothing and starting nothing.
+
+The reasoning is in [`architecture.md`](architecture.md#phase-c--planned-persistence-architecture),
+the testing ladder in [`testing.md`](testing.md), and the Compose side in [`docker.md`](docker.md).
+
 ## Adding a new workspace
 
 A `packages/*` workspace stays empty until something real needs it, and the five reserved ones

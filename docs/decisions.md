@@ -11,23 +11,29 @@ can be read in one sitting, splitting it is itself a decision worth recording he
 Entries marked **direction** are commitments about what will be built, not descriptions of what
 exists. Nothing in a direction entry is installed.
 
-| #                                                               | Decision                                  |
-| --------------------------------------------------------------- | ----------------------------------------- |
-| [D1](#d1--pnpm-and-turborepo)                                   | pnpm workspaces and Turborepo             |
-| [D2](#d2--nextjs-for-the-web-application)                       | Next.js for the web application           |
-| [D3](#d3--nestjs-for-the-api)                                   | NestJS for the API                        |
-| [D4](#d4--one-shared-configuration-package)                     | Shared configuration in `@devsync/config` |
-| [D5](#d5--reserved-package-boundaries-stay-empty)               | Reserved packages stay empty              |
-| [D6](#d6--vitest-for-the-frontend-and-pure-typescript)          | Vitest for the frontend                   |
-| [D7](#d7--jest-retained-for-the-nestjs-api)                     | Jest retained for `apps/api`              |
-| [D8](#d8--playwright-for-browser-and-full-stack-testing)        | Playwright for browser tests              |
-| [D9](#d9--docker-compose-for-production-style-local-execution)  | Docker Compose locally                    |
-| [D10](#d10--one-workflow-three-independent-ci-jobs)             | One workflow, three independent jobs      |
-| [D11](#d11--no-env-loading-yet)                                 | No `.env` loading yet                     |
-| [D12](#d12--direction-monaco-and-yjs-for-collaborative-editing) | **Direction:** Monaco + Yjs               |
-| [D13](#d13--direction-postgresql-before-redis)                  | **Direction:** PostgreSQL before Redis    |
-| [D14](#d14--direction-an-isolated-execution-runner)             | **Direction:** an isolated runner         |
-| [D15](#d15--monaco-is-bundled-not-loaded-from-a-cdn)            | Monaco is bundled, not loaded from a CDN  |
+| #                                                                         | Decision                                          |
+| ------------------------------------------------------------------------- | ------------------------------------------------- |
+| [D1](#d1--pnpm-and-turborepo)                                             | pnpm workspaces and Turborepo                     |
+| [D2](#d2--nextjs-for-the-web-application)                                 | Next.js for the web application                   |
+| [D3](#d3--nestjs-for-the-api)                                             | NestJS for the API                                |
+| [D4](#d4--one-shared-configuration-package)                               | Shared configuration in `@devsync/config`         |
+| [D5](#d5--reserved-package-boundaries-stay-empty)                         | Reserved packages stay empty                      |
+| [D6](#d6--vitest-for-the-frontend-and-pure-typescript)                    | Vitest for the frontend                           |
+| [D7](#d7--jest-retained-for-the-nestjs-api)                               | Jest retained for `apps/api`                      |
+| [D8](#d8--playwright-for-browser-and-full-stack-testing)                  | Playwright for browser tests                      |
+| [D9](#d9--docker-compose-for-production-style-local-execution)            | Docker Compose locally                            |
+| [D10](#d10--one-workflow-three-independent-ci-jobs)                       | One workflow, three independent jobs              |
+| [D11](#d11--no-env-loading-yet)                                           | No `.env` loading yet                             |
+| [D12](#d12--direction-monaco-and-yjs-for-collaborative-editing)           | **Direction:** Monaco + Yjs                       |
+| [D13](#d13--direction-postgresql-before-redis)                            | **Direction:** PostgreSQL before Redis            |
+| [D14](#d14--direction-an-isolated-execution-runner)                       | **Direction:** an isolated runner                 |
+| [D15](#d15--monaco-is-bundled-not-loaded-from-a-cdn)                      | Monaco is bundled, not loaded from a CDN          |
+| [D16](#d16--direction-prisma-owned-by-devsyncdatabase)                    | **Direction:** Prisma, owned by one package       |
+| [D17](#d17--direction-phase-c-is-single-user-and-deletion-is-permanent)   | **Direction:** single-user, permanent deletes     |
+| [D18](#d18--direction-flat-file-names-and-language-as-a-validated-string) | **Direction:** flat names, language as a string   |
+| [D19](#d19--direction-a-new-project-is-created-with-its-first-file)       | **Direction:** projects start with one file       |
+| [D20](#d20--direction-zod-contracts-in-devsyncshared)                     | **Direction:** Zod contracts in `@devsync/shared` |
+| [D21](#d21--direction-database-tests-run-against-real-postgresql)         | **Direction:** database tests use real PostgreSQL |
 
 ---
 
@@ -218,8 +224,11 @@ as the non-root `node` user. Containers use the same ports as `pnpm dev`, so the
 at once. `pnpm` commands keep working outside Docker — it is an additional way to run DevSync,
 not the way.
 
-**Revisit if.** Phase C introduces PostgreSQL, which is the first service that will genuinely
-belong in Compose, and the first `depends_on` edge along with it.
+**Revisit if.** C1 introduces PostgreSQL, which is the first service that will genuinely belong in
+Compose, and brings the first named volume and the first ordering edges with it — `api` after the
+database and after migrations. The `web` → `api` edge waits for C3, which is when the two
+applications first talk and therefore the first time `web` depends on `api` at runtime. The planned
+topology is in [`docker.md`](docker.md).
 
 ---
 
@@ -259,8 +268,9 @@ another. Being explicit means an unset variable is unconfigured, visibly.
 `compose.yaml` passes it explicitly rather than relying on a file. `.dockerignore` keeps every
 `.env*` file out of both build contexts.
 
-**Revisit if.** The first milestone that needs more than a port — a database URL, in Phase C.
-Loading, validation, documentation, and ignore rules arrive together at that point.
+**Revisit if.** The first milestone that needs more than a port — `DATABASE_URL`, in C1. Loading,
+validation, documentation, and ignore rules arrive together at that point, and a missing or
+malformed value has to fail startup rather than fall back to some other database.
 
 ---
 
@@ -301,7 +311,9 @@ the data most often cited as a reason for it, is ephemeral by design and belongs
 memory until there is more than one process.
 
 **Consequence today.** No database, ORM, migration, or connection exists. `@devsync/database` is
-an empty boundary, and `apps/api` does not depend on it. Compose contains no data service.
+an empty boundary, and `apps/api` does not depend on it. Compose contains no data service. Phase C
+is where the PostgreSQL half becomes concrete — [D16](#d16--direction-prisma-owned-by-devsyncdatabase)
+is how it is reached — and Redis is still explicitly not part of it.
 
 **Revisit if.** More than one API instance has to serve one project's room — a Phase M concern.
 That is the trigger, and nothing earlier is.
@@ -357,6 +369,178 @@ suite both work with no network access beyond their own ports.
 Monaco's languages rather than the whole package, not returning to the CDN. A change in Turbopack
 that compiles worker entry points inside dependencies would let `src/editor/workers/` be deleted;
 that is a simplification to take, not a reason to revisit the decision itself.
+
+---
+
+### D16 — **Direction:** Prisma, owned by `@devsync/database`
+
+**Decision.** Prisma is the ORM, and it lives entirely inside `@devsync/database`: schema,
+migrations, client construction, connection lifecycle, and the project and file operations. Nothing
+else in the repository constructs a client, and `apps/web` never imports the package at all.
+Migrations are committed, an applied migration is immutable, and `prisma migrate deploy` — never
+`migrate dev` or `db push` — is what applies them outside local development.
+
+**Reason.** A generated, fully typed client is the shortest path from a schema to compile-time
+safety across a strict TypeScript workspace, and Prisma's migration files are ordinary reviewable
+artifacts rather than state held in a tool. Confining it to one package is the part that matters
+most: a client constructed in a controller is a connection pool nobody owns and a shutdown nobody
+runs, and an ORM reachable from every caller stops being replaceable the week after it is
+introduced. Exposing named operations instead of an open connection keeps the boundary an
+abstraction rather than a directory.
+
+**Consequence today.** None — Prisma is not installed, no version is selected, and
+`@devsync/database` is still an empty module. The cost is paid in C1, which is also where
+`apps/api` first depends on the package: the API loads the configuration and drives connect and
+disconnect through Nest's lifecycle, the production image carries the package and its generated
+client, and a migration has to be applied before the service answers a persistence request. The
+routes that use any of it are C2's.
+
+**Revisit if.** The generated client turns out not to fit the workspace's consumed-as-source model,
+or a query the product genuinely needs cannot be expressed. The recorded first move is a raw query
+_through_ the package, not a second data-access path around it. Full details are in
+[`architecture.md`](architecture.md#prisma-and-migrations).
+
+---
+
+### D17 — **Direction:** Phase C is single-user, and deletion is permanent
+
+**Decision.** Projects and files carry no owner, no membership, no role, no visibility, no slug, no
+archive state, and no `deletedAt`. Deleting a project permanently deletes it and, by cascade, its
+files. No column, contract, or route is added in advance for any of it.
+
+**Reason.** Every one of those fields is meaningless without identity, and identity is Phase H. A
+nullable `ownerId` written by nothing and enforced by nothing is not a head start — it is a shape
+that has to be unpicked before it can be used, and a constraint that reads as if authorization
+exists when it does not. Soft deletion is the same trade in a worse form: it makes every query
+carry a filter that Phase C has no reason to need, and the first query that forgets it becomes a
+data-leak bug.
+
+**Consequence today.** Nothing exists to consume it. **From C2**, when the routes exist, every
+request is anonymous: anyone who can reach the API can read, rename, and permanently delete every
+project in it. The API is not unreachable — it is published on a local host port, and Compose
+publishes it too — so this is acceptable only **inside Phase C's local, single-user development
+boundary**. It is not suitable for public deployment, and nothing in Phase C should be deployed
+where an untrusted client can reach it. Phase H is what introduces real identity and authorization;
+until then the boundary is the network the API is exposed on, which is a weaker guarantee than it
+sounds and is stated here so nobody mistakes it for a strong one. Delete is unrecoverable, so C3's
+interface has to say so plainly.
+
+**Revisit if.** Phase H arrives, which it will. That milestone adds ownership and authorization,
+and it is also the point at which recoverable deletion should be argued on its own merits rather
+than smuggled in early.
+
+---
+
+### D18 — **Direction:** flat file names, and language as a validated string
+
+**Decision.** A file has a name, unique within its project and case-sensitive, with no folder,
+path, parent, or ordering column. Its language is stored as an ordinary string, validated against
+the supported list at the API boundary, and is **not** a PostgreSQL or Prisma enum. Name and
+language are independent: renaming does not change the language, and changing the language does not
+rename.
+
+**Reason.** A file tree is Phase F's problem, and the cheapest way to be ready for it is to store
+nothing that would have to be migrated in the wrong direction first. Uniqueness within a project
+prevents the one genuinely confusing state — two files a user cannot tell apart — and stops there.
+Case-sensitivity is chosen rather than inherited: case-insensitive uniqueness needs a rule about
+which spelling survives a collision, and nothing in DevSync has asked for one. The language is a
+string because adding a sixth one should be a change to a list and a validator, not a migration: an
+enum type would make the database the authority on a set that is really Monaco's, and would couple
+every new language to a schema change and a deployment ordering problem.
+
+**Consequence today.** None. **C1 has to make the schema and its collation configuration actually
+enforce the composite `(projectId, name)` rule as specified, and cover it with real PostgreSQL
+integration tests** — a uniqueness guarantee assumed from a database default is a guarantee nobody
+has checked. From C2, an unsupported language is a `400` rather than a constraint violation, and
+the identifiers and their validator live in `@devsync/shared`, which the API reads from C2 and the
+web application from C3.
+
+**Revisit if.** Real projects need directories — that is Phase F, and it is a migration that adds a
+location, not a reinterpretation of the name. Or duplicate-looking names cause genuine confusion in
+practice, at which point case-insensitive uniqueness is the recorded alternative.
+
+---
+
+### D19 — **Direction:** a new project is created with its first file
+
+**Decision.** Creating a project also creates one file — `main.ts`, TypeScript, holding the starter
+content the local workspace opens with today — in a single transaction. `apps/api` owns that
+policy; `@devsync/database` owns the transaction. If either insert fails, neither row remains. A
+project may later hold zero files, because the last one can be deleted.
+
+**Reason.** An empty project is a dead end: the first thing a user sees is a view with nothing to
+open. Doing it client-side, as a create followed by a second request, means every failure between
+the two leaves an empty project behind and every client has to reimplement the same recovery. The
+ownership split is what keeps it honest — a persistence layer with an opinion about what a new
+project should say has to be edited for a product decision, so the content comes from the API and
+only the atomicity comes from the package.
+
+**Consequence today.** None. From C1, the database package needs a transaction helper before it
+needs anything else; from C2, `POST /projects` returns the new file's identifier so the client can
+open it without guessing.
+
+**Revisit if.** Project templates appear, at which point the starter stops being one hard-coded file
+and the policy — still in `apps/api` — becomes a choice. Or the first file proves unwanted, which
+is a product observation rather than a technical one.
+
+---
+
+### D20 — **Direction:** Zod contracts in `@devsync/shared`
+
+**Decision.** The request schemas, the response contracts worth pinning, the supported language
+identifiers and their validator, and the single error contract are published from `@devsync/shared`,
+with Zod as the runtime validation library and the TypeScript types inferred from the schemas.
+**They arrive in C2, with `apps/api` as their first consumer; `apps/web` becomes the second in C3.**
+Nothing is added to the package during C0. `@devsync/shared` depends on no other workspace and reads
+no environment file.
+
+**Reason.** A validator and a type that are written separately are two things that can disagree;
+inferring the type from the schema means the check that runs and the type that compiles cannot
+drift. Publishing them from one package is the whole reason that package exists — client and server
+disagreeing about a wire format is the failure the monorepo was chosen to prevent. C2 rather than C3
+is the honest point to start: the schemas the API validates every request against are real code with
+a real user, and holding them inside `apps/api` until the client arrives would mean writing each one
+twice and hoping the copies agree. What [D5](#d5--reserved-package-boundaries-stay-empty) forbids is
+speculation, not a contract that is already being enforced.
+
+**Consequence today.** None. Zod is not installed, and `@devsync/shared` still exports nothing.
+From C2 it is a runtime dependency of `apps/api`, and from C3 of `apps/web` as well, so it ships in
+the client bundle — which is the cost, and is why the package must never grow anything server-only,
+including anything that reads configuration.
+
+**Revisit if.** A concrete incompatibility with the Nest validation pipeline or the Next.js bundler
+turns up in C2. Uniformity with Nest's `class-validator` convention is not a reason: DTO classes
+cannot be shared with the browser without decorators and metadata reaching it.
+
+---
+
+### D21 — **Direction:** database tests run against real PostgreSQL
+
+**Decision.** Tests that claim database behaviour run against a real PostgreSQL instance reached
+through `TEST_DATABASE_URL`, with the committed migration applied first. Not SQLite, and not a
+mocked Prisma client. They live behind their own explicit, non-cached task, and **`pnpm test` keeps
+starting no external service.**
+
+**Reason.** The behaviour worth testing is precisely the part a substitute does not have: cascade
+deletion, unique constraints, transaction rollback, timestamp and UUID generation. A mocked client
+asserts that the code calls the library the way the test expects, which is not the same claim, and
+SQLite would prove a different engine's semantics. Keeping it out of `pnpm test` preserves the
+existing promise that the fast command builds nothing and starts nothing — the property that makes
+it usable on every save.
+
+**Consequence today.** None; there is no database and no such test. From C1 it means one more
+command to know about, a database that has to be running for it, and a safety check that refuses to
+run when the target is missing, unsafe, or the same URL as ordinary development. `TEST_DATABASE_URL`
+belongs to that tooling alone — the API never reads it, and an unset one must not stop the service
+from starting. Under the current
+runner boundaries the database suite is Vitest in `@devsync/database` and the API suite is Jest in
+`apps/api`, which makes C1 the second Vitest workspace — the trigger [D4](#d4--one-shared-configuration-package)
+recorded for moving the runner-agnostic Vitest configuration into `@devsync/config`.
+
+**Revisit if.** Per-worker database or schema isolation gets implemented, at which point the suite
+can stop running serially. A container started by the test run itself is the recorded alternative to
+requiring one to be up, and it is worth taking only if it does not smuggle a service start back into
+`pnpm test`.
 
 ---
 

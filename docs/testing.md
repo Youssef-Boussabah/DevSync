@@ -4,8 +4,9 @@ How DevSync is tested, what each layer is responsible for proving, and — just 
 importantly — what is not tested yet.
 
 The testing architecture was introduced in **Phase A2 — testing foundation** and its shape is
-unchanged at **Phase B complete**: the phase added tests to it rather than layers. The product has
-no collaboration,
+unchanged at **Phase B complete**: the phase added tests to it rather than layers. Phase C0 added
+neither — it planned the database-testing ladder below without writing a line of it. The product
+has no collaboration,
 no persistence, no accounts, and no code execution, so none of those things are tested. What
 exists is the architecture that will hold those tests when they are written, plus real coverage of
 everything the two applications currently do.
@@ -376,6 +377,87 @@ foundation this size mostly invites
 tests written to satisfy the number. Thresholds should be introduced with the first milestone
 that adds substantive application logic — a real service, a real reducer, a real protocol
 handler — and set from what that code actually achieves rather than from a round number.
+
+## How persistence will be tested — planned
+
+**Nothing in this section exists.** There is no database, no test database, and no such test; C0
+decided the ladder so that C1 does not have to invent it while also writing its first migration.
+The shape of the data being tested is in
+[`architecture.md`](architecture.md#phase-c--planned-persistence-architecture).
+
+Two rules hold across all of it. **Database tests run against real PostgreSQL** — not SQLite, and
+not a mocked Prisma client, because the behaviour worth testing is precisely what a substitute does
+not have: cascades, unique constraints, rollback, and server-generated identifiers and timestamps.
+And **`pnpm test` keeps starting nothing.** It is the command that runs on every save; a suite that
+needs a database running belongs behind its own command, not inside the fast one.
+
+### C1 — the data layer
+
+Integration tests in `@devsync/database`, run by Vitest under the existing runner boundary, against
+a real PostgreSQL instance reached through `TEST_DATABASE_URL` with the committed migration applied
+first. They isolate deterministically: each test cleans the records it needs cleaned rather than
+depending on the order the runner happened to choose, and the destructive cleanup runs only after a
+safety check has confirmed the target is disposable — missing, unsafe, or equal to `DATABASE_URL`
+means refuse to run, not proceed carefully. They run serially until per-worker database or schema
+isolation exists, because two workers truncating one database is a flaky suite by construction.
+
+At minimum they cover project persistence, file persistence, generated UUIDs and timestamps, a
+duplicate file name within one project being rejected, the same name in two projects being
+accepted, empty content round-tripping unchanged, cascade deletion when a project is removed, the
+project-plus-first-file creation being atomic in both directions, and data still being there after
+the client disconnects and reconnects.
+
+Two of those deserve naming, because they are the ones an assumption could quietly get wrong:
+
+- **Case-sensitive file-name uniqueness.** `README.md` and `readme.md` must both be storable in one
+  project, and a second `README.md` must be rejected. The schema and its collation are what have to
+  produce that, so the test has to exercise the real database rather than trust a default.
+- **`Project.updatedAt` moving on file changes.** Creating, renaming, retyping, editing, or deleting
+  a file must move its project's timestamp, in the same transaction — including the rollback
+  direction, where a failed file change leaves the project timestamp untouched.
+
+`TEST_DATABASE_URL` belongs to this tooling alone. The API never reads it, and leaving it unset must
+not affect anything except whether these tests can run.
+
+### C2 — the API
+
+Jest in `apps/api`, as now, but with a real Nest application and a real test database wherever the
+claim involves persistence. Mocking the data layer would prove the controller calls it the way the
+test expects, which is not the same thing. These cover validation, the CRUD behaviour of every
+route, the exact status codes and error codes, a duplicate name producing `409` with
+`FILE_NAME_TAKEN`, a missing record producing `404`, a malformed identifier producing `400`, a file
+addressed through the wrong project producing `404`, and persistence errors arriving as the
+documented error shape rather than as anything Prisma wrote.
+
+`GET /projects` ordering is proved here rather than at the data layer, because it is an API
+guarantee: editing a file in an older project must move that project to the front of the list.
+
+### C3 — the browser
+
+Playwright, against the real web application, the real API, and a disposable database: create a
+project, add a file, edit it, reload, and find it unchanged. This is also where the repository's
+oldest testing gap closes — the suite finally exercises `apps/web` calling `apps/api`, which today
+it cannot, because that call does not exist.
+
+### C4 — restarts
+
+The milestone that proves persistence rather than asserting it: a browser reload, an API restart, a
+PostgreSQL container restart, closing and reopening a project, the committed migration applying to
+a database that already holds rows without losing any, and a database that is temporarily
+unavailable producing a controlled `503` instead of a stack trace.
+
+### The task it runs under
+
+Database-backed tests get their own root script and their own `turbo.json` task, added together the
+way every other test task was — a root script calling a task Turborepo does not know about silently
+does nothing. It is `cache: false`, for the same reason `test:e2e` is: the result depends on a live
+database that is not part of the input hash.
+
+It must be explicit rather than implied by an ordinary test command, must never run against a
+developer's normal `DATABASE_URL`, must not modify a tracked file, must not wait on a fixed sleep,
+and must name what failed rather than reporting that a suite did. The local command comes first and
+CI uses that same command afterwards — CI runs what a developer runs, and this is not the place to
+start making an exception.
 
 ## How collaboration will be tested later
 

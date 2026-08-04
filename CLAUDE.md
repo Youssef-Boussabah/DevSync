@@ -209,12 +209,34 @@ here is installed, and none may be installed ahead of the milestone that calls f
 
 ## Current boundary
 
-**Phase A and Phase B are complete. Phase C — database-backed projects — is next and has not
-started.** Phase A's foundation is in place: monorepo scaffold, centralised TypeScript and quality
+**Phase A and Phase B are complete. Phase C — database-backed projects — has started: C0 is
+complete, C1 is next, and no runtime persistence exists.** Phase A's foundation is in place: monorepo scaffold, centralised TypeScript and quality
 configuration, three testing layers, two production Docker images, GitHub Actions CI, and the
 documentation above. Phase B added the local editor: `apps/web` renders one Monaco editor over one
 file whose contents and language a client workspace component holds in React state, and Playwright
 types into the real editor in Chromium against the production build.
+
+**C0 was documentation only. No runtime persistence exists.** It fixed the Phase C data model, the
+HTTP resources and their error boundary, the package ownership, the Prisma and migration policy, and
+the configuration, Compose, and database-testing plans — in `docs/architecture.md`,
+`docs/roadmap.md`, and `docs/decisions.md`. It installed nothing and changed no runtime file.
+
+Five Phase C rules are durable enough to state here; the reasoning is in `docs/`:
+
+- **Phase C is single-user.** No users, owners, memberships, roles, authorization, slugs,
+  visibility, archival, soft deletion, folders, or paths — and no placeholder column or contract for
+  any of them.
+- **Prisma, the schema, the migrations, and the client belong to `@devsync/database`.** Nothing else
+  constructs a client, and `apps/web` never imports the package, Prisma, or a database URL.
+  `apps/api` depends on the package from C1 — configuration, connection lifecycle, production
+  image — but the project and file routes are C2's.
+- **Runtime contracts belong to `@devsync/shared`** — request and response schemas, the supported
+  language identifiers and their validator, and the one error contract — published in C2 for
+  `apps/api`, consumed by `apps/web` from C3. Nothing is added to it during C0.
+- **Database tests use real PostgreSQL** through `TEST_DATABASE_URL`, behind their own non-cached
+  task. `pnpm test` must keep building nothing and starting nothing.
+- **Nothing from C1 may be installed early**: no Prisma, no PostgreSQL client, no Zod, no
+  `DATABASE_URL`, no schema, no migration, no route.
 
 **That workspace is the only product functionality.** Its content and its language live in browser
 memory and are never read, written, or sent anywhere; remounting or reloading starts again from the
@@ -236,8 +258,8 @@ Two Monaco integration facts are worth knowing before changing the editor:
   paste are unaffected. Phase E applies remote CRDT operations programmatically and is where the
   model-ownership design has to be reconsidered.
 
-Do not implement later milestones early. Specifically, do not add a database or ORM,
-authentication, WebSockets, a CRDT library, code execution, Kubernetes, cloud deployment, release
-automation, or a dependency bot until the milestone that calls for it. If a task seems to require
+Do not implement later milestones early. Specifically, do not add a database, an ORM, a runtime
+validation library, authentication, WebSockets, a CRDT library, code execution, Kubernetes, cloud
+deployment, release automation, or a dependency bot until the milestone that calls for it. If a task seems to require
 one of these, say so and stop rather than building ahead.
 [`docs/roadmap.md`](docs/roadmap.md) is the sequence and the boundary each milestone must meet.

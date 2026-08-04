@@ -22,7 +22,15 @@ labelled selector beside the file name, with the content passed through untouche
 changes. B3 added the browser test that types into the real editor, and B4 reconciled the
 documentation and closed the phase. That is the only product functionality in the repository.
 
-**Phase C — database-backed projects — has not started.**
+**Phase C — database-backed projects: C0 is complete, and C1 is next.** C0 was a
+documentation milestone: it settled the project and file data model, the HTTP resources and the
+error boundary they answer with, which package owns Prisma and which owns the contracts shared with
+the browser, the migration and configuration policy, and the plans for PostgreSQL in Compose and
+for testing against a real database. **It added no runtime persistence** — no PostgreSQL, no
+Prisma, no schema, no migration, no endpoint, and still no call from `apps/web` to `apps/api`. C1
+is next, and it is the first milestone that builds any of it. The ladder is in
+[`docs/roadmap.md`](docs/roadmap.md); the design is in
+[`docs/architecture.md`](docs/architecture.md).
 
 What exists today:
 

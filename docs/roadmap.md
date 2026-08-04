@@ -2,8 +2,10 @@
 
 The milestone sequence DevSync is being built in, and the current position within it.
 
-**Phases A and B are complete.** Everything from Phase C onward is a plan: no
-code, no dependency, and no workspace content for any of it is present in this repository. A phase
+**Phases A and B are complete, and Phase C has started: C0 is complete and C1 is next.** C0 is a
+documentation milestone: it settles how persistence will be shaped before any of it is built.
+**No Phase C runtime persistence exists** — no database, no ORM, no dependency, and no workspace
+content for any of it is present in this repository. Everything from C1 onward is a plan. A phase
 is described here so that the order and the boundaries are decided in advance, not so that it can
 be mistaken for progress.
 
@@ -13,27 +15,28 @@ after it stopped being true.
 
 ## Position
 
-| Phase | Name                      | Status       |
-| ----- | ------------------------- | ------------ |
-| **A** | Project foundation        | **Complete** |
-| **B** | Local editor              | **Complete** |
-| C     | Database-backed projects  | Not started  |
-| D     | Rooms and presence        | Not started  |
-| E     | Single-file collaboration | Not started  |
-| F     | Multi-file collaboration  | Not started  |
-| G     | Persistence and recovery  | Not started  |
-| H     | Authentication and RBAC   | Not started  |
-| I     | Reliability               | Not started  |
-| J     | Collaboration tools       | Not started  |
-| K     | Version history           | Not started  |
-| L     | Secure code execution     | Not started  |
-| M     | Production hardening      | Not started  |
-| N     | Portfolio closure         | Not started  |
+| Phase | Name                      | Status          |
+| ----- | ------------------------- | --------------- |
+| **A** | Project foundation        | **Complete**    |
+| **B** | Local editor              | **Complete**    |
+| **C** | Database-backed projects  | **C0 complete** |
+| D     | Rooms and presence        | Not started     |
+| E     | Single-file collaboration | Not started     |
+| F     | Multi-file collaboration  | Not started     |
+| G     | Persistence and recovery  | Not started     |
+| H     | Authentication and RBAC   | Not started     |
+| I     | Reliability               | Not started     |
+| J     | Collaboration tools       | Not started     |
+| K     | Version history           | Not started     |
+| L     | Secure code execution     | Not started     |
+| M     | Production hardening      | Not started     |
+| N     | Portfolio closure         | Not started     |
 
 **One piece of product functionality exists**: the Monaco editor on the home page, the single-file
 workspace holding its contents, and the language that file is read as — delivered by milestones B0,
 B1, and B2, covered in a real browser by B3, and closed by B4. Nothing else in the table above is
-built, and Phase C has not started.
+built. Phase C has begun, but its first milestone decided an architecture rather than shipping one:
+**no project, no file record, and no database exists.**
 
 ---
 
@@ -138,26 +141,154 @@ editor works before anything else depends on it.
 
 ---
 
-## Phase C — database-backed projects
+## Phase C — database-backed projects 🚧 In progress
 
 **Goal.** Projects and files that survive a restart, owned by the API and reached through one
-data-access package.
+data-access package. **Phase C is single-user**: it gives DevSync something worth collaborating on
+before any collaboration exists.
 
-**Major deliverables**
+**Milestones**
 
-- PostgreSQL added to `compose.yaml` — the first service in it that is not an application.
-- Prisma schema, migrations, and generated client in `@devsync/database`.
-- Project and file CRUD endpoints in `apps/api`, with request validation.
-- The first shared contracts published from `@devsync/shared`, consumed by both applications.
-- `apps/web` calling `apps/api` — the first real edge between the two, and the first
-  `depends_on` in Compose.
+| Milestone | Deliverable                                        | Status        |
+| --------- | -------------------------------------------------- | ------------- |
+| C0        | Persistence architecture and project data contract | **Delivered** |
+| C1        | PostgreSQL and Prisma data layer                   | **Next**      |
+| C2        | Project and file API                               | Not started   |
+| C3        | Persistent web workspace                           | Not started   |
+| C4        | Persistence and restart validation                 | Not started   |
+| C5        | Phase closure                                      | Not started   |
 
-**Completion boundary.** A user can create a project, add files, edit them, reload the page, and
-find them unchanged. One user at a time; concurrent editing is undefined at this point.
+**What the phase has to add up to.** By C5, one person can create a project, list their projects,
+open one, rename it, and delete it; create files in it, list and open them, edit a file's contents,
+rename it, change the language it is read as, and delete it; reload the browser and find all of it
+unchanged; and restart both the API and PostgreSQL and still find it unchanged.
 
-**Exclusions and dependencies.** Depends on B for something to edit. No collaboration, no
-presence, no accounts — ownership is not yet enforced, because there is nobody to enforce it
-against. Redis is explicitly not introduced here.
+**Excluded from the whole phase**, and not to be prepared for with a spare column or a placeholder
+contract: users, owners, authentication, memberships, invitations, roles, authorization, slugs,
+project visibility, archival, soft deletion, folders, paths, file trees, collaboration, presence,
+WebSockets, Yjs, CRDT behaviour, remote cursors, version history, chat, code execution, Redis, and
+horizontal scaling. Editor tabs are excluded too, unless C3 finds it cannot open a second file
+without them.
+
+**Dependencies.** Depends on B for something worth persisting. Ownership is not enforced because
+there is nobody to enforce it against — that is Phase H, and it is the phase that adds the columns
+this one leaves out.
+
+The design C0 settled is in
+[`architecture.md`](architecture.md#phase-c--planned-persistence-architecture); the choices behind
+it, and what would justify revisiting each, are in [`decisions.md`](decisions.md).
+
+### C0 — persistence architecture and project data contract ✅ Delivered
+
+**Delivered.** Documentation only, and deliberately so: the shape of the data, the HTTP surface,
+the error boundary, and the package ownership are cheaper to argue about before a migration exists
+than after one has run. C0 fixed the `Project` and `ProjectFile` models and their validation rules,
+the nested REST resources and their status codes, the one error shape every route answers with, the
+dependency direction between `apps/web`, `apps/api`, `@devsync/shared`, and `@devsync/database`, the
+Prisma and migration policy, the planned environment variables, the planned Compose topology, and
+the database-testing ladder. It also fixed the Phase C exclusions above, so that later milestones
+have something to be measured against.
+
+**Completion boundary.** The architecture, decision, testing, Docker, and development documents
+describe Phase C's design as planned, agree with one another, and add no runtime artefact:
+dependencies, lockfile, application source, package source, tests, CI, Compose, and both
+Dockerfiles are untouched, and every existing check still passes. **Met.**
+
+**Excluded.** Everything that runs. No Prisma, no PostgreSQL, no Zod, no schema, no migration, no
+`DATABASE_URL`, no configuration module, no controller, no repository, no DTO, and no call from
+`apps/web` to `apps/api`.
+
+### C1 — PostgreSQL and Prisma data layer
+
+**Deliverables.** PostgreSQL in `compose.yaml` — the first service there that is not an
+application, with a pinned major version, a named volume, a `pg_isready` health check, and the
+migration step the API waits on. Prisma installed in `@devsync/database`, with the schema, the
+initial migration, the client construction, and the connection lifecycle all owned by that package.
+Data-access functions for projects and files, including the transaction that creates a project
+together with its first file. Persistence errors classified by the package rather than left as raw
+Prisma exceptions.
+
+**`apps/api` takes its first dependency on `@devsync/database` here.** The API owns configuration
+loading, asks the package to connect during startup and to disconnect during shutdown through
+Nest's lifecycle hooks, and carries the package and its generated client in its production image.
+The connection is exercised by the real API process, not only by tests — a data layer nothing runs
+is a data layer nobody has proved.
+
+`DATABASE_URL` is required from C1, loaded and validated when that runtime starts, so a missing or
+malformed value fails startup rather than falling back to another database. `TEST_DATABASE_URL` is
+read only by the database-backed test tooling and validated only when those tests run; its absence
+must never stop the API from starting. Integration tests against a real PostgreSQL database sit
+behind their own non-cached task.
+
+**Completion boundary.** The API process starts, connects through `@devsync/database`, and shuts
+down cleanly; a record written through the package is still there after the client disconnects and
+reconnects, and after the container is restarted; the committed migration applies to an empty
+database; and the integration suite refuses to run against a database it has not been told is
+disposable.
+
+**Excluded.** No project or file HTTP route, controller, DTO, or public persistence API — those are
+C2 — and no change to `apps/web`. The API depends on the package and holds a connection, but
+nothing it serves reads or writes a project yet.
+
+### C2 — project and file API
+
+**Deliverables.** The nested project and file resources in `apps/api`, with request validation, the
+starter-file policy applied at creation, and persistence errors mapped to the status codes and error
+codes C0 settled. **`@devsync/shared` starts exporting here**: the request schemas, the response
+schemas worth pinning, the types inferred from them, the supported language identifiers and their
+validator, and the error contract. `apps/api` is their first consumer; `apps/web` becomes the second
+in C3. API integration tests against a real Nest application and a real test database.
+
+**Completion boundary.** Every route in the C0 contract behaves as documented, including the
+failures: an invalid UUID, an unsupported language, an empty patch, a duplicate file name within a
+project, a file addressed through the wrong project, and a project that does not exist. A file
+mutation moves its project's `updatedAt`, so the project list orders by real recent work.
+
+**Excluded.** No change to `apps/web`, and no authentication — every request is anonymous, and the
+API is published on a local host port, so anything that can reach that port can read and delete
+anything in it. That is acceptable only inside Phase C's local single-user development boundary, and
+it is why nothing in Phase C may be deployed publicly. Phase H is what makes it safe.
+
+### C3 — persistent web workspace
+
+**Deliverables.** The first call `apps/web` ever makes to `apps/api` — the first web-to-API runtime
+dependency there has ever been, and with it the Compose dependency edge from `web` to `api`. The
+database and migration ordering edges already exist; C1 added them. `apps/web` becomes the second
+application consuming `@devsync/shared`, which C2 published. A project list and a project view;
+creating, renaming, and deleting a project; creating, opening, renaming, and deleting a file; and
+editing a file's contents against a save path that is explicit about what has reached the server.
+The language selection becomes a stored property of a file rather than a reading of one buffer,
+which is what retires the derived file name in `apps/web/src/editor/languages.ts` — the labels a
+user reads may stay there, but the identifiers and their validator are `@devsync/shared`'s from C2.
+Playwright drives the whole flow against a real web application, a real API, and a disposable
+database.
+
+**Completion boundary.** A person opens the application, creates a project, edits a file, reloads
+the page, and finds their work exactly as they left it.
+
+**Excluded.** No collaboration and no presence — a second browser sees the same data only by
+reloading, and two people editing the same file at once is undefined behaviour until Phase E.
+
+### C4 — persistence and restart validation
+
+**Deliverables.** Proof, rather than assertion, that the data survives: a browser reload, an API
+restart, a PostgreSQL container restart, closing and reopening a project, applying the committed
+migration to an existing database without losing rows, and a database that is temporarily
+unavailable producing a controlled failure instead of a stack trace.
+
+**Completion boundary.** Every one of those is covered by a test or a documented, reproducible
+procedure, and none of them loses a record.
+
+**Excluded.** No backup and restore tooling, no load testing, and no failover — those are Phase M.
+
+### C5 — phase closure
+
+**Deliverables.** The reconciliation pass. Documentation rewritten from plan to record, the
+implementation audited against the C0 contract, any drift between the two resolved in whichever
+direction turns out to be right, and the full validation suite rerun.
+
+**Completion boundary.** Every document describes the persistence that exists, the exclusions above
+are still absent, and the phase's completion boundary is met and stated as met.
 
 ---
 
