@@ -6,7 +6,9 @@ deliberately does not include.
 The container setup was introduced in **Phase A3 — Docker foundation** and grew for the first time
 in **C1**, which added PostgreSQL, a named volume, and a one-shot migration service. Phase B needed
 no change to it at all: Monaco and its language workers are bundled into the client build rather
-than fetched at runtime, and the workspace state never leaves the browser.
+than fetched at runtime, and the workspace state never leaves the browser. **C2 added no service and
+no dependency edge** — only a third workspace to the API image, `@devsync/shared`, because the API
+now validates every request against the schemas it publishes.
 
 Docker is an additional way to run DevSync; it replaces nothing. Every `pnpm` command still works
 exactly as before, and the test architecture still runs on the host — though `pnpm test:db` and
@@ -87,23 +89,26 @@ Four stages, plus a shared base.
 2. **manifests** — the lockfile and every workspace manifest. Shared by both installs below, so
    that layer is fetched once.
 3. **build-deps** → **builder** — `pnpm install --frozen-lockfile --filter @devsync/api...`,
-   then `packages/config` and `apps/api`, then `nest build` to `dist/`.
-4. **prod-deps** — the same lockfile with `--prod`, so the compiler, the Nest CLI, Jest, and
-   Supertest never reach the runtime image.
+   then `packages/config`, `packages/database`, `packages/shared`, and `apps/api`, then the two
+   packages' builds and `nest build` to `dist/`.
+4. **prod-deps** — the same lockfile with `--prod --no-optional`, so the compiler, the Nest CLI,
+   the Prisma CLI, Jest, and Supertest never reach the runtime image. Both flags are needed;
+   [why](#why-the-production-install-declines-optional-dependencies) is below.
 5. **runner** — a fresh Node image holding `dist/`, `package.json`, and the production
    `node_modules`.
 
 Two details are load-bearing:
 
-- **The prod install uses `--filter @devsync/api`, without the `...` suffix** the build stage
+- **The prod install names its workspaces explicitly, without the `...` suffix** the build stage
   uses. That suffix pulls in the workspace packages `@devsync/api` depends on regardless of
   whether the edge is a dev dependency, which drags in `@devsync/config` and, through its own
   dependency on `typescript-eslint`, 22 MB of TypeScript that nothing at runtime can even
-  resolve. `@devsync/api` has no workspace dependency it needs in production, so the plain
-  filter is both smaller and more honest.
-- **Both `node_modules` trees are copied, at their original relative paths.** pnpm links
-  `apps/api/node_modules/*` to the content-addressed store under `/repo/node_modules/.pnpm`
-  using relative symlinks, which resolve only if that layout is preserved.
+  resolve. Naming the three packages that genuinely run — `@devsync/api`, `@devsync/database`, and
+  `@devsync/shared` — is both smaller and more honest.
+- **Every `node_modules` tree is copied, at its original relative path.** pnpm links
+  `apps/api/node_modules/*` and `packages/*/node_modules/*` to the content-addressed store under
+  `/repo/node_modules/.pnpm` using relative symlinks, which resolve only if that layout is
+  preserved.
 
 ## Commands
 
@@ -305,31 +310,90 @@ the first `depends_on` in the file.
 
 ### What the API image carries
 
-The runtime image holds compiled JavaScript for `apps/api` and `packages/database`, the generated
-Prisma Client compiled with it, and the production dependency trees for both — `@prisma/client`,
-`@prisma/adapter-pg`, and `pg` among them. It holds **no** TypeScript source, no compiler, no Nest
-CLI, no test runner, and no Prisma CLI. Because the client reaches PostgreSQL through the `pg`
-driver adapter, no query engine binary ships either.
+The runtime image holds compiled JavaScript for `apps/api`, `packages/database`, and — since C2 —
+`packages/shared`, the generated Prisma Client compiled with the data layer, and the production
+dependency trees for all three: `@prisma/client`, `@prisma/client-runtime-utils`,
+`@prisma/adapter-pg`, `pg`, `zod`, and the Nest runtime. **It contains runtime dependencies only.**
 
-One existing detail became load-bearing in C1. The `prod-deps` stage installs with
-`--filter @devsync/api --filter @devsync/database`, naming both packages rather than using pnpm's
-`...` suffix. The suffix would pull in every workspace package on a dependency edge of any kind,
-including the dev-only one to `@devsync/config`, and with it tens of megabytes of TypeScript that
-nothing at runtime can resolve.
+It ships **no `.ts` source file at all** — `find /repo/apps /repo/packages -name '*.ts' ! -name
+'*.d.ts'` returns nothing — no Nest CLI, no test runner, **no Prisma CLI, and no TypeScript
+compiler**. No file named `tsc`, `prisma`, `nest`, `jest`, `vitest`, or `eslint` exists anywhere in
+the image, and `node_modules/.pnpm` holds no `prisma@*` or `typescript@*` directory. No query engine
+binary ships either, because the client reaches PostgreSQL through the `pg` driver adapter.
 
-pnpm links `apps/api/node_modules/@devsync/database` to `packages/database`, so the runtime image
-copies that package's `dist`, its manifest, and its `node_modules` at their original relative
-paths — the same reason the other `node_modules` trees keep theirs.
+Verified inside the running container:
+
+```bash
+docker compose exec api node -e "console.log(require.resolve('@devsync/database'), require.resolve('@devsync/shared'))"
+# /repo/packages/database/dist/index.js /repo/packages/shared/dist/index.js
+```
+
+Both workspace packages resolve to a `dist/index.js`, never to a `.ts` file. Zod resolves from
+`packages/shared`, which is the only workspace that declares it; it is deliberately **not**
+resolvable from `apps/api`, because the API depends on the contracts rather than on the validation
+library.
+
+### Why the production install declines optional dependencies
+
+`@prisma/client` declares `prisma` and `typescript` as **optional peer dependencies**. Because
+`packages/database` legitimately has both as devDependencies — it runs `prisma generate` and `tsc` —
+pnpm resolves those peers and records them in the lockfile as `optionalDependencies` of the
+`@prisma/client` snapshot:
+
+```yaml
+'@prisma/client@7.9.1(prisma@7.9.1(…)(typescript@5.9.3))(typescript@5.9.3)':
+  dependencies:
+    '@prisma/client-runtime-utils': 7.9.1
+  optionalDependencies:
+    prisma: 7.9.1(…)
+    typescript: 5.9.3
+```
+
+`@prisma/client` is a **production** dependency, so `--prod` on its own installs that snapshot and
+its optional edges with it. `--prod --no-optional` declines them, which is why the `prod-deps` stage
+passes both flags.
+
+It removes about 140 packages: the Prisma CLI and its schema engine, Prisma Studio and the React,
+Radix, d3, and visx tree behind it, and the `mysql2`, `postgres`, and `pglite` drivers this project
+does not use. The one other thing it drops is `pg-cloudflare`, a Cloudflare Workers socket shim that
+`pg` loads inside a `try`/`catch` and never needs on Node — the container smoke test writes and
+reads through Prisma without it.
+
+The flag is scoped to the production install and to nothing else. `autoInstallPeers: false`
+repository-wide was tested and changes nothing: the peers are _declared_ rather than missing, so
+pnpm resolves them either way, and the recorded version key stays
+`@prisma/client@7.9.1(prisma@…)(typescript@…)`. The development install must keep both packages,
+because that is where they are used; the migration image must keep the CLI, because that is what it
+runs. Neither is touched.
+
+One existing detail became load-bearing in C1 and grew in C2. The `prod-deps` stage installs with
+`--filter @devsync/api --filter @devsync/database --filter @devsync/shared`, naming all three
+packages rather than using pnpm's `...` suffix. The suffix would pull in every workspace package on
+a dependency edge of any kind, including the dev-only one to `@devsync/config`, and with it tens of
+megabytes of TypeScript that nothing at runtime can resolve.
+
+pnpm links `apps/api/node_modules/@devsync/database` and `…/@devsync/shared` to their packages, so
+the runtime image copies each one's `dist`, its manifest, and its `node_modules` at their original
+relative paths — the same reason the other `node_modules` trees keep theirs. `packages/shared`'s own
+tree is where Zod is linked.
+
+**The migration image is unchanged.** It carries the Prisma CLI, the schema, and the migrations, and
+has no use for the request contracts.
 
 ## Current limitations
 
 - **No cache, queue, message broker, or database administration UI exists**, in Compose or
   anywhere else. PostgreSQL is there because the API genuinely needs it; nothing else has earned
   a place yet, and an unused service would be scaffolding pretending to be architecture.
-- **Nothing a user can reach touches the database.** The API connects to it during startup and
-  serves no route that reads or writes a project. That arrives in C2.
-- **The two services do not talk to each other.** `web` and `api` are containerised
-  independently because that is what they are.
+- **Nothing a user can reach touches the database.** The API serves ten routes over projects and
+  files, and no page in `apps/web` calls any of them, so a person using the containers still cannot
+  save or load anything. That arrives in C3.
+- **The API in a container is anonymous and published on a host port.** Anything that can reach
+  3001 can read, rename, and permanently delete every project in the volume. That is acceptable on
+  a developer's own machine and nowhere else; **do not expose these containers.**
+- **The two application services do not talk to each other.** `web` and `api` are containerised
+  independently because that is what they are. Compose runs four services in total; the other two
+  are PostgreSQL and the one-shot `migrate`.
 - **No development-mode Compose setup.** There is no watch mode, no bind-mounted source, and no
   hot reload in Docker. `pnpm dev` remains the development loop; these images run production
   builds only.

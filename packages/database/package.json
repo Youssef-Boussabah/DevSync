@@ -9,11 +9,16 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./test-database": {
+      "types": "./tools/test-database.d.mts",
+      "default": "./tools/test-database.mjs"
     }
   },
   "files": [
     "dist",
-    "prisma"
+    "prisma",
+    "tools"
   ],
   "scripts": {
     "generate": "prisma generate",

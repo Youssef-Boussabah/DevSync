@@ -3,41 +3,70 @@
 How DevSync is tested, what each layer is responsible for proving, and — just as
 importantly — what is not tested yet.
 
-The testing architecture was introduced in **Phase A2 — testing foundation**, and C1 added the
-first new layer since: database integration tests, in `packages/database`, against a real
-PostgreSQL. C0 planned that layer without writing a line of it; C1 wrote it. The product still has
-no collaboration, no accounts, and no code execution, so none of those things are tested — and
-persistence is now tested at the data layer but not through any route, because no route reaches
-it.
+The testing architecture was introduced in **Phase A2 — testing foundation**. C1 added database
+integration tests, in `packages/database`, against a real PostgreSQL. **C2 added two more layers**:
+schema tests in `packages/shared`, which need nothing, and HTTP integration tests in `apps/api`
+against the real application over that same real PostgreSQL. The product still has no collaboration,
+no accounts, and no code execution, so none of those things are tested — and persistence is now
+tested at the data layer _and_ through every route, but not from a browser, because `apps/web` makes
+no request to `apps/api`.
 
 ## Layers
 
 | Layer                  | Runner         | Lives in                     | Runs against                               |
 | ---------------------- | -------------- | ---------------------------- | ------------------------------------------ |
+| Contract               | **Vitest**     | `packages/shared`            | Schemas, in Node, in-process               |
 | Unit / component       | **Vitest**     | `apps/web`                   | React components, in jsdom, in-process     |
 | HTTP-level application | **Jest**       | `apps/api`                   | A Nest application on an ephemeral socket  |
 | Database integration   | **Vitest**     | `packages/database`          | A real PostgreSQL, with migrations applied |
+| API integration        | **Jest**       | `apps/api`                   | The real `AppModule`, over that PostgreSQL |
 | Browser / full-stack   | **Playwright** | `tests/e2e` (`@devsync/e2e`) | The built applications, on real ports      |
 
-Four layers, three runners — the database layer joined the runner `apps/web` already used rather
-than introducing a fourth.
+Six layers, three runners. No runner was added: the two new layers joined the runner their workspace
+already used.
 
 **Vitest owns the frontend and the pure TypeScript packages.** It shares Vite's transform pipeline
 with the tooling `apps/web` already uses, starts fast enough to run on every save, and handles TSX
 without extra configuration. C1 made `packages/database` its second workspace, which is what moved
-the runner-agnostic parts of the configuration into `@devsync/config`.
+the runner-agnostic parts of the configuration into `@devsync/config`; C2 made `packages/shared` the
+third, and it spread what was already there rather than adding to it.
 
-**Jest stays in `apps/api`.** `@nestjs/testing` is written against Jest's API, and `ts-jest`
-reads `apps/api/tsconfig.json` directly — including `emitDecoratorMetadata`, which NestJS's
-dependency injection depends on. Moving the API to Vitest would mean reintroducing that
-decorator metadata through SWC or Babel to buy uniformity and nothing else. The migration is
-not blocked; it is simply not paid for. If a concrete reason appears — a shared helper the two
-runners cannot both consume, say — that is the point to revisit it.
+**Jest stays in `apps/api`, and now runs two suites there.** `@nestjs/testing` is written against
+Jest's API, and `ts-jest` reads `apps/api/tsconfig.json` directly — including
+`emitDecoratorMetadata`, which NestJS's dependency injection depends on. Moving the API to Vitest
+would mean reintroducing that decorator metadata through SWC or Babel to buy uniformity and nothing
+else. The migration is not blocked; it is simply not paid for.
 
 **Playwright owns everything that needs a real process.** It is the only layer that runs
 compiled output, binds ports, and drives a browser.
 
 ## What the current tests actually prove
+
+### `packages/shared` — the contracts (Vitest, Node, 100 tests)
+
+Five files over the schemas `apps/api` validates every request against and answers every response
+with. They run through `parseContract`, which is the function the API calls, so a passing test is a
+statement about the API's behaviour rather than about Zod's.
+
+- **`languages.test.ts`** — the five identifiers are exactly the five DevSync offers, each is
+  accepted, and the validator is exact: `TypeScript` is not `typescript`, `rust` is refused, a
+  number is not coerced, and an empty string does not fall back to a default.
+- **`identifiers.test.ts`** — a UUID is accepted and five shapes of malformed identifier are not,
+  and the route-parameter schemas name which parameter was wrong.
+- **`requests.test.ts`** — names are trimmed before anything stores them and lengths are measured
+  **after** trimming, so `'  ' + 100 characters + '  '` is valid and 101 characters is not; content
+  is never trimmed; omitted content becomes `''` and explicit `''` stays `''`; unknown properties
+  are rejected rather than dropped; a file patch carrying nothing is rejected; and name, language,
+  and content can each be changed alone.
+- **`resources.test.ts`** — a timestamp must be a UTC instant, not a local time with an offset, a
+  date, or a number of milliseconds; a project resource may not carry files; a file **summary** may
+  not carry content and a full file resource must; and a listing is a bare array, not an envelope.
+- **`errors.test.ts`** — the seven stable codes are exactly those seven, an eighth is refused, an
+  issue path may hold numeric segments, an **empty** issue list is invalid because it claims detail
+  it does not have, and an error resource may not carry a stack trace.
+
+The strictness is what makes several of these assertions work at all: because the summary schema
+refuses unknown keys, parsing a summary that leaked a `content` property _is_ the failing assertion.
 
 ### `apps/web` — `tests/home-page.test.tsx` (Vitest, jsdom, 8 tests)
 
@@ -153,8 +182,37 @@ It deliberately does not prove that `main.ts` bootstraps, that `AppModule` impor
 of the built process rather than of the health feature, and they belong to the layer below.
 
 **It boots `HealthModule` directly, so it needs no database** — which is why it stayed a
-sub-second test after C1 gave `AppModule` a connection to open. The Playwright suite is what proves
-the real `AppModule` starts, database and all.
+sub-second test after C1 gave `AppModule` a connection to open. The API integration suite and the
+Playwright suite are what prove the real `AppModule` starts, database and all.
+
+### `apps/api` — the error boundary and the mappers (Jest, 29 tests)
+
+Three files C2 added that need no database, and must not have one.
+
+`src/common/api-exception.filter.spec.ts` boots the real controllers, services, filter, and body
+parser over a data layer that does nothing but fail in a way the test chose. **That is the only
+honest way to see three of the four persistence meanings**: a real PostgreSQL cannot be asked to
+become unavailable in the middle of an integration run without taking the rest of that run with it,
+and stopping it for real belongs to C4. It proves each meaning becomes its documented status and
+code, that an exception nobody anticipated becomes a generic `500`, that the real exception is
+**logged** rather than returned, and — with a deliberately leaky cause carrying a Prisma error name,
+a code, a SQL fragment, a table name, a host, and a password — that none of it reaches the response.
+It also proves a body that is not JSON becomes `400 VALIDATION_FAILED`, and that an unmatched route
+is left to the framework rather than given a code the contract does not have.
+
+**It is not a claim that any route works.** The database is a stand-in that only ever fails; a fake
+database proving CRUD would prove that a controller calls a stand-in the way the test expects, which
+is a different claim.
+
+`src/common/contract.pipe.spec.ts` covers the two pipes directly: what comes out is the trimmed,
+defaulted value rather than what went in, a bad body is `VALIDATION_FAILED` and a bad identifier is
+`INVALID_IDENTIFIER`, and each names the property it objected to.
+
+`src/common/resources.spec.ts` covers the seam between storage and the wire: both timestamps become
+UTC ISO-8601 strings, a summary has no `content` and a full resource does, empty content survives as
+a property rather than being dropped, a column the contract does not name is not copied across, and
+a stored language the supported list no longer contains fails as an internal error instead of being
+coerced.
 
 ### `tests/e2e` — Playwright, 8 tests
 
@@ -243,7 +301,7 @@ seconds, without a build or a browser. Each catches failures the other structura
 | ----------------------- | ----------------------------------------------------------------------------- |
 | `pnpm test`             | Every in-process suite: Vitest and Jest. No browsers, no builds, no database. |
 | `pnpm test:unit`        | The Vitest layer only — the fast inner loop.                                  |
-| `pnpm test:db`          | The database integration suite, against a running PostgreSQL.                 |
+| `pnpm test:db`          | The two database-backed suites, in sequence, against a running PostgreSQL.    |
 | `pnpm test:e2e`         | Playwright. Builds both applications first, then starts them.                 |
 | `pnpm test:all`         | `test`, then `test:db`, then `test:e2e`. Sequential, and needs PostgreSQL.    |
 | `pnpm test:coverage`    | Coverage for `apps/web` and `apps/api`.                                       |
@@ -252,12 +310,30 @@ seconds, without a build or a browser. Each catches failures the other structura
 `pnpm test` is the default because it stays fast: it neither builds anything, launches a browser,
 nor needs a database. The other two are separate for the same reason.
 
-| Command         | Needs PostgreSQL | Runs                                     |
-| --------------- | ---------------- | ---------------------------------------- |
-| `pnpm test`     | no               | Vitest in `apps/web`, Jest in `apps/api` |
-| `pnpm test:db`  | **yes**          | Vitest in `packages/database`            |
-| `pnpm test:e2e` | **yes**          | Playwright over both built applications  |
-| `pnpm test:all` | **yes**          | All three above, one after another       |
+**"Builds nothing" is literal, and it is checked from a clean tree.** `test`, `test:unit`, and
+`test:coverage` declare no `dependsOn` at all in `turbo.json`, so a dry run of the task graph
+schedules nine `#test` tasks and not one `#build` or `#generate`. After `pnpm clean && pnpm test`,
+`packages/database/src/generated`, `packages/database/dist`, `packages/shared/dist`,
+`apps/api/dist`, and `apps/web/.next` are all still absent. A previously built tree proves nothing
+here; the clean tree is the test.
+
+| Command         | Needs PostgreSQL | Runs                                                           |
+| --------------- | ---------------- | -------------------------------------------------------------- |
+| `pnpm test`     | no               | Vitest in `packages/shared` and `apps/web`, Jest in `apps/api` |
+| `pnpm test:db`  | **yes**          | Vitest in `packages/database`, then Jest in `apps/api`         |
+| `pnpm test:e2e` | **yes**          | Playwright over both built applications                        |
+| `pnpm test:all` | **yes**          | All three above, one after another                             |
+
+**`pnpm test:db` runs its two suites one after the other, and the root script says so:**
+
+```json
+"test:db": "turbo run test:db --filter=@devsync/database && turbo run test:db --filter=@devsync/api"
+```
+
+Two invocations rather than one, because both suites reset and rewrite the **same** schema in the
+same disposable database. Letting Turborepo choose the order would let them run at once, and a suite
+that drops a schema while another is reading it is a flaky suite by construction. The `&&` is the
+guarantee, and it is the cheapest way to state it — the same reasoning as `pnpm test:all`.
 
 ```bash
 docker compose up -d database
@@ -275,18 +351,20 @@ is the guarantee, and `&&` is the cheapest way to state it.
 cache, and a command that mutates a developer's machine should be something they chose to run,
 not a side effect of running tests.
 
-The `test:unit` / `test` distinction is a real one rather than an alias: `apps/api`'s suite is
-an HTTP-level application test, so it correctly has no `test:unit` script and does not appear in
-that command.
+The `test:unit` / `test` distinction is a real one rather than an alias: `apps/api`'s suites are
+HTTP-level application tests, so it correctly has no `test:unit` script and does not appear in that
+command. `packages/shared` does, because schemas in Node are exactly what that layer is.
 
 ### Within a workspace
 
 ```bash
+pnpm --filter @devsync/shared test        # vitest run
 pnpm --filter @devsync/web test           # vitest run
 pnpm --filter @devsync/web test:watch     # vitest, watching
 pnpm --filter @devsync/web test:coverage  # vitest run --coverage
 
-pnpm --filter @devsync/api test           # jest
+pnpm --filter @devsync/api test           # jest — the fast suite
+pnpm --filter @devsync/api test:db        # jest — the PostgreSQL-backed suite
 pnpm --filter @devsync/api test:watch     # jest --watch
 pnpm --filter @devsync/api test:coverage  # jest --coverage
 
@@ -299,18 +377,70 @@ know they have.
 
 ### Turborepo tasks
 
-`test`, `test:unit`, `test:coverage`, and `test:e2e` are all declared in `turbo.json`. A root
-script that calls a task Turborepo does not know about silently does nothing, so a new test
+`test`, `test:unit`, `test:db`, `test:coverage`, and `test:e2e` are all declared in `turbo.json`. A
+root script that calls a task Turborepo does not know about silently does nothing, so a new test
 script must be added in both places.
+
+**`test`, `test:unit`, and `test:coverage` declare no dependencies.** `test:db` declares
+`dependsOn: ["^build", "generate"]`, because the API's database-backed suite loads the **compiled**
+`@devsync/database` and `@devsync/shared` and the data layer needs its Prisma Client generated; it
+is `cache: false`, like `test:e2e`, because the result depends on a live database that is not part
+of the input hash. `test:e2e` names both application builds explicitly for the same kind of reason.
+
+That split is the whole point: the suites that exercise real processes and a real database build
+what they exercise, and the suite that runs on every save builds nothing.
+
+### How the fast API suite runs with nothing built
+
+`apps/api` depends on two workspace packages that are compiled for production. If its fast suite
+loaded them from `dist`, `pnpm test` would have to run `prisma generate` and two `tsc` invocations
+before its first assertion — which is exactly the promise this document makes and the reason the
+dependency was removed.
+
+So the fast suite reads their TypeScript instead. `apps/api/jest.config.mjs` maps the two package
+specifiers:
+
+```js
+moduleNameMapper: {
+  '^@devsync/shared$':   '<rootDir>/../../packages/shared/src/index.ts',
+  '^@devsync/database$': '<rootDir>/../../packages/database/src/contracts.ts',
+}
+```
+
+and `apps/api/tsconfig.test.json` carries the matching `paths`, so ts-jest **type-checks** against
+the same sources it loads. Four properties of that arrangement are deliberate:
+
+- **They are the real modules.** The same Zod schemas the API validates every request against, and
+  the same `PersistenceError` class it throws. Nothing is copied, mocked, or re-declared.
+- **The bare specifier is mapped, not individual files.** If production code resolved
+  `PersistenceError` from `dist` while a test constructed one from source, they would be two
+  different classes and every `instanceof` check would quietly stop matching.
+- **`@devsync/database` maps to `contracts.ts`, not `index.ts`.** Only `contracts.ts` is free of the
+  generated Prisma Client — it holds the records, the operation interfaces, `Database`, and
+  `PersistenceError`, and imports nothing from Prisma. A fast test that reached for `createDatabase`
+  would fail to resolve, which is the right answer: opening a connection belongs to `pnpm test:db`.
+- **Production is untouched.** `pnpm build`, `node apps/api/dist/main.js`, and both container images
+  resolve `@devsync/shared` and `@devsync/database` through their `exports` maps to `dist/index.js`,
+  exactly as before. `jest.db.config.mjs` carries no mapping at all, because proving the compiled
+  packages work is the only thing that suite is for.
 
 `test:coverage` declares `coverage/**` as its output and is cached like any other deterministic
 task. `test:e2e` sets `cache: false`: its result depends on live processes binding real ports
 and on a browser being installed, none of which is part of the input hash, so a cache hit would
 report a pass without having proved anything.
 
-Keep `pnpm test` free of build steps. A workspace that declares an application as a package
-dependency inherits that application's `build` through `dependsOn: ["^build"]` on `test`, which
-is how the fast command quietly stops being fast.
+Keep `pnpm test` free of build steps. `test` once declared `dependsOn: ["^build"]`, which was
+harmless while no workspace in it depended on a package that builds — and stopped being harmless the
+moment `apps/api` took production dependencies on `@devsync/database` and `@devsync/shared`. From a
+clean tree the fast command was scheduling `@devsync/database#generate`, `@devsync/database#build`,
+and `@devsync/shared#build` before its first test. A cached run hid it. **The clean-tree dry run is
+the check that does not lie**, and it is worth repeating whenever a workspace in `pnpm test` gains a
+dependency on one that emits:
+
+```bash
+pnpm clean
+pnpm exec turbo run test --force --dry=json   # no task may end in #build or #generate
+```
 
 ## How the end-to-end suite starts the services
 
@@ -379,19 +509,24 @@ so a failing run cannot leave a stray window behind; open it deliberately with
 ## Coverage, and what the numbers mean
 
 **`pnpm test:coverage` currently measures `apps/web` and `apps/api`** — the first through Vitest's
-v8 provider, the second through Jest. **There is no repository-wide coverage figure**, and the four
+v8 provider, the second through Jest. **There is no repository-wide coverage figure**, and the
 workspaces with no implementation are not counted in either direction.
 
-`packages/database` has plenty worth measuring, and is deliberately not in that command yet. Its
-suite is the one that needs a running PostgreSQL, and folding it into the root coverage command
-would make a command that works today start failing on a machine with no database — the same
-reason it is not in `pnpm test`. It is covered by 57 tests under `pnpm test:db`; what is missing is
-a number, not the testing. Adding it means either a coverage command that requires PostgreSQL or a
-second one that does not, and that choice is worth making when there is a reason to care about the
-figure rather than now.
+`packages/database` and `packages/shared` are deliberately not in that command. The data layer's
+suite needs a running PostgreSQL, and folding it in would make a command that works today start
+failing on a machine with no database — the same reason it is not in `pnpm test`. `packages/shared`
+is left out for the opposite reason: it is 100 tests over schemas whose every branch is a schema
+rule, and a percentage over it would say less than the list of rules already does. Both are covered;
+what is missing is a number, not the testing.
 
-Numbers from the last measured run of `apps/web` and `apps/api`, before C1 added the API's
-configuration and lifecycle code:
+`pnpm test:coverage` builds nothing either: `apps/web` measures its own source, and `apps/api` runs
+the same fast Jest configuration, so it reads the two workspace packages from source exactly as
+`pnpm test` does.
+
+Numbers from the last measured run of `apps/web` and `apps/api`, taken before C1 added the API's
+configuration and lifecycle code and **not re-measured since C2 added its routes** — they describe a
+smaller application than the one that exists now, and are kept only because a stated stale figure is
+more useful than a deleted one:
 
 ```text
 apps/web               79.54%  statements  (page.tsx, local-editor-workspace.tsx and
@@ -501,20 +636,57 @@ Four groups deserve naming, because each is a claim an assumption could quietly 
 `TEST_DATABASE_URL` belongs to this tooling alone. The API never reads it, and leaving it unset
 affects nothing except whether these tests can run.
 
+## The API integration suite — `apps/api` (Jest, 110 tests)
+
+C2's layer, and the one that finally drives persistence through HTTP. It boots the **real**
+`AppModule` — configuration, database module, both controllers — through the **same**
+`configureHttpApplication` that `main.ts` calls, against the **same** disposable PostgreSQL, with the
+**same** committed migration applied by the **same** safety gate. Nothing is mocked. Supertest binds
+an ephemeral socket per request, so the suite publishes no port and cannot collide with a running
+service.
+
+Three files, run one worker at a time, with every project deleted before each test — before rather
+than after, so a run that crashed halfway cannot leave rows that quietly change the next one.
+Deleting a project takes its files with it, through the cascade in the schema.
+
+**Every assertion reads a body that has already been parsed through the schema `@devsync/shared`
+publishes for it.** Those schemas are strict, so a route that grew a property, dropped a timestamp,
+or leaked a file's contents into a summary fails at the parse rather than reaching a client.
+
+- **`application.db-spec.ts`** — `GET /health` still answers exactly what the rest of the system
+  waits on, and still says nothing about the database. All eight routes carrying an identifier
+  answer `400 INVALID_IDENTIFIER` for a malformed one, a _valid_ identifier that matches nothing
+  answers `404` instead, and **every data-layer operation is spied on to prove none of them is
+  called** — a malformed identifier never becomes a query. A body that is not JSON, a literal
+  `null`, no body at all, and a bare string are each `400 VALIDATION_FAILED`. A file of a million
+  characters is accepted; one over the 1 MiB limit is refused with the stable error shape rather
+  than the parser's, and nothing from it is stored.
+- **`projects.db-spec.ts`** — creation trims the name, creates exactly one file, gives it the name,
+  language, and content the **API** owns (asserted by watching what the data layer was handed, so
+  the policy cannot quietly move into the package), and answers a summary rather than the starter
+  content. Two projects may share a name. Listing is empty when nothing exists, carries no `files`
+  property, puts the most recently updated first, **moves a project to the front when a file in it
+  is edited**, and answers the same order twice in a row. Detail carries summaries and never
+  contents. Rename trims, moves `updatedAt`, leaves `createdAt`, and refuses an empty body, a
+  whitespace name, 101 characters, and an unknown property. Delete is `204` with no body, removes
+  the files by cascade, leaves other projects alone, and answers `404 PROJECT_NOT_FOUND` the second
+  time.
+- **`project-files.db-spec.ts`** — creation returns the whole file, defaults omitted content to
+  `''`, keeps explicit `''`, does not trim content, trims the name, and moves the project's
+  timestamp. The same file name is free in another project, `README.md` and `readme.md` coexist in
+  one, and a duplicate is `409 FILE_NAME_TAKEN` with the name in the message and an issue on
+  `name` — and the file it refused to rename is unchanged afterwards. Listing is summaries only, in
+  creation order, stable across requests. Retrieval carries content and answers `404 FILE_NOT_FOUND`
+  for a file that lives in another project. Patching name, language, and content is tested one at a
+  time and all at once, each proving the other two are untouched; an empty patch and an
+  unknown-only patch are refused; both timestamps move. Deletion is `204`, allows the **last** file
+  to go, leaves the project with none, and is permanent.
+
+Every route is covered, and so is every failure the C0 contract names. What is deliberately **not**
+here is the three persistence meanings that require the database to misbehave: those are injected in
+the fast suite above, and stopping PostgreSQL under a running API is C4's.
+
 ## Still planned
-
-### C2 — the API
-
-Jest in `apps/api`, as now, but with a real Nest application and a real test database wherever the
-claim involves persistence. Mocking the data layer would prove the controller calls it the way the
-test expects, which is not the same thing. These cover validation, the CRUD behaviour of every
-route, the exact status codes and error codes, a duplicate name producing `409` with
-`FILE_NAME_TAKEN`, a missing record producing `404`, a malformed identifier producing `400`, a file
-addressed through the wrong project producing `404`, and persistence errors arriving as the
-documented error shape rather than as anything Prisma wrote.
-
-`GET /projects` ordering is proved here rather than at the data layer, because it is an API
-guarantee: editing a file in an older project must move that project to the front of the list.
 
 ### C3 — the browser
 
@@ -542,7 +714,26 @@ both to be able to compare them.
 It is explicit rather than implied by an ordinary test command, never runs against a developer's
 normal `DATABASE_URL`, modifies no tracked file, and waits on nothing timed. CI runs that same
 command, in a job of its own with its own PostgreSQL service — CI runs what a developer runs, and
-this is not the place to start making an exception.
+this is not the place to start making an exception. **The `database` job therefore covers both
+suites** without a fifth job or a CI-only command.
+
+### Why the API's database suite runs Jest through `node --experimental-vm-modules`
+
+```json
+"test:db": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.db.config.mjs"
+```
+
+Prisma 7 loads its WebAssembly query compiler with a dynamic `import()`, and Jest's sandbox refuses
+one without that flag — so the real client cannot open a connection from inside a test at all, and
+every test in the suite fails at `app.init()` with `A dynamic import callback was invoked without
+--experimental-vm-modules`. The flag changes nothing about the tests, which stay CommonJS, and the
+fast suite does not carry it because nothing there opens a connection. Invoking Jest's entry point
+through `node` rather than through its shim is what makes the flag work on Windows as well, where
+the `NODE_OPTIONS=… command` form is not shell syntax.
+
+`packages/database`'s Vitest suite needs none of this: Vite's runtime supports dynamic import
+natively. It is a Jest constraint, not a Prisma defect, and it is recorded here so the next person
+to see that error does not go looking for one.
 
 ### How the end-to-end suite gets a database
 
@@ -551,11 +742,12 @@ From C1 the API refuses to start without one, so `pnpm test:e2e` would otherwise
 applies the committed migrations to `devsync_test` through the same safety gate, and
 `playwright.config.ts` passes that database to the API it starts.
 
-The suite uses the disposable test database and never the development one, and it destroys nothing:
-in C1 the API it starts writes nothing at all. `reuseExistingServer` stays `false` for both
-applications. PostgreSQL is the one process the suite does not start for itself — Compose runs it,
-which is a documented prerequisite rather than a hidden one, and a suite that started its own
-database could pass while the Compose file was wrong.
+The suite uses the disposable test database and never the development one, and it still destroys
+nothing: the browser tests exercise `apps/web`, which makes no request to `apps/api`, so the API
+they start writes nothing. `reuseExistingServer` stays `false` for both applications. PostgreSQL is
+the one process the suite does not start for itself — Compose runs it, which is a documented
+prerequisite rather than a hidden one, and a suite that started its own database could pass while
+the Compose file was wrong.
 
 ## How collaboration will be tested later
 
@@ -584,9 +776,12 @@ needs the collaboration transport to exist first.
 - **No cross-application test exists**, because no such behaviour exists: `apps/web` never calls
   `apps/api` today. The end-to-end suite proves each application serves correctly; it does not
   prove they talk to each other, because they do not.
-- **No test drives persistence through HTTP**, because no route does. The data layer is covered
-  directly and the API is covered up to the point where it opens a connection; the join between
-  them is C2's to build and to test.
+- **No browser test touches persistence.** Every route is covered through Supertest, and none of it
+  is reached from Chromium, because nothing in the interface reaches it. That is C3's.
+- **The `503` and `500` persistence paths are proved by injection, not by a real outage.** The
+  mapping is exercised against a data layer told to fail; a database that genuinely goes away under
+  a running API is C4's test, and doing it inside the integration run would take the rest of the run
+  with it.
 - **The database suite needs a PostgreSQL somebody else started.** `docker compose up -d database`
   is a prerequisite rather than something the suite arranges, which is a deliberate trade: a suite
   that starts its own database could pass while the Compose file was wrong.
@@ -615,13 +810,10 @@ needs the collaboration transport to exist first.
 - **CI runs every command in this document, but on Ubuntu only.** Nothing validates that the
   suite passes on Windows or macOS, even though the repository is developed on Windows. See
   [`ci.md`](ci.md).
-- **`@devsync/test-utils` is still empty.** No current test needs a shared helper — the three
-  layers use three different runners and each assertion is a few lines — and inventing one now
-  would be an abstraction with no user.
-- **Vitest configuration is not shared.** `apps/web` is the only Vitest workspace, so
-  `apps/web/vitest.config.mts` is self-contained. When a second workspace needs Vitest, the
-  runner-agnostic parts move into `@devsync/config`, the way the TypeScript and ESLint
-  configuration did in Phase A1.
+- **`@devsync/test-utils` is still empty.** The helpers C2 added — the schema harness in
+  `packages/shared/tests/support` and the application harness in `apps/api/tests/support` — each
+  serve one workspace and one runner, and nothing in one is usable from the other. Moving either
+  into a shared package would be an abstraction with a single user.
 - **The Playwright suite needs one manual step per machine**, `pnpm test:e2e:install`, before it
   can run.
 
@@ -629,19 +821,24 @@ needs the collaboration transport to exist first.
 
 | Workspace                | Runner     | Real tests | Environment           | In `pnpm test`  |
 | ------------------------ | ---------- | ---------- | --------------------- | --------------- |
+| `@devsync/shared`        | Vitest     | 100        | node                  | yes             |
 | `@devsync/web`           | Vitest     | 36         | jsdom                 | yes             |
-| `@devsync/api`           | Jest       | 17         | node                  | yes             |
+| `@devsync/api`           | Jest       | 46         | node                  | yes             |
+| `@devsync/api`           | Jest       | 110        | node, real PostgreSQL | no — `test:db`  |
 | `@devsync/database`      | Vitest     | 57         | node, real PostgreSQL | no — `test:db`  |
 | `@devsync/e2e`           | Playwright | 8          | Chromium and HTTP     | no — `test:e2e` |
 | `@devsync/collaboration` | none       | 0          | —                     | —               |
-| `@devsync/shared`        | none       | 0          | —                     | —               |
 | `@devsync/ui`            | none       | 0          | —                     | —               |
 | `@devsync/test-utils`    | none       | 0          | —                     | —               |
 | `@devsync/config`        | none       | 0          | —                     | —               |
 
-**One hundred and eighteen real tests in total**, of which 53 run in `pnpm test`. The five workspaces without a
-runner print that they have no tests and exit successfully — as does `@devsync/database` under
-`pnpm test`, where it says its tests need PostgreSQL and names the command that runs them. That is
-the correct behaviour for a workspace with no implementation: a test runner installed into an empty
-package, or a test asserting that `true` is `true`, would make the table above look uniform while
-proving strictly less than the sentence it prints.
+**Three hundred and fifty-seven real tests in total**, of which **182 run in `pnpm test`**, **167 in
+`pnpm test:db`** — 57 in the data layer, 110 in the API — and 8 in `pnpm test:e2e`. Of the 167, 149
+genuinely reach PostgreSQL; the other 18 are the safety gate, which connects to nothing and lives
+there because it is database tooling.
+
+The four workspaces without a runner print that they have no tests and exit successfully — as does
+`@devsync/database` under `pnpm test`, where it says its tests need PostgreSQL and names the command
+that runs them. That is the correct behaviour for a workspace with no implementation: a test runner
+installed into an empty package, or a test asserting that `true` is `true`, would make the table
+above look uniform while proving strictly less than the sentence it prints.

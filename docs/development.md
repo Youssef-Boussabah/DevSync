@@ -75,23 +75,23 @@ machine-level cache, which should be something you chose rather than a side effe
 Run these from the repository root. Turborepo fans each one out across the workspaces, in
 dependency order, and caches what is safe to cache.
 
-| Command                 | What it does                                                                  |
-| ----------------------- | ----------------------------------------------------------------------------- |
-| `pnpm dev`              | Starts both development servers — web on 3000, API on 3001                    |
-| `pnpm build`            | Builds the three workspaces that have a build step                            |
-| `pnpm lint`             | Lints all nine workspaces. Read-only                                          |
-| `pnpm lint:fix`         | The same rules, applying every auto-fixable one                               |
-| `pnpm typecheck`        | Type-checks all nine workspaces                                               |
-| `pnpm test`             | Every in-process suite — Vitest and Jest. No builds, no browsers, no database |
-| `pnpm test:unit`        | The Vitest layer only                                                         |
-| `pnpm test:db`          | Database integration tests, against a running PostgreSQL                      |
-| `pnpm test:e2e`         | Playwright, against freshly built applications                                |
-| `pnpm test:e2e:install` | Downloads Chromium. Once per machine                                          |
-| `pnpm test:all`         | `test`, then `test:db`, then `test:e2e`, in sequence. Needs PostgreSQL        |
-| `pnpm test:coverage`    | Coverage for `apps/web` and `apps/api`                                        |
-| `pnpm format`           | Formats the repository with Prettier                                          |
-| `pnpm format:check`     | Verifies formatting. Read-only                                                |
-| `pnpm clean`            | Removes build outputs, coverage, reports, and Turborepo caches                |
+| Command                 | What it does                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| `pnpm dev`              | Starts both development servers — web on 3000, API on 3001                      |
+| `pnpm build`            | Builds the four workspaces that have a build step                               |
+| `pnpm lint`             | Lints all nine workspaces. Read-only                                            |
+| `pnpm lint:fix`         | The same rules, applying every auto-fixable one                                 |
+| `pnpm typecheck`        | Type-checks all nine workspaces                                                 |
+| `pnpm test`             | Every in-process source suite — Vitest and Jest. Builds nothing, starts nothing |
+| `pnpm test:unit`        | The Vitest layer only                                                           |
+| `pnpm test:db`          | The data layer then the API's routes, both against a running PostgreSQL         |
+| `pnpm test:e2e`         | Playwright, against freshly built applications                                  |
+| `pnpm test:e2e:install` | Downloads Chromium. Once per machine                                            |
+| `pnpm test:all`         | `test`, then `test:db`, then `test:e2e`, in sequence. Needs PostgreSQL          |
+| `pnpm test:coverage`    | Coverage for `apps/web` and `apps/api`                                          |
+| `pnpm format`           | Formats the repository with Prettier                                            |
+| `pnpm format:check`     | Verifies formatting. Read-only                                                  |
+| `pnpm clean`            | Removes build outputs, coverage, reports, and Turborepo caches                  |
 
 **Exactly two of these modify files: `pnpm lint:fix` and `pnpm format`.** `lint` and
 `format:check` are read-only and must stay that way — they are what CI runs, and a check that
@@ -155,24 +155,51 @@ the other.
 installed — and so `docker compose up -d database` and `pnpm dev` work together, which is the
 ordinary development arrangement.
 
-The only endpoint the API serves:
+Check the API is up:
 
 ```bash
 curl http://localhost:3001/health
 # {"status":"ok","service":"devsync-api"}
 ```
 
-## Testing
-
-Four layers, three runners, one hundred and eighteen real tests — Vitest in `apps/web`, Jest in
-`apps/api`,
-Vitest against a real PostgreSQL in `packages/database`, and Playwright in `tests/e2e`.
+From C2 it also serves projects and the files inside them. Nothing in the browser calls these yet —
+`apps/web` makes no request to `apps/api` until C3 — so an HTTP client is the only way to reach
+them:
 
 ```bash
-pnpm test        # fast: in-process only, no builds, no browser, no database
-pnpm test:db     # the data layer, against a running PostgreSQL
-pnpm test:e2e    # builds both applications, starts them, drives Chromium
+curl -X POST http://localhost:3001/projects \
+  -H 'Content-Type: application/json' -d '{"name":"My project"}'
+# 201, the project and the main.ts it was created with
+
+curl http://localhost:3001/projects
+# 200, most recently updated first
 ```
+
+Every route is listed in [`architecture.md`](architecture.md#appsapi--implemented). **Every request
+is anonymous**, so the API is safe only on a machine you control; Phase H is what changes that.
+
+## Testing
+
+Six layers, three runners, three hundred and fifty-seven real tests — Vitest over the schemas in
+`packages/shared`, Vitest in `apps/web`, Jest in `apps/api` twice over (fast, and against a real
+database), Vitest against a real PostgreSQL in `packages/database`, and Playwright in `tests/e2e`.
+
+```bash
+pnpm test        # fast: in-process source only, no builds, no browser, no database  (182)
+pnpm test:db     # the data layer, then the API's HTTP routes, both against PostgreSQL  (167)
+pnpm test:e2e    # builds both applications, starts them, drives Chromium  (8)
+```
+
+**`pnpm test` builds nothing at all** — no workspace build, no Prisma generation — so
+`pnpm clean && pnpm test` passes with every `dist/`, `.next/`, and generated client still absent
+afterwards. The fast API suite reads `@devsync/shared` and `@devsync/database` from their TypeScript
+sources through `apps/api/jest.config.mjs`, while `pnpm build`, `node dist/main.js`, and Docker all
+keep resolving the compiled `dist` output. [`testing.md`](testing.md#how-the-fast-api-suite-runs-with-nothing-built)
+is the full account.
+
+`pnpm test:db` runs its two suites **in sequence**, not in parallel: they reset and rewrite the same
+schema in the same disposable database. It and `pnpm test:e2e` do build their real runtime
+dependencies, which is the point of them.
 
 `pnpm test` is the inner loop and must stay fast, which is why nothing in it builds, launches a
 browser, or connects to anything. The other two need `docker compose up -d database` first. A workspace with no implementation prints that it has no tests and exits cleanly; that
@@ -283,7 +310,9 @@ it. It reads the schema and never touches a database.
 
 `pnpm test:db` drops the test schema before it runs, so it refuses to start against any database
 that is not `devsync_test` — and against one that turns out to be the same database as
-`DATABASE_URL`. Those refusals are the point rather than an inconvenience.
+`DATABASE_URL`. Those refusals are the point rather than an inconvenience. The API's own
+database-backed suite uses that same gate, through
+`@devsync/database/test-database`, rather than carrying a second copy of the rules.
 
 The reasoning behind all of it is in [`architecture.md`](architecture.md#phase-c--the-persistence-architecture),
 the testing ladder in [`testing.md`](testing.md), and the Compose side in [`docker.md`](docker.md).
@@ -299,7 +328,8 @@ participate in every repository-wide command from the moment it exists:
 2. Write `package.json` with the `@devsync/*` name, `"private": true`, and `lint`, `lint:fix`,
    `typecheck`, `test`, and `clean` scripts. A workspace with nothing to test uses the same
    honest one-line `test` script the reserved packages use.
-3. Extend the right configuration from `@devsync/config`: `tsconfig.package.json` for a package,
+3. Extend the right configuration from `@devsync/config`: `tsconfig.package.json` for a package
+   consumed as source, `tsconfig.library.json` for one that builds and runs in production,
    `tsconfig.nest.json`, `tsconfig.next.json`, or `tsconfig.playwright.json` for the others.
    Keep only `include`, `outDir`, and `paths` local.
 4. Add `eslint.config.mjs` calling `createBaseConfig({ tsconfigRootDir: import.meta.dirname })`,
@@ -307,7 +337,8 @@ participate in every repository-wide command from the moment it exists:
 5. Add `@devsync/config` as a dev dependency with `workspace:*`.
 6. If it introduces a new root script, add the matching task to `turbo.json` — a root script that
    calls a task Turborepo does not know about silently does nothing. Anything that starts a
-   process or a browser sets `cache: false`.
+   process or a browser sets `cache: false`, and anything that belongs in `pnpm test` declares no
+   `dependsOn`, so the fast command keeps building nothing.
 7. Run `pnpm install`, then `pnpm lint` and `pnpm typecheck`, and confirm the task count went up.
 8. Update the workspace tables in `README.md` and [`architecture.md`](architecture.md).
 

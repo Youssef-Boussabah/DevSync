@@ -1,0 +1,31 @@
+{
+  // Type-checking configuration for the fast Jest suite, and for that alone.
+  //
+  // It is identical to `tsconfig.json` except that the two built workspace
+  // packages resolve to their TypeScript sources rather than to `dist`. That is
+  // what lets `pnpm test` type-check and run with nothing built: `pnpm clean`
+  // removes `packages/*/dist` and the generated Prisma Client, and the fast suite
+  // must not need any of it back.
+  //
+  // `@devsync/database` deliberately maps to `src/contracts.ts` rather than to
+  // `src/index.ts`. Only `contracts.ts` is free of the generated Prisma Client,
+  // and pointing at it is what keeps `prisma generate` out of the fast command —
+  // while also failing loudly if a fast test ever reaches for `createDatabase`,
+  // which would mean it was trying to open a real connection.
+  //
+  // `apps/api/jest.config.mjs` carries the matching runtime mapping. The two must
+  // agree: a type resolved from source and a value loaded from `dist` would be
+  // two different `PersistenceError` classes, and `instanceof` would quietly stop
+  // working.
+  //
+  // Nothing else reads this file. `tsconfig.json` type-checks the workspace
+  // against the compiled packages, `tsconfig.build.json` emits against them, and
+  // production resolves them through the packages' own `exports` maps.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@devsync/shared": ["../../packages/shared/src/index"],
+      "@devsync/database": ["../../packages/database/src/contracts"]
+    }
+  }
+}

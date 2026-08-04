@@ -65,6 +65,22 @@ type PersistenceFailure =
 The original exception is kept as `cause` for a log; no message this package
 produces contains SQL, a connection string, or a table name.
 
+`apps/api` maps the four meanings onto `PROJECT_NOT_FOUND` / `FILE_NOT_FOUND`,
+`FILE_NAME_TAKEN`, `DATABASE_UNAVAILABLE`, and `INTERNAL_ERROR`. **No HTTP concept
+belongs in this package**: it does not know what a status code is, and it must not
+learn.
+
+## The test-database subpath
+
+```ts
+import { prepareTestDatabase } from '@devsync/database/test-database';
+```
+
+The safety gate and the reset-and-migrate helper, exported so that
+`apps/api`'s integration suite can prepare the same disposable database without
+carrying a second copy of the rules. Nothing in `src/` imports it, so it never
+reaches a runtime image — the API's Dockerfile copies `dist` and nothing else.
+
 ## Schema
 
 Two tables. `projects` and `project_files`, with a foreign key that cascades, a
@@ -104,4 +120,6 @@ transaction rollback are exactly what a substitute does not have. It drops the t
 schema and applies the committed migration first, and it refuses to run against any
 database it cannot prove is disposable.
 
-It is deliberately not part of `pnpm test`, which starts no external service.
+From C2 that command runs this package's 57 tests **and then** the API's 110
+PostgreSQL-backed HTTP tests, one after the other against the same schema. It is
+deliberately not part of `pnpm test`, which starts no external service.

@@ -1,31 +1,12 @@
 import { Prisma } from './generated/prisma/client';
+import { PersistenceError } from './contracts';
 
 /**
- * What went wrong, in terms the caller can act on.
- *
- * Prisma's error codes and PostgreSQL's SQLSTATEs stay inside this package. The
- * API maps these four meanings onto HTTP status codes; it never reads an ORM
- * exception, which is what allows the ORM behind this package to be replaced.
+ * Turning what Prisma threw into one of the four meanings `contracts.ts`
+ * defines. Everything ORM-specific about failure handling is here; the error
+ * type itself is not, so a caller can name it without loading a generated
+ * client.
  */
-export type PersistenceFailure =
-  | { kind: 'notFound'; entity: 'project' | 'projectFile' }
-  | { kind: 'uniqueViolation'; constraint: 'projectFileName' }
-  | { kind: 'unavailable' }
-  | { kind: 'unknown' };
-
-export class PersistenceError extends Error {
-  readonly failure: PersistenceFailure;
-
-  constructor(failure: PersistenceFailure, message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = 'PersistenceError';
-    this.failure = failure;
-  }
-}
-
-export function isPersistenceError(error: unknown): error is PersistenceError {
-  return error instanceof PersistenceError;
-}
 
 /** Which record a "not found" means, for the operation that was being run. */
 type MissingEntity = 'project' | 'projectFile';

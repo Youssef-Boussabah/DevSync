@@ -46,37 +46,74 @@ RUN pnpm install --frozen-lockfile --filter @devsync/api...
 
 # --- Build --------------------------------------------------------------------
 FROM build-deps AS builder
-# `@devsync/config` owns the TypeScript configuration both workspaces extend —
+# `@devsync/config` owns the TypeScript configuration every workspace extends —
 # including `emitDecoratorMetadata`, without which Nest's dependency injection
 # fails at runtime — so the build needs its files and not merely its manifest.
 COPY packages/config packages/config
 COPY packages/database packages/database
+COPY packages/shared packages/shared
 COPY apps/api apps/api
 
-# The data layer first, and its client before that: `apps/api` compiles against
-# `packages/database/dist`, which does not exist until both have run. Generation
-# reads the schema and nothing else, so no database is involved in a build.
+# Both packages before the application, and the Prisma client before the data
+# layer: `apps/api` compiles against `packages/database/dist` and
+# `packages/shared/dist`, neither of which exists until its own build has run.
+# Generation reads the schema and nothing else, so no database is involved in a
+# build.
 RUN pnpm --filter @devsync/database run generate \
   && pnpm --filter @devsync/database run build \
+  && pnpm --filter @devsync/shared run build \
   && pnpm --filter @devsync/api run build
 
 # --- Runtime dependencies -----------------------------------------------------
 # Resolved from the same lockfile, but `--prod`, so the compiler, the Nest CLI,
-# the Prisma CLI, Jest, and Supertest never reach the runtime image.
+# Jest, and Supertest never reach the runtime image.
 #
-# Two explicit filters rather than the `...` suffix the build stage uses. That
-# suffix would pull in every workspace package on a dependency edge of any kind,
+# Explicit filters rather than the `...` suffix the build stage uses. That suffix
+# would pull in every workspace package on a dependency edge of any kind,
 # including the dev-only one to `@devsync/config` — and with it that package's own
 # dependencies: `typescript-eslint`, and through it tens of megabytes of
-# TypeScript that nothing at runtime can even resolve. Naming the two packages
+# TypeScript that nothing at runtime can even resolve. Naming the three packages
 # that genuinely run in production keeps the image both smaller and honest.
+#
+# `@devsync/shared` joined the list in C2, and brings Zod with it: the API
+# validates every request against the schemas that package publishes.
+#
+# `--no-optional` is what keeps the Prisma CLI and the TypeScript compiler out.
+# `@prisma/client` declares both as *optional peer dependencies*, and because
+# `packages/database` legitimately has both as devDependencies — it runs
+# `prisma generate` and `tsc` — pnpm resolves those peers and records them in the
+# lockfile as `optionalDependencies` of the `@prisma/client` snapshot:
+#
+#   '@prisma/client@7.9.1(prisma@7.9.1(…)(typescript@5.9.3))(typescript@5.9.3)':
+#     optionalDependencies:
+#       prisma: 7.9.1(…)
+#       typescript: 5.9.3
+#
+# `@prisma/client` is a production dependency, so `--prod` alone installs that
+# snapshot and its optional edges with it. Declining the optional edges is the
+# supported way to say "the runtime does not need them", and it takes ~140
+# packages with them — the Prisma CLI, its schema engine, Prisma Studio and the
+# React, d3, and visx tree behind it, plus the mysql2, postgres, and pglite
+# drivers this project does not use. `pg-cloudflare` goes too; it is a Cloudflare
+# Workers socket shim that `pg` loads in a try/catch and never needs on Node.
+#
+# This flag is deliberately scoped to the production install. Setting
+# `autoInstallPeers: false` repository-wide does nothing here — the peers are
+# declared rather than missing, so pnpm resolves them either way — and the
+# development install must keep both packages, because that is where they are used.
 FROM manifests AS prod-deps
-RUN pnpm install --frozen-lockfile --prod --filter @devsync/api --filter @devsync/database
+RUN pnpm install --frozen-lockfile --prod --no-optional \
+  --filter @devsync/api \
+  --filter @devsync/database \
+  --filter @devsync/shared
 
 # --- Migration ----------------------------------------------------------------
 # The one-shot service Compose runs before the API starts. It is deliberately not
 # the runtime image: it carries the Prisma CLI and the schema engine, which the
 # API has no use for and should not ship.
+#
+# No `--prod` and no `--no-optional` here, and that is the point — this is the one
+# stage that is supposed to have the CLI.
 FROM manifests AS migrate-deps
 RUN pnpm install --frozen-lockfile --filter @devsync/database
 
@@ -94,8 +131,10 @@ USER node
 CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]
 
 # --- Runtime ------------------------------------------------------------------
-# A clean Node image: no pnpm, no Corepack cache, no TypeScript sources, no
-# Prisma CLI.
+# A clean Node image: no pnpm, no Corepack cache, no TypeScript source, no
+# compiler, no Prisma CLI, and no test runner — not on PATH, not linked into a
+# workspace, and not sitting unreferenced in the pnpm store either. The
+# `--no-optional` above is what makes that true rather than approximately true.
 FROM ${NODE_IMAGE} AS runner
 WORKDIR /repo/apps/api
 
@@ -108,17 +147,22 @@ ENV API_PORT=3001
 # Every `node_modules` tree is needed, and each must keep its original relative
 # position: pnpm links a package's dependencies to the content-addressed store
 # under `/repo/node_modules/.pnpm` with relative symlinks, which only resolve if
-# the layout is preserved. `apps/api/node_modules/@devsync/database` is one of
-# those links, and it points at the compiled package copied in below.
+# the layout is preserved. `apps/api/node_modules/@devsync/database` and
+# `…/@devsync/shared` are two of those links, and they point at the compiled
+# packages copied in below. `packages/shared/node_modules` is where Zod is linked.
 COPY --from=prod-deps --chown=node:node /repo/node_modules /repo/node_modules
 COPY --from=prod-deps --chown=node:node /repo/apps/api/node_modules ./node_modules
 COPY --from=prod-deps --chown=node:node /repo/packages/database/node_modules /repo/packages/database/node_modules
 COPY --from=prod-deps --chown=node:node /repo/packages/database/package.json /repo/packages/database/package.json
+COPY --from=prod-deps --chown=node:node /repo/packages/shared/node_modules /repo/packages/shared/node_modules
+COPY --from=prod-deps --chown=node:node /repo/packages/shared/package.json /repo/packages/shared/package.json
 
-# Compiled JavaScript only, for both workspaces. `packages/database/dist`
-# contains the generated Prisma Client, compiled with the rest of the package —
-# no `.ts` file is ever loaded at runtime.
+# Compiled JavaScript only, for all three workspaces. `packages/database/dist`
+# contains the generated Prisma Client, compiled with the rest of the package, and
+# `packages/shared/dist` the request and response schemas — no `.ts` file is ever
+# loaded at runtime.
 COPY --from=builder --chown=node:node /repo/packages/database/dist /repo/packages/database/dist
+COPY --from=builder --chown=node:node /repo/packages/shared/dist /repo/packages/shared/dist
 COPY --from=builder --chown=node:node /repo/apps/api/dist ./dist
 COPY --chown=node:node apps/api/package.json ./package.json
 

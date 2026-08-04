@@ -5,9 +5,10 @@ real code rather than reserved space.
 
 DevSync is intended to become a browser-based collaborative development environment. **Almost
 none of that product exists yet.** What exists is a monorepo, two small applications — one of
-which now hosts a Monaco editor — a shared configuration package, a PostgreSQL data layer the API
-connects to, four testing layers, two production images, and a CI workflow. This document describes
-that, and separates it from the design the repository is being shaped towards.
+which now hosts a Monaco editor — a shared configuration package, a PostgreSQL data layer, an HTTP
+API over that data layer, the contracts the API validates against, six testing layers, two
+production images, and a CI workflow. This document describes that, and separates it from the
+design the repository is being shaped towards.
 
 ## How to read this document
 
@@ -24,8 +25,8 @@ repository, which is the specific failure it exists to prevent.
 
 ## The system today — implemented
 
-Two independent HTTP applications, each serving one route, neither of which calls the other — and,
-since C1, a PostgreSQL database that one of them connects to.
+Two independent HTTP applications, neither of which calls the other, and a PostgreSQL database that
+one of them serves projects and files out of.
 
 ```mermaid
 flowchart LR
@@ -38,20 +39,20 @@ flowchart LR
     end
 
     client -->|"GET / — the home page and its editor"| web
-    client -->|"GET /health — JSON status"| api
+    client -->|"GET /health, /projects, /projects/:id/files…"| api
     api -->|"via @devsync/database"| pg
     web -.->|"no call exists yet"| api
 ```
 
 That dotted edge is the whole of the current inter-service story: `apps/web` serves a prerendered
 page whose editor runs entirely in the browser, and never contacts `apps/api`. There is no shared
-session, no proxy, no API client, and no serialisation format agreed between them. The first real
-edge between the two applications belongs to C3.
+session, no proxy, no API client, and no CORS configuration — nothing cross-origin exists to allow.
+The first real edge between the two applications belongs to C3.
 
-**The database edge is real, and it carries nothing yet.** The API opens a connection during
-startup and closes it during shutdown, and `@devsync/database` can read and write projects and
-files — but no route exposes any of that, so nothing a client can ask for touches PostgreSQL. The
-routes are C2's.
+**The database edge carries real traffic from C2.** Ten routes create, read, change, and delete
+projects and the files inside them, through `@devsync/database` and nothing else. **No user can
+reach any of it**: the only thing `apps/web` renders is an in-memory editor, so a person using
+DevSync still cannot save or load anything. An HTTP client can.
 
 There is still no cache, queue, message broker, background worker, or scheduler anywhere in the
 repository.
@@ -69,14 +70,14 @@ devsync/
 ├── packages/
 │   ├── config/               Shared TypeScript, ESLint, Vitest     implemented
 │   ├── database/             PostgreSQL schema and data access     implemented
-│   ├── shared/               Types, schemas, protocol              reserved
+│   ├── shared/               Request, response, and error schemas  implemented
 │   ├── collaboration/        Real-time collaboration logic         reserved
 │   ├── ui/                   Reusable interface components         reserved
 │   └── test-utils/           Shared test helpers                   reserved
 ├── tests/
 │   └── e2e/                  Playwright browser and HTTP suite     implemented
-├── .github/workflows/ci.yml  Quality, end-to-end, and Docker jobs  implemented
-├── compose.yaml              The web and API services              implemented
+├── .github/workflows/ci.yml  Quality, database, e2e, Docker jobs   implemented
+├── compose.yaml              web, api, PostgreSQL, and migrate     implemented
 ├── turbo.json                Task graph
 ├── pnpm-workspace.yaml       Workspace globs: apps/*, packages/*, tests/*
 └── prettier.config.mjs       Formatting, for the whole repository
@@ -88,16 +89,16 @@ devsync/
 | `apps/api`               | `@devsync/api`           | Application     | `nest` | `dist/`          |
 | `packages/config`        | `@devsync/config`        | Config          | no     | nothing          |
 | `packages/database`      | `@devsync/database`      | Runtime library | `tsc`  | `dist/`          |
-| `packages/shared`        | `@devsync/shared`        | Reserved        | no     | nothing          |
+| `packages/shared`        | `@devsync/shared`        | Runtime library | `tsc`  | `dist/`          |
 | `packages/collaboration` | `@devsync/collaboration` | Reserved        | no     | nothing          |
 | `packages/ui`            | `@devsync/ui`            | Reserved        | no     | nothing          |
 | `packages/test-utils`    | `@devsync/test-utils`    | Reserved        | no     | nothing          |
 | `tests/e2e`              | `@devsync/e2e`           | Test suite      | no     | reports, ignored |
 
 All nine participate in `pnpm lint` and `pnpm typecheck`. None is excluded from either, and the
-three that build are the only three that produce a deployable artifact.
+four that build are the only four that produce a deployable artifact.
 
-### Why most `packages/*` libraries do not build, and why one does
+### Why most `packages/*` libraries do not build, and why two do
 
 Each reserved package is consumed as TypeScript source through its `exports` map —
 `".": "./src/index.ts"` — so the application importing one compiles it. They are type-checked in
@@ -105,13 +106,18 @@ place with `tsc --noEmit` and never emit JavaScript. That keeps the workspace gr
 there is nothing to publish, and it means a package cannot go stale relative to its own build
 output, because it has none.
 
-**`@devsync/database` is the exception, and C1 made it one.** It contains generated Prisma Client
-code and runs inside the API's production container, where there is no compiler: shipping
-TypeScript and hoping Node executes it is not an option, and neither is a runtime loader. So it
-builds with `tsc` to `dist/`, its `exports` map points at the compiled JavaScript and the emitted
-declarations, and `apps/api` depends on that build — which is why `build` and `typecheck` in
-`turbo.json` wait for it. It extends `@devsync/config/tsconfig.library.json`, a configuration that
-exists for exactly this kind of workspace.
+**`@devsync/database` and `@devsync/shared` are the exceptions**, made so by C1 and C2. Both run
+inside the API's production container, where there is no compiler: shipping TypeScript and hoping
+Node executes it is not an option, and neither is a runtime loader. So both build with `tsc` to
+`dist/`, both point their `exports` map at the compiled JavaScript and the emitted declarations,
+and `apps/api` depends on those builds — which is why `build` and `typecheck` in `turbo.json` wait
+for them. Both extend `@devsync/config/tsconfig.library.json`, a configuration that exists for
+exactly this kind of workspace.
+
+Both emit **CommonJS**, and for one reason: `apps/api` compiles to CommonJS and its ts-jest suite
+loads modules through a CommonJS registry that cannot `require` an ES module. `@devsync/shared`
+therefore carries no `"type": "module"`, which is what makes `module: NodeNext` produce CommonJS
+from it.
 
 ## `apps/web` — implemented
 
@@ -154,9 +160,9 @@ below turned out to be.
 
 ### The language selection — implemented
 
-`src/editor/languages.ts` is a five-entry readonly list, and it is the only source of truth for
-what a language is: its Monaco identifier, the label a user reads, and the name the file is shown
-under while it is being read that way.
+`src/editor/languages.ts` is a five-entry readonly list carrying three things per language: its
+Monaco identifier, the label a user reads, and the name the file is shown under while it is being
+read that way.
 
 | Label      | Monaco language | File shown as |
 | ---------- | --------------- | ------------- |
@@ -179,9 +185,27 @@ and no component library was added to reproduce them. The DOM reports the chosen
 ordinary string, so it is resolved back against the list rather than asserted to belong to it; a
 value that is not offered is ignored, which is what keeps the state narrowly typed with no cast.
 
-The list lives in `apps/web` because it has exactly one consumer. It moves to `packages/` when a
-second one exists, under the rule in [Boundaries stay separated](#boundaries-stay-separated) — not
-before, and it needs no registry, plugin point, or configuration layer to get there.
+#### Who owns a language identifier — a boundary mid-move
+
+**C2 moved the identifiers, and only the identifiers.** `@devsync/shared` now owns the five values a
+file may be persisted and served as — `SUPPORTED_LANGUAGE_IDS` and `languageIdSchema` — and
+`apps/api` validates every request against them. That is where the authoritative list lives.
+
+**`apps/web` does not consume `@devsync/shared` yet.** It imports nothing from the package, makes no
+request to `apps/api`, and is unchanged by C2. So until C3 the browser list **repeats the same five
+identifier strings**, and that duplication is real rather than hidden: two lists, one authoritative,
+temporarily agreeing by inspection instead of by import.
+
+What stays in `apps/web` permanently is the presentation half — the labels a user reads and the file
+name currently derived from the selected language. Those are interface decisions, and
+`@devsync/shared` deliberately carries neither, because it ships in the browser bundle and has no
+business holding copy.
+
+**C3 closes the gap.** It makes `apps/web` the package's second consumer, at which point the
+identifier strings come from the shared list and the local copy disappears; a file's name also stops
+being derived from its language, because by then a file has a stored name of its own. Until that
+happens the browser still shows exactly what this section describes: one in-memory buffer, viewed
+under five Monaco languages.
 
 ### The editor — implemented
 
@@ -223,21 +247,64 @@ Two configuration choices in `next.config.ts` matter to the rest of the system:
 
 ## `apps/api` — implemented
 
-| Property      | Value                                                                   |
-| ------------- | ----------------------------------------------------------------------- |
-| Framework     | NestJS 11, on the Express platform adapter                              |
-| Modules       | `AppModule` → `ApiConfigModule`, `DatabaseModule`, `HealthModule`       |
-| Routes        | `GET /health`                                                           |
-| Configuration | `API_PORT` (default 3001) and `DATABASE_URL` (required), via `.env`     |
-| Dev port      | 3001                                                                    |
-| Build output  | `dist/`, compiled by `tsc` through the Nest CLI                         |
-| Tests         | Jest, 17 tests: configuration, database lifecycle, and the health route |
-
-The whole service is still one endpoint:
+| Property      | Value                                                                               |
+| ------------- | ----------------------------------------------------------------------------------- |
+| Framework     | NestJS 11, on the Express platform adapter                                          |
+| Modules       | `AppModule` → `ApiConfigModule`, `DatabaseModule`, `HealthModule`, `ProjectsModule` |
+| Routes        | `GET /health`, plus five project routes and five nested project-file routes         |
+| Validation    | Zod schemas from `@devsync/shared`, through two pipes. No DTO classes               |
+| Errors        | One API-owned error type and one global exception filter                            |
+| Body limit    | 1 MiB of JSON, set once at bootstrap                                                |
+| Configuration | `API_PORT` (default 3001) and `DATABASE_URL` (required), via `.env`                 |
+| Dev port      | 3001                                                                                |
+| Build output  | `dist/`, compiled by `tsc` through the Nest CLI                                     |
+| Tests         | Jest: 46 fast, and 110 against a real PostgreSQL under `pnpm test:db`               |
 
 ```http
-GET /health  →  200  {"status":"ok","service":"devsync-api"}
+GET    /health                              →  200  {"status":"ok","service":"devsync-api"}
+
+POST   /projects                            →  201  ProjectDetailResource
+GET    /projects                            →  200  ProjectResource[]
+GET    /projects/:projectId                 →  200  ProjectDetailResource
+PATCH  /projects/:projectId                 →  200  ProjectResource
+DELETE /projects/:projectId                 →  204  (no body)
+
+POST   /projects/:projectId/files           →  201  ProjectFileResource
+GET    /projects/:projectId/files           →  200  ProjectFileSummaryResource[]
+GET    /projects/:projectId/files/:fileId   →  200  ProjectFileResource
+PATCH  /projects/:projectId/files/:fileId   →  200  ProjectFileResource
+DELETE /projects/:projectId/files/:fileId   →  204  (no body)
 ```
+
+**No global prefix, no version segment, and no envelope.** Routes answer with resources and arrays
+directly; a `{ data: … }` wrapper would be a shape invented for a problem nobody has, and a `/api`
+prefix would be a path segment nothing routes on.
+
+### How a request is handled — implemented
+
+Four small pieces, in the order a request meets them.
+
+- **`src/http-application.ts`** owns the settings that are the application's rather than a module's:
+  the 1 MiB JSON parser, the middleware that turns an unreadable body into a DevSync error, and the
+  global exception filter. **`main.ts` and the integration tests call the same function**, so the
+  suite exercises the application that actually runs rather than one configured differently.
+- **`src/common/contract.pipe.ts`** is one pipe over the schemas in `@devsync/shared`, exposed as
+  `validatedBody` and `validatedPath`. Its input is `unknown`, so nothing downstream can be reached
+  by a value that has not been through a contract, and the two entry points differ only in the code
+  a failure carries: `VALIDATION_FAILED` for a body, `INVALID_IDENTIFIER` for a URL. There are no
+  DTO classes and no decorator metadata — a class carrying `class-validator` decorators cannot be
+  shared with the browser, and the schema is what C3 needs to read.
+- **Controllers are thin.** They read the validated input, call a service, and return a mapped
+  resource. `ProjectsService` and `ProjectFilesService` own the orchestration, the starter-file
+  policy, and the interpretation of a lookup that came back `null`.
+- **`src/common/api-exception.filter.ts`** is the one place a failure becomes a response. It
+  serialises the API's own error type, maps any persistence failure that escaped a service, and
+  leaves an unmatched route to the framework — there is no stable code for a URL that is not part of
+  the API, and inventing one would grow the contract for a failure no client can provoke.
+
+`src/common/resources.ts` maps storage records to wire resources, one property at a time.
+**Timestamps become UTC ISO-8601 strings there and nowhere else**, and a record is never spread into
+a response, so a column added to a table for storage reasons cannot appear on the wire by accident.
 
 ### Configuration and the database connection — implemented
 
@@ -254,19 +321,21 @@ it carries a password.
 `onModuleInit` and disconnects during `onModuleDestroy`. `main.ts` calls `enableShutdownHooks()`,
 without which SIGTERM would kill the process before the pool was ever closed.
 
-**`GET /health` was deliberately left alone.** It reports that the process is answering, and it
-says nothing about the database. It did not need to: the API cannot finish starting without a
-working connection, so a service that answers at all has already proved one. A readiness endpoint
-that distinguishes "up" from "able to serve" becomes worth having when there are routes that can
-fail for want of a database — C2's problem, with C2's routes to make it concrete.
+**`GET /health` was deliberately left alone again in C2.** It reports that the process is answering
+and says nothing about the database, its host, the migration state, or how many projects there are.
+It does not need to: the API cannot finish starting without a working connection, so a service that
+answers at all has already proved one. A readiness endpoint that distinguishes "up" from "able to
+serve" earns its place when a database that goes away _after_ startup has to be told apart from one
+that was never there — which is C4's question, with C4's restart tests to make it concrete.
 
-**There is still no global prefix, no validation pipe, no exception filter, no interceptor, no
-guard, no authentication, no CORS configuration, and no versioning scheme.**
+**There is still no interceptor, no guard, no authentication, no CORS configuration, and no
+versioning scheme.** Every request is anonymous, which is why nothing in Phase C may be exposed to
+an untrusted network.
 
 The response shape is typed by the `HealthResponse` interface in
-`src/health/health.controller.ts`, and the exact payload is asserted in three separate places —
-the Jest test, the Playwright test, and the Docker job in CI — because it is the only contract
-this repository currently has.
+`src/health/health.controller.ts`, and the exact payload is asserted in four separate places — the
+fast Jest test, the API integration suite, the Playwright test, and the Docker job in CI — because
+everything else in the system watches it.
 
 `main.ts` calls `app.listen(port)` with no host argument, so Node binds the unspecified address
 and accepts both IPv4 and IPv6. That is deliberate: pinning it to `0.0.0.0` would narrow it to
@@ -301,6 +370,11 @@ the architectural points are these.
 - **No Prisma error escapes either.** Failures are classified into four meanings — not found,
   unique violation, unavailable, unknown — with the original exception kept as `cause` for a log.
   The API maps meanings to status codes and never reads an ORM exception.
+- **The ORM-independent half is a file, not a claim.** `src/contracts.ts` holds the records, the
+  operation interfaces, `Database`, `PersistenceFailure`, and `PersistenceError`, and imports
+  nothing from Prisma; everything that touches the generated client depends on it rather than the
+  reverse. That is what lets a consumer — or a test — name a `PersistenceError` without a generated
+  client existing, which is how `pnpm test` stays build-free.
 - **A Prisma model type is not a contract.** Every operation maps rows onto the package's own
   record types, so a column added for storage reasons cannot appear on the wire by accident.
 - **The starter file is the caller's.** `createWithInitialFile` writes both rows in one
@@ -315,6 +389,36 @@ the architectural points are these.
 The package emits **CommonJS**. That is not a preference: `apps/api` compiles to CommonJS and its
 Jest suite loads modules through ts-jest's CommonJS registry, which cannot `require` an ES module.
 Prisma's `prisma-client` generator is told `moduleFormat = "cjs"` for the same reason.
+
+It also exports one subpath, `@devsync/database/test-database`: the disposable-database safety gate
+and the reset-and-migrate helper, so that the API's integration suite can prepare the same database
+without carrying a second copy of the rules. Nothing in `src/` imports it, so it never reaches a
+runtime image.
+
+## `packages/shared` — implemented
+
+The contracts `apps/web` and `apps/api` have to agree on, and the second `packages/*` workspace with
+runtime code in it. [`../packages/shared/README.md`](../packages/shared/README.md) is the full
+account; the architectural points are these.
+
+| Property     | Value                                          |
+| ------------ | ---------------------------------------------- |
+| Validation   | Zod 4                                          |
+| Build output | `dist/`, CommonJS, with declarations           |
+| Consumers    | `apps/api` from C2; `apps/web` from C3         |
+| Tests        | Vitest, 100 tests, in Node, inside `pnpm test` |
+
+- **One definition per contract.** Every runtime schema and the TypeScript type beside it come from
+  the same Zod declaration, so the check that runs and the type that compiles cannot drift apart.
+- **Zod does not escape.** `parseContract(schema, input)` returns the parsed value or the issues
+  already converted into the `{ path, message }` shape the error contract publishes. `apps/api`
+  therefore depends on the contracts rather than on the validation library, and declares no Zod
+  dependency of its own.
+- **Nothing server-only.** No environment loading, no database, no NestJS, no React. The package
+  ships in the browser bundle from C3, and a package that reads configuration cannot safely do that.
+- **No presentation.** The five language identifiers live here; the labels a user reads and the file
+  names a client shows do not.
+- **It depends on no other workspace.** The dependency arrows all point at it.
 
 ## `packages/config` — implemented
 
@@ -337,12 +441,12 @@ ESLint does not run it as a rule, so exactly one tool reformats code.
 
 ## Reserved package boundaries
 
-Four workspaces exist, are linted and type-checked, and export nothing. Each `src/index.ts` is a
-documented `export {}`. `@devsync/database` was the fifth until C1 filled it.
+Three workspaces exist, are linted and type-checked, and export nothing. Each `src/index.ts` is a
+documented `export {}`. `@devsync/database` was the fifth until C1 filled it, and `@devsync/shared`
+the fourth until C2 did.
 
 | Package                  | Reserved for                                                        |
 | ------------------------ | ------------------------------------------------------------------- |
-| `@devsync/shared`        | Types, runtime schemas, constants, and the collaboration protocol   |
 | `@devsync/collaboration` | The shared document model, CRDT bindings, awareness, room lifecycle |
 | `@devsync/ui`            | Presentational primitives shared by more than one front-end         |
 | `@devsync/test-utils`    | Fixtures, harnesses, and assertions used by more than one workspace |
@@ -353,9 +457,10 @@ the first piece of genuinely shared code has an obvious home and does not get wr
 placeholder class or a speculative type would be worse than an honest empty module, because it
 would have to be unlearned before it could be used.
 
-`@devsync/shared` is the next to be filled: C2 publishes the request and response schemas, the
-supported language identifiers, and the error contract from it. **It is still empty**, and nothing
-was added to it in C1.
+**C2 filled `@devsync/shared` on exactly those terms.** What arrived is a contract the API validates
+every request against — real code with a real consumer — not a guess about what a client might one
+day want. It gained no collaboration, authentication, membership, or version-history types on the
+way past.
 
 ## `tests/e2e` — implemented
 
@@ -364,37 +469,40 @@ three specs. It builds both applications, starts them on ports 4310 and 4311, wa
 readiness checks — never a fixed sleep — and shuts them down afterwards. `specs/web/local-editor.spec.ts`
 is the one place that drives the real Monaco editor rather than markup DevSync owns.
 
-The four testing layers as a whole:
+The six testing layers as a whole:
 
-| Layer                  | Runner     | Location            | Runs against                         |
-| ---------------------- | ---------- | ------------------- | ------------------------------------ |
-| Component              | Vitest     | `apps/web`          | React components in jsdom            |
-| HTTP-level application | Jest       | `apps/api`          | A Nest app on an ephemeral socket    |
-| Database integration   | Vitest     | `packages/database` | A real PostgreSQL, migrated          |
-| Browser and full-stack | Playwright | `tests/e2e`         | Both compiled applications, on ports |
+| Layer                  | Runner     | Location            | Runs against                                    |
+| ---------------------- | ---------- | ------------------- | ----------------------------------------------- |
+| Contract               | Vitest     | `packages/shared`   | Schemas, in Node, in-process                    |
+| Component              | Vitest     | `apps/web`          | React components in jsdom                       |
+| HTTP-level application | Jest       | `apps/api`          | A Nest app on an ephemeral socket               |
+| Database integration   | Vitest     | `packages/database` | A real PostgreSQL, migrated                     |
+| API integration        | Jest       | `apps/api`          | The real `AppModule`, over that same PostgreSQL |
+| Browser and full-stack | Playwright | `tests/e2e`         | Both compiled applications, on ports            |
 
-One hundred and eighteen real tests in total, of which the database layer is the only one needing an external
-service — which is why it has its own command, `pnpm test:db`, and why `pnpm test` still starts
-nothing. [`testing.md`](testing.md) covers what each layer proves, why the API stays on Jest, and
-what is deliberately untested.
+Three hundred and fifty-seven real tests in total, of which the two integration layers are the only
+ones needing an external service — which is why they share one command, `pnpm test:db`, and why
+`pnpm test` still starts nothing. [`testing.md`](testing.md) covers what each layer proves, why the
+API stays on Jest, and what is deliberately untested.
 
 ## Request and process boundaries
 
-**Request boundaries.** Exactly two from outside the system, both HTTP: `GET /` to `apps/web`, and
-`GET /health` to `apps/api`. No request crosses from one application to the other. Inside, there is
-one more: `apps/api` to PostgreSQL, over the connection `@devsync/database` owns. There is no
-WebSocket, no server-sent event stream, no long-poll, no GraphQL endpoint, and no RPC layer.
+**Request boundaries.** From outside the system, both HTTP: `GET /` to `apps/web`, and eleven routes
+on `apps/api` — `GET /health` plus the ten project and file routes above. No request crosses from
+one application to the other. Inside, there is one more: `apps/api` to PostgreSQL, over the
+connection `@devsync/database` owns. There is no WebSocket, no server-sent event stream, no
+long-poll, no GraphQL endpoint, and no RPC layer.
 
 **Process boundaries.** Each application is a separate operating-system process in every mode
 DevSync runs in, and no mode runs them in the same process:
 
-| Mode                | Processes                                                | Ports            |
-| ------------------- | -------------------------------------------------------- | ---------------- |
-| `pnpm dev`          | `next dev`, `nest start --watch`                         | 3000, 3001       |
-| `pnpm test`         | Vitest and Jest workers; no servers                      | none             |
-| `pnpm test:db`      | One Vitest worker, against a PostgreSQL it did not start | 5433 (client)    |
-| `pnpm test:e2e`     | `next start`, `node dist/main.js`, Chromium              | 4310, 4311       |
-| `docker compose up` | One container per application, plus PostgreSQL           | 3000, 3001, 5433 |
+| Mode                | Processes                                                                    | Ports            |
+| ------------------- | ---------------------------------------------------------------------------- | ---------------- |
+| `pnpm dev`          | `next dev`, `nest start --watch`                                             | 3000, 3001       |
+| `pnpm test`         | Vitest and Jest workers over source; no build, no servers                    | none             |
+| `pnpm test:db`      | One Vitest worker then one Jest worker, against a PostgreSQL neither started | 5433 (client)    |
+| `pnpm test:e2e`     | `next start`, `node dist/main.js`, Chromium                                  | 4310, 4311       |
+| `docker compose up` | `web`, `api`, and PostgreSQL containers, plus the one-shot `migrate`         | 3000, 3001, 5433 |
 
 PostgreSQL is the one process DevSync does not start for itself in development: Compose runs it,
 and both `pnpm test:db` and `pnpm test:e2e` connect to it rather than launching one. A suite that
@@ -441,12 +549,13 @@ own machine.
 | `apps/web`          | `next build` | `.next/`, `.next/standalone` | `apps/web/server.js` (image) |
 | `apps/api`          | `nest build` | `dist/`                      | `dist/main.js`               |
 | `packages/database` | `tsc`        | `dist/`                      | required by `apps/api`       |
+| `packages/shared`   | `tsc`        | `dist/`                      | required by `apps/api`       |
 
-`pnpm build` runs exactly these three, in that dependency order: `apps/api` compiles against
-`packages/database/dist`, so the package builds first. The package's own build is preceded by a
-`generate` task that writes Prisma Client into `src/generated/prisma` — **it reads the schema and
-nothing else, so no database is involved in a build**, and a fresh checkout can `pnpm build`
-before anyone has configured one.
+`pnpm build` runs exactly these four, in dependency order: `apps/api` compiles against
+`packages/database/dist` and `packages/shared/dist`, so both packages build first. The data layer's
+own build is preceded by a `generate` task that writes Prisma Client into `src/generated/prisma` —
+**it reads the schema and nothing else, so no database is involved in a build**, and a fresh
+checkout can `pnpm build` before anyone has configured one.
 
 All build output, generated client code, coverage, and test reports are git-ignored; nothing
 generated by a build or a test run is tracked, and no test run modifies a tracked file.
@@ -461,7 +570,10 @@ architectural points are:
   per-application build context cannot work.
 - **Multi-stage, always.** Build tooling never reaches a runtime image. `apps/web` ships the
   Next.js standalone output with no package manager at all; `apps/api` ships `dist` plus a
-  production-only install.
+  production-only install naming the three workspaces that genuinely run — `@devsync/api`,
+  `@devsync/database`, and, since C2, `@devsync/shared` and the Zod it brings with it. That install
+  declines optional dependencies, which is what keeps `@prisma/client`'s optional peers — the Prisma
+  CLI and the TypeScript compiler — out of the image entirely.
 - **Both run compiled output as the image's non-root `node` user**, never a dev server, never
   root.
 - **Each application service declares an HTTP health check** that proves it answers, not merely
@@ -480,12 +592,12 @@ architectural points are:
 One workflow, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml), with four independent
 jobs. [`ci.md`](ci.md) is the full account.
 
-| Job        | Validates                                                                      |
-| ---------- | ------------------------------------------------------------------------------ |
-| `quality`  | Formatting, lint, types, in-process tests, and every build                     |
-| `database` | The data layer against a real PostgreSQL, with the committed migration applied |
-| `e2e`      | Both applications start from a real build and answer in Chromium               |
-| `docker`   | Every image builds, the migration exits 0, and each service becomes healthy    |
+| Job        | Validates                                                                                                             |
+| ---------- | --------------------------------------------------------------------------------------------------------------------- |
+| `quality`  | Formatting, lint, types, in-process tests, and every build                                                            |
+| `database` | The database package and the API's persistence routes against a real PostgreSQL, with the committed migration applied |
+| `e2e`      | Both applications start from a real build and answer in Chromium                                                      |
+| `docker`   | Every image builds, the migration exits 0, and each service becomes healthy                                           |
 
 The jobs are deliberately independent, and CI runs the same commands a developer runs — there is
 no CI-only script. The workflow holds `contents: read`, uses no secrets, and publishes nothing.
@@ -594,27 +706,29 @@ flowchart TB
 - **The code editor driven by a CRDT-backed shared document.** Monaco is in the client already;
   Yjs is the intended CRDT and is not installed, so the editor is bound to nothing.
 - **The API as the authority** over project data, membership, access control, and the
-  collaboration transport. The transport is expected to be WebSocket-based; no WebSocket
-  dependency exists.
+  collaboration transport. **Project data is now real**; membership, access control, and the
+  transport are not. The transport is expected to be WebSocket-based; no WebSocket dependency
+  exists.
 - **PostgreSQL behind `@devsync/database`**, reached through one package rather than from
   controllers scattered across the API. **This one is built**, and it is the only box below that
   is; what it still lacks is anything above it that asks it a question.
 - **A separate execution runner**, isolated from both applications, for running user code.
-- **Shared contracts published from `@devsync/shared`** — types, schemas, and the collaboration
-  protocol — so client and server cannot disagree about the wire format.
+- **Shared contracts published from `@devsync/shared`** — types, schemas, and eventually the
+  collaboration protocol — so client and server cannot disagree about the wire format. **The HTTP
+  half is built and the API consumes it**; the client does not yet, and the protocol does not exist.
 - **Redis, only if and when horizontal scaling requires it.**
 
 ## Phase C — the persistence architecture
 
-C0 decided this; C1 built the lower half of it. **The data model, the package boundaries, the
-Prisma and migration policy, and the configuration rules below are implemented.** **The HTTP
-surface, the error contract, and everything published from `@devsync/shared` are still planned** —
-they arrive in C2, and each is marked where it appears.
+C0 decided this; C1 built the storage half; C2 built the HTTP surface over it. **Everything in this
+section is implemented** — the data model, the routes, the error contract, the request size limit,
+the package boundaries, the Prisma and migration policy, and the configuration rules.
 
-Nothing in the product reaches any of it yet: there is no route beyond `GET /health`, and
-`apps/web` makes no request to `apps/api`. [`roadmap.md`](roadmap.md) has the C0–C5 sequence and
-what each milestone must meet; [`decisions.md`](decisions.md) has the reasoning behind each choice
-and what would justify revisiting it.
+**Nothing in the product reaches any of it.** `apps/web` makes no request to `apps/api`, so a person
+using DevSync still cannot save or load a project; an HTTP client can do all of it.
+[`roadmap.md`](roadmap.md) has the C0–C5 sequence and what each milestone must meet;
+[`decisions.md`](decisions.md) has the reasoning behind each choice and what would justify revisiting
+it.
 
 ### What Phase C is, and what it refuses to prepare for
 
@@ -733,10 +847,7 @@ A project may later hold zero files, because deleting the last one is allowed. N
 product requires an undeletable file, and a rule that a project must always have one would be a
 constraint invented for tidiness.
 
-### The HTTP surface — planned, C2
-
-**None of these routes exists.** `GET /health` is still the only one the API serves. What follows is
-the contract C2 implements against.
+### The HTTP surface — implemented
 
 Files are addressed under their project, because a file has no meaning outside one and a flat
 `/files/:id` would make the project a query parameter on every request.
@@ -803,23 +914,29 @@ restate the file's identity; a body with none of them is a `400`.
 the transaction that made the change. There are no bulk, search, archive, restore, copy, move,
 folder, or upload routes in Phase C.
 
-#### Request size
+#### Request size — implemented
 
-The API needs a **maximum request body size**, enforced at its boundary, so that a large paste or a
-malformed upload is rejected as a `400` before it becomes a row. The practical value is chosen and
-tested when the API is written, against what a plausible source file actually weighs — putting a
-number here now would be a guess presented as a contract.
+**1 MiB of JSON**, applied once at bootstrap, so that a large paste or a malformed upload is
+rejected before it becomes a row. Express defaults to 100 kB, which is small for a source file; a
+mebibyte is comfortably more than any plausible one and still a clear boundary against accidental or
+malformed input.
+
+**A body over the limit is a `400`, not the `413` Express would produce.** So is one that is not
+valid JSON. Both are the client having sent something DevSync could not read, both answer with the
+same error resource as everything else, and neither exposes the parser's own body. The translation
+happens in front of the router rather than in the exception filter, because Nest rewrites a parser's
+`SyntaxError` into its own `BadRequestException` — message and all — before any filter is consulted.
 
 That is the whole of Phase C's resource story. **It is not a quota system**: there is no per-project
 size limit, no file-count limit, no rate limiting, and no accounting. Broad quotas and distributed
 resource hardening belong to the later phases that own reliability and production concerns, and
 moving them forward into Phase C would be building for a scale that does not exist.
 
-### Errors — planned, C2
+### Errors — implemented
 
 One shape, from every route, so the web application can read a failure without knowing which layer
-produced it. **The HTTP half of this is not built**; the four persistence meanings it maps from
-are, and `@devsync/database` already classifies every failure into one of them.
+produced it. `@devsync/database` classifies every persistence failure into one of four meanings, and
+`apps/api` maps those meanings onto the table below.
 
 | Status | Means                                                                           |
 | ------ | ------------------------------------------------------------------------------- |
@@ -848,7 +965,7 @@ are, and `@devsync/database` already classifies every failure into one of them.
   request body. An error with nothing field-specific to say omits it entirely rather than sending an
   empty list.
 
-The stable codes C2 has to implement:
+The stable codes, all seven implemented and exported from `@devsync/shared` as `API_ERROR_CODES`:
 
 | Code                   | Status | Raised when                                                                      |
 | ---------------------- | ------ | -------------------------------------------------------------------------------- |
@@ -865,7 +982,10 @@ the URL it built is wrong rather than the body it sent — a distinction the cli
 is the only reason to add a code.
 
 Nest's default error body is `{ statusCode, message, error }`, so producing this shape uniformly is
-an exception filter C2 has to write rather than something the framework provides.
+an exception filter rather than something the framework provides. **One exception is left to the
+framework on purpose**: a request to a URL that is not a DevSync route. None of the seven codes
+describes it, and adding an eighth would grow the contract for a failure no client of the API can
+legitimately provoke.
 
 **No error response may contain a Prisma error, a SQL fragment, a connection string, a stack trace,
 or an internal table name.** The boundary is enforced in two places: `@devsync/database`
@@ -877,8 +997,10 @@ without touching the client.
 Two failures are configuration rather than requests. **A missing or malformed `DATABASE_URL` fails
 startup**, loudly, rather than defaulting to some other database. **A database that goes away after
 startup** produces `503` and `DATABASE_UNAVAILABLE` from the persistence routes for as long as it is
-gone; `GET /health` is a separate question, and whether it should start reporting readiness is C1's
-to decide when there is something to be unready for.
+gone; the mapping is implemented and covered by injecting the typed failure, and **actually stopping
+PostgreSQL under a running API is C4's test**, not something to do in the middle of an integration
+run. `GET /health` is a separate question, and whether it should start reporting readiness is C4's
+to decide with those restarts in front of it.
 
 ### Where the code goes
 
@@ -897,36 +1019,36 @@ apps/api
   └── nothing — not apps/api, not apps/web, not @devsync/database
 ```
 
-**`@devsync/database`** will own the Prisma schema, the migrations, client construction, the
-connection lifecycle, the project and file data-access functions, the atomic project-plus-first-file
-creation, transaction helpers, and the classification of persistence errors.
+**`@devsync/database`** owns the Prisma schema, the migrations, client construction, the connection
+lifecycle, the project and file data-access functions, the atomic project-plus-first-file creation,
+transaction helpers, and the classification of persistence errors.
 
-It will not own HTTP controllers, status codes, React, UI state, browser APIs, the runtime schemas
+It does not own HTTP controllers, status codes, React, UI state, browser APIs, the runtime schemas
 shared with the browser, the starter-project policy, authentication, or anything to do with
 collaboration.
 
-**`@devsync/shared`** will own the runtime request schemas, the response contracts where they
-genuinely stop client and server drifting apart, the TypeScript types inferred from them, the
-supported language identifiers and their validator, and the error contract above. Zod is the
-intended validation library.
+**`@devsync/shared`** owns the runtime request schemas, the response contracts, the TypeScript types
+inferred from them, the supported language identifiers and their validator, and the error contract
+above. Zod 4 is the validation library, and it stays inside: consumers run a schema through
+`parseContract` and receive issues already in the published shape.
 
-**It starts exporting in C2**, when `apps/api` becomes its first consumer, and `apps/web` becomes
-the second in C3. The rule that has kept it empty so far is about speculation, not about consumer
-arithmetic: a contract the API is validating every request against is real, and waiting until C3 to
-publish it would mean writing the same schema twice and hoping the copies agree — the exact drift
-this package exists to prevent. It gains no collaboration, authentication, membership, or
-version-history types on the way past, and **nothing is added to it during C0.**
+**C2 filled it**, with `apps/api` as its first consumer; `apps/web` becomes the second in C3. The
+rule that had kept it empty is about speculation, not consumer arithmetic: a contract the API is
+validating every request against is real, and waiting until C3 to publish it would have meant
+writing the same schema twice and hoping the copies agree — the exact drift this package exists to
+prevent. It gained no collaboration, authentication, membership, or version-history types on the way
+past.
 
-**`apps/api`** will own HTTP routing, validation wiring, application orchestration, the
+**`apps/api`** owns HTTP routing, validation wiring, application orchestration, the
 project-creation starter values, and the mapping from persistence results and errors to responses.
 It also owns configuration: it loads and validates `DATABASE_URL`, and it drives the database
 package's connect and disconnect through Nest's lifecycle. **That dependency edge is C1's**, before
-any route exists — a data layer the real API process never opens is a data layer nobody has proved.
+any route existed — a data layer the real API process never opens is a data layer nobody has proved.
 
-**`apps/web`** will reach the API over HTTP and nothing else. It must never import
-`@devsync/database`, Prisma, a PostgreSQL client, or database configuration, and **the browser must
-never connect to PostgreSQL**. A database credential that reaches a bundle is a published
-credential.
+**`apps/web`** will reach the API over HTTP and nothing else. **It makes no such call yet.** It must
+never import `@devsync/database`, Prisma, a PostgreSQL client, or database configuration, and **the
+browser must never connect to PostgreSQL**. A database credential that reaches a bundle is a
+published credential.
 
 ### Prisma and migrations — implemented
 
@@ -993,25 +1115,26 @@ kind, and no such value may be exposed through a `NEXT_PUBLIC_` variable.
 
 Loading and validation arrived together in C1, which is the milestone
 [D11](decisions.md#d11--no-env-loading-yet) named as its trigger. `@devsync/shared` does not read
-environment files and must not start: it is imported by the browser bundle, and a package that
-reads configuration cannot safely be. `.env.example` documents all three with non-secret values.
+environment files and must not start: it is imported by the browser bundle from C3, and a package
+that reads configuration cannot safely be. `.env.example` documents all three with non-secret
+values.
 
 ### Compose, and testing
 
 [`docker.md`](docker.md) owns the Compose topology — the PostgreSQL service, the named volume, the
 health check, the migration service, and what `docker compose down` does and does not destroy.
-[`testing.md`](testing.md) owns the testing ladder — what the database layer proves today, what C2,
-C3, and C4 still have to prove, and why database tests stay outside `pnpm test`.
+[`testing.md`](testing.md) owns the testing ladder — what the data layer and the API prove today,
+what C3 and C4 still have to prove, and why database-backed tests stay outside `pnpm test`.
 
 ### What Phase C changes about the editor
 
 Phase B's editor holds one buffer and derives its file name from the selected language. Phase C
 inverts that: a file has a stored name and a stored language, changed independently, and the
-derived name in `apps/web/src/editor/languages.ts` stops being meaningful. C3 is where the client
-changes. **The five language identifiers and their validator move to `@devsync/shared` in C2**,
-with everything else the API has to validate; the labels a user reads may stay in the client,
-because they are presentation, and C3 is when the client starts reading the identifiers from the
-shared package rather than from its own list.
+derived name in `apps/web/src/editor/languages.ts` stops being meaningful. **C3 is where the client
+changes; C2 changed nothing in it.** The five language identifiers and their validator now live in
+`@devsync/shared`, with everything else the API validates; the labels a user reads may stay in the
+client, because they are presentation, and C3 is when the client starts reading the identifiers from
+the shared package rather than from its own list.
 
 The model-ownership problem recorded in [`testing.md`](testing.md) is **not** solved by Phase C.
 Loading a file's contents into the editor is a controlled-value change like any other, and
@@ -1022,17 +1145,21 @@ user-paced typing is unaffected; it is Phase E's programmatic remote edits that 
 Recorded so that their absence reads as a decision rather than an oversight. None of the
 following exists anywhere in this repository:
 
-- Any persistence a **user** can reach: no project or file route, no request from `apps/web` to
-  `apps/api`, and no browser storage — the workspace uses neither `localStorage`, `sessionStorage`,
-  nor IndexedDB, and has no save action or saved/unsaved state, because there is nowhere yet to
-  save to. PostgreSQL exists; nothing in the interface leads to it.
+- Any persistence a **user** can reach: no request from `apps/web` to `apps/api`, and no browser
+  storage — the workspace uses neither `localStorage`, `sessionStorage`, nor IndexedDB, and has no
+  save action or saved/unsaved state, because it has nowhere it can reach to save to. PostgreSQL and
+  the routes over it exist; nothing in the interface leads to them.
 - Authentication, sessions, accounts, or authorization — every request is anonymous, and every
   record is reachable by anything that can reach the API
+- CORS configuration — nothing cross-origin exists to allow, and it arrives with C3's first call
+- Pagination, search, bulk routes, upload routes, project templates, or seeded projects
+- Rate limiting, per-project quotas, or any resource accounting beyond the 1 MiB body limit
+- OpenAPI, Swagger, or GraphQL
 - WebSockets, Socket.IO, or any real-time transport
 - A CRDT library or any collaboration code — the editor exists, but it is bound to nothing
 - Code execution, sandboxing, or a runner service
 - Redis, a cache, a queue, or a message broker
-- A shared type, schema, or protocol definition — `@devsync/shared` exports nothing
+- A collaboration protocol definition — `@devsync/shared` carries HTTP contracts and nothing else
 - Deployment configuration, Kubernetes manifests, cloud infrastructure, or release automation
 - A dependency bot, a changelog, or a versioning scheme
 

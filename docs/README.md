@@ -5,13 +5,14 @@ describes an intention rather than a system. Where a document does describe dire
 architecture DevSync is being built towards, or the milestones ahead — it says so explicitly and
 keeps it separate from what exists.
 
-**Phases A and B are complete. Phase C is at C1: C0 and C1 are done, and C2 is next.** C0 decided
-how persistence would be built; C1 built the storage half — PostgreSQL, Prisma, the schema, one
-committed migration, the data layer, and an API that connects during startup.
+**Phases A and B are complete. Phase C is at C2: C0, C1, and C2 are done, and C3 is next.** C0
+decided how persistence would be built; C1 built the storage half — PostgreSQL, Prisma, the schema,
+one committed migration, the data layer, and an API that connects during startup; C2 put ten
+project and file routes over it, with the request and response contracts in `@devsync/shared`.
 
 **No user can reach any of it.** One Monaco editor over one in-memory file is still the only
-product functionality that exists: there is no project or file route, and `apps/web` makes no
-request to `apps/api`.
+product functionality that exists: `apps/web` makes no request to `apps/api`, so nothing a person
+can click saves or loads anything. An HTTP client can.
 
 ## Start here
 
@@ -27,8 +28,8 @@ request to `apps/api`.
 
 ## Subject documents
 
-- **[Testing](testing.md)** — the four testing layers, which runner owns each, what the current
-  tests actually prove, and what is deliberately not tested yet.
+- **[Testing](testing.md)** — the testing layers, which runner owns each, what the current tests
+  actually prove, and what is deliberately not tested yet.
 - **[Docker](docker.md)** — how the applications are containerised, how PostgreSQL and the
   migration service fit together, what survives `docker compose down`, and what the setup
   deliberately leaves out.
@@ -50,10 +51,10 @@ These need a design that does not exist, because the systems they would describe
   implementation in Phases H and L.
 
 The Phase C data model, its HTTP resources, and the migration practice around them were expected to
-need a document of their own. They did not: they are one planned section of
-[`architecture.md`](architecture.md#phase-c--planned-persistence-architecture), which already owns
-the boundaries they sit between. A separate document earns its place only if that section outgrows
-the one it is part of.
+need a document of their own. They did not: they are one section of
+[`architecture.md`](architecture.md#phase-c--the-persistence-architecture), which already owns the
+boundaries they sit between. A separate document earns its place only if that section outgrows the
+one it is part of.
 
 [`../README.md`](../README.md) is the top-level description of the repository, and each
 `packages/*` directory documents its own responsibility and current state.

@@ -4,10 +4,12 @@ What runs on GitHub Actions, what each job proves, and how to reproduce any of i
 
 The workflow was introduced in **Phase A4 — CI foundation**. Phase B needed no new job, step, or
 secret; **C1 added one job and a PostgreSQL service to another**, because there is now a data layer
-to exercise and an API that will not start without a database. CI adds no capability to DevSync; it
-runs the checks that already existed, on someone else's machine, on every change. Every command in
-the workflow is one you can run yourself, which is the point — a red run should never require
-reading CI internals to reproduce.
+to exercise and an API that will not start without a database. **C2 added no job**: the API's
+PostgreSQL-backed HTTP tests arrived inside `pnpm test:db`, which the `database` job already ran,
+and the `docker` job gained one read-only request. CI adds no capability to DevSync; it runs the
+checks that already existed, on someone else's machine, on every change. Every command in the
+workflow is one you can run yourself, which is the point — a red run should never require reading
+CI internals to reproduce.
 
 The single workflow lives in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
@@ -54,12 +56,12 @@ appear to, because each would then be exercising an artifact assembled elsewhere
 workflow a developer or a production image actually follows. The cost is that dependencies are
 installed more than once; the benefit is that each job is a complete, honest reproduction.
 
-| Job        | Timeout | What it proves                                                                     |
-| ---------- | ------- | ---------------------------------------------------------------------------------- |
-| `quality`  | 20 min  | The tree is formatted, lints, type-checks, passes its in-process tests, and builds |
-| `database` | 20 min  | The data layer against a real PostgreSQL, with the committed migration applied     |
-| `e2e`      | 20 min  | Both applications start from a real build and answer in a real browser             |
-| `docker`   | 25 min  | Every image builds, the migration exits 0, and every service becomes healthy       |
+| Job        | Timeout | What it proves                                                                       |
+| ---------- | ------- | ------------------------------------------------------------------------------------ |
+| `quality`  | 20 min  | The tree is formatted, lints, type-checks, passes its in-process tests, and builds   |
+| `database` | 20 min  | The data layer **and** the API's routes against a real PostgreSQL, migration applied |
+| `e2e`      | 20 min  | Both applications start from a real build and answer in a real browser               |
+| `docker`   | 25 min  | Every image builds, the migration exits 0, and every service becomes healthy         |
 
 **`database` and `e2e` each run their own PostgreSQL** as a service container, on the same image
 Compose pins and published on the same port, so `TEST_DATABASE_URL` is character-for-character the
@@ -88,12 +90,19 @@ for a robot to paper over.
 ### `database`
 
 Starts a PostgreSQL service container, installs dependencies, and runs `pnpm test:db` — the same
-command a developer runs, against a database the job created and will throw away. That task drops
-the test schema, applies the committed migration, and then runs the suite, so a migration that does
-not apply cleanly fails here rather than later, in the `docker` job.
+command a developer runs, against a database the job created and will throw away.
 
-The suite refuses to run at all unless `TEST_DATABASE_URL` names `devsync_test` and differs from
-`DATABASE_URL`. In CI the second condition is trivially met, because `DATABASE_URL` is never set.
+**That one command covers both persistence layers from C2**: the data layer's 57 tests first, then
+the API's 110 HTTP tests against the real `AppModule` and the same database. They run one after the
+other because they reset and rewrite the same schema, and the root script says so with `&&` rather
+than leaving the order to Turborepo. No fifth job was added, and no CI-only command exists — the
+step is still `pnpm test:db`.
+
+Each suite drops the test schema and applies the committed migration before it runs, so a migration
+that does not apply cleanly fails here rather than later, in the `docker` job. Both refuse to run at
+all unless `TEST_DATABASE_URL` names `devsync_test` and differs from `DATABASE_URL`. In CI the
+second condition is trivially met, because `DATABASE_URL` is never set — the API's suite sets it
+itself, to the validated test target, after the gate has run.
 
 ### `e2e`
 
@@ -118,6 +127,7 @@ docker compose up --detach --wait      # PostgreSQL, the migration, then both ap
 <verify migrate>                       # the one-shot service exited 0, with its log printed
 <verify web>                           # HTTP 200, and the page identifies DevSync
 <verify api>                           # the exact health payload
+<verify projects>                      # GET /projects is 200 and a JSON array
 ```
 
 `--wait` blocks until every service reports healthy and exits non-zero if one does not, so the
@@ -139,6 +149,20 @@ body="$(curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3001/he
 
 The API check is an **exact string comparison**, not a substring or a JSON subset match, so a
 changed or extra field fails it.
+
+C2 added one more, and deliberately kept it read-only:
+
+```bash
+status="$(curl --silent --show-error --max-time 10 --output /tmp/projects.json --write-out '%{http_code}' http://127.0.0.1:3001/projects)"
+[ "$status" = "200" ]
+grep -q '^\[' /tmp/projects.json
+```
+
+That reaches through the whole stack — the route exists, the API is talking to PostgreSQL, and the
+migration created a table it can list — while **writing nothing**, so the job leaves no data behind
+to clean up. Creating a project here to exercise more of the API would mean either deleting it in
+the same step or letting the containers carry state between assertions, and neither buys anything
+the `database` job has not already proved against a real database.
 
 On failure, a step guarded by `if: failure()` prints `docker compose ps --all` and
 `docker compose logs --no-color`. It sits **before** the cleanup step, so the containers still
@@ -268,7 +292,7 @@ Every CI step maps to a command you already have. There is no CI-only script to 
 | Validate the Compose file | `docker compose config`                                               |
 | Build images              | `docker compose build`                                                |
 | Start and wait for health | `docker compose up --detach --wait`                                   |
-| Verify the endpoints      | `curl http://127.0.0.1:3000/` and `curl http://127.0.0.1:3001/health` |
+| Verify the endpoints      | `curl http://127.0.0.1:3000/`, `…:3001/health`, and `…:3001/projects` |
 | Clean up                  | `docker compose down --volumes --remove-orphans`                      |
 
 To reproduce a whole job in one go:
@@ -279,11 +303,12 @@ pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typeche
 
 ## Current limitations
 
-- **The C1 jobs have not yet been observed running on GitHub.** The workflow parses, and every
-  command in it has been run locally against the current commit — including `pnpm test:db` and
-  `pnpm test:e2e` against a real PostgreSQL, and the full Compose stack with its migration. What
-  has not been proved is the runner-specific part: service containers, their published ports, and
-  the health options attached to them. The first run against a real pull request is that proof.
+- **The C1 and C2 jobs have not yet been observed running on GitHub.** The workflow parses, and
+  every command in it has been run locally against the current commit — including `pnpm test:db`
+  covering both persistence suites, `pnpm test:e2e`, and the full Compose stack with its migration
+  and both HTTP verifications. What has not been proved is the runner-specific part: service
+  containers, their published ports, and the health options attached to them. The first run against
+  a real pull request is that proof.
 - **No branch protection is configured**, so a failing run does not yet block a merge. That is a
   repository setting rather than a file, and it is not something this milestone can add.
 - **Playwright browsers are downloaded on every `e2e` run** — roughly 300 MB and a minute or so.

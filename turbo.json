@@ -28,26 +28,39 @@
     "typecheck": {
       "dependsOn": ["^build", "generate"]
     },
-    "test": {
-      "dependsOn": ["^build"]
-    },
+    // The fast command, and the one that has to stay fast. It depends on
+    // nothing: no `^build`, no `generate`, no database, no browser.
+    //
+    // That is only possible because every suite in it reads source.
+    // `packages/shared` tests its own `src`, `apps/web` renders its own
+    // components, and `apps/api`'s Jest configuration maps `@devsync/shared` and
+    // `@devsync/database` to their TypeScript rather than to `dist` — see
+    // `apps/api/jest.config.mjs`. Adding `^build` back would make `pnpm test`
+    // run `prisma generate` and two `tsc` invocations before its first
+    // assertion, which is precisely what this task must never do.
+    "test": {},
     "test:db": {
       // Real PostgreSQL, reached through TEST_DATABASE_URL, so the result
       // depends on a live server that is not part of the input hash. Never
       // part of `test`: the fast command starts no external service.
       //
+      // Two workspaces run under this task from C2 — the data layer and the
+      // API's HTTP integration suite — and they share one schema, so the root
+      // `test:db` script invokes them one after the other rather than letting
+      // Turborepo decide. `^build` is here because the API suite loads the
+      // compiled `@devsync/database` and `@devsync/shared`.
+      //
       // Both variables are declared because Turborepo passes a task only the
       // environment it names, and the safety gate compares the two: it refuses
       // to run when the test database turns out to be the development one.
-      "dependsOn": ["generate"],
+      "dependsOn": ["^build", "generate"],
       "env": ["TEST_DATABASE_URL", "DATABASE_URL"],
       "cache": false
     },
-    "test:unit": {
-      "dependsOn": ["^build"]
-    },
+    // Both are in-process source-level suites too, so both stay build-free for
+    // the same reason `test` does.
+    "test:unit": {},
     "test:coverage": {
-      "dependsOn": ["^build"],
       "outputs": ["coverage/**"]
     },
     // Applies the committed migrations to the disposable test database. Split

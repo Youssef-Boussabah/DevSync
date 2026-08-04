@@ -1,47 +1,7 @@
 import type { Prisma, PrismaClient } from './generated/prisma/client';
-import { PersistenceError, withPersistenceErrors } from './errors';
-import type {
-  NewProjectFile,
-  ProjectFileChanges,
-  ProjectFileRecord,
-  ProjectFileSummaryRecord,
-} from './records';
+import { withPersistenceErrors } from './errors';
+import { PersistenceError, type ProjectFileOperations } from './contracts';
 import { toProjectFileRecord, toProjectFileSummaryRecord } from './records';
-
-/**
- * File operations, all of them scoped to a project.
- *
- * Two conventions run through this interface. **A missing project always throws**
- * a `notFound` `PersistenceError`, because the project in the path is context
- * rather than the thing being asked for. **A missing file is `null`** from a
- * lookup and a `notFound` error from anything that changes it — asking whether a
- * file exists and acting on one that must exist are different questions.
- *
- * Every operation that changes a file also moves its project's `updatedAt`, in
- * the same transaction, so a project list ordered by recency reflects real work.
- */
-export interface ProjectFileOperations {
-  create(projectId: string, file: NewProjectFile): Promise<ProjectFileRecord>;
-
-  /** Oldest first by creation time, with the identifier as the tie-breaker. */
-  list(projectId: string): Promise<ProjectFileSummaryRecord[]>;
-
-  /** `null` when the project holds no such file. */
-  find(projectId: string, fileId: string): Promise<ProjectFileRecord | null>;
-
-  /**
-   * Applies whichever of `name`, `language`, and `content` are present. The API
-   * rejects an empty change set before it reaches here; if one arrives anyway,
-   * only the timestamps move.
-   */
-  update(
-    projectId: string,
-    fileId: string,
-    changes: ProjectFileChanges,
-  ): Promise<ProjectFileRecord>;
-
-  delete(projectId: string, fileId: string): Promise<void>;
-}
 
 const summarySelection = {
   id: true,

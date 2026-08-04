@@ -11,32 +11,35 @@ can be read in one sitting, splitting it is itself a decision worth recording he
 Entries marked **direction** are commitments about what will be built, not descriptions of what
 exists. Nothing in a direction entry is installed.
 
-| #                                                                         | Decision                                          |
-| ------------------------------------------------------------------------- | ------------------------------------------------- |
-| [D1](#d1--pnpm-and-turborepo)                                             | pnpm workspaces and Turborepo                     |
-| [D2](#d2--nextjs-for-the-web-application)                                 | Next.js for the web application                   |
-| [D3](#d3--nestjs-for-the-api)                                             | NestJS for the API                                |
-| [D4](#d4--one-shared-configuration-package)                               | Shared configuration in `@devsync/config`         |
-| [D5](#d5--reserved-package-boundaries-stay-empty)                         | Reserved packages stay empty                      |
-| [D6](#d6--vitest-for-the-frontend-and-pure-typescript)                    | Vitest for the frontend                           |
-| [D7](#d7--jest-retained-for-the-nestjs-api)                               | Jest retained for `apps/api`                      |
-| [D8](#d8--playwright-for-browser-and-full-stack-testing)                  | Playwright for browser tests                      |
-| [D9](#d9--docker-compose-for-production-style-local-execution)            | Docker Compose locally                            |
-| [D10](#d10--one-workflow-four-independent-ci-jobs)                        | One workflow, four independent jobs               |
-| [D11](#d11--no-env-loading-yet)                                           | No `.env` loading yet — **superseded in C1**      |
-| [D12](#d12--direction-monaco-and-yjs-for-collaborative-editing)           | **Direction:** Monaco + Yjs                       |
-| [D13](#d13--direction-postgresql-before-redis)                            | **Direction:** PostgreSQL before Redis            |
-| [D14](#d14--direction-an-isolated-execution-runner)                       | **Direction:** an isolated runner                 |
-| [D15](#d15--monaco-is-bundled-not-loaded-from-a-cdn)                      | Monaco is bundled, not loaded from a CDN          |
-| [D16](#d16--prisma-owned-by-devsyncdatabase)                              | Prisma, owned by one package                      |
-| [D17](#d17--direction-phase-c-is-single-user-and-deletion-is-permanent)   | **Direction:** single-user, permanent deletes     |
-| [D18](#d18--direction-flat-file-names-and-language-as-a-validated-string) | **Direction:** flat names, language as a string   |
-| [D19](#d19--direction-a-new-project-is-created-with-its-first-file)       | **Direction:** projects start with one file       |
-| [D20](#d20--direction-zod-contracts-in-devsyncshared)                     | **Direction:** Zod contracts in `@devsync/shared` |
-| [D21](#d21--database-tests-run-against-real-postgresql)                   | Database tests use real PostgreSQL                |
-| [D22](#d22--devsyncdatabase-is-a-built-commonjs-package)                  | `@devsync/database` is built, and CommonJS        |
-| [D23](#d23--postgresql-is-published-on-port-5433)                         | PostgreSQL is published on 5433                   |
-| [D24](#d24--file-name-uniqueness-is-pinned-to-the-c-collation)            | File-name uniqueness uses the `C` collation       |
+| #                                                                             | Decision                                            |
+| ----------------------------------------------------------------------------- | --------------------------------------------------- |
+| [D1](#d1--pnpm-and-turborepo)                                                 | pnpm workspaces and Turborepo                       |
+| [D2](#d2--nextjs-for-the-web-application)                                     | Next.js for the web application                     |
+| [D3](#d3--nestjs-for-the-api)                                                 | NestJS for the API                                  |
+| [D4](#d4--one-shared-configuration-package)                                   | Shared configuration in `@devsync/config`           |
+| [D5](#d5--reserved-package-boundaries-stay-empty)                             | Reserved packages stay empty                        |
+| [D6](#d6--vitest-for-the-frontend-and-pure-typescript)                        | Vitest for the frontend                             |
+| [D7](#d7--jest-retained-for-the-nestjs-api)                                   | Jest retained for `apps/api`                        |
+| [D8](#d8--playwright-for-browser-and-full-stack-testing)                      | Playwright for browser tests                        |
+| [D9](#d9--docker-compose-for-production-style-local-execution)                | Docker Compose locally                              |
+| [D10](#d10--one-workflow-four-independent-ci-jobs)                            | One workflow, four independent jobs                 |
+| [D11](#d11--no-env-loading-yet)                                               | No `.env` loading yet — **superseded in C1**        |
+| [D12](#d12--direction-monaco-and-yjs-for-collaborative-editing)               | **Direction:** Monaco + Yjs                         |
+| [D13](#d13--direction-postgresql-before-redis)                                | **Direction:** PostgreSQL before Redis              |
+| [D14](#d14--direction-an-isolated-execution-runner)                           | **Direction:** an isolated runner                   |
+| [D15](#d15--monaco-is-bundled-not-loaded-from-a-cdn)                          | Monaco is bundled, not loaded from a CDN            |
+| [D16](#d16--prisma-owned-by-devsyncdatabase)                                  | Prisma, owned by one package                        |
+| [D17](#d17--phase-c-is-single-user-and-deletion-is-permanent)                 | Single-user, and permanent deletes                  |
+| [D18](#d18--flat-file-names-and-language-as-a-validated-string)               | Flat names, language as a validated string          |
+| [D19](#d19--a-new-project-is-created-with-its-first-file)                     | Projects start with one file                        |
+| [D20](#d20--zod-contracts-in-devsyncshared)                                   | Zod contracts in `@devsync/shared`                  |
+| [D21](#d21--database-tests-run-against-real-postgresql)                       | Database tests use real PostgreSQL                  |
+| [D22](#d22--devsyncdatabase-is-a-built-commonjs-package)                      | `@devsync/database` is built, and CommonJS          |
+| [D23](#d23--postgresql-is-published-on-port-5433)                             | PostgreSQL is published on 5433                     |
+| [D24](#d24--file-name-uniqueness-is-pinned-to-the-c-collation)                | File-name uniqueness uses the `C` collation         |
+| [D25](#d25--devsyncshared-is-a-built-commonjs-package-carrying-zod-4)         | `@devsync/shared` is built, CommonJS, and owns Zod  |
+| [D26](#d26--the-json-body-limit-is-1-mib-and-an-oversized-body-is-a-400)      | 1 MiB of JSON, and oversize is a `400`              |
+| [D27](#d27--the-apis-database-suite-runs-jest-with---experimental-vm-modules) | Jest needs `--experimental-vm-modules` for Prisma 7 |
 
 ---
 
@@ -93,15 +96,17 @@ first-class WebSocket gateways give that growth a shape decided in advance, rath
 emerges from whichever file grew fastest. Its testing utilities also make HTTP-level tests cheap,
 which is what `apps/api` tests today.
 
-**Consequence today.** One module and one endpoint — deliberately little framework for what it
-does, which is the trade for not restructuring later. Two TypeScript settings are constrained by
-it: `tsconfig.nest.json` cannot set `verbatimModuleSyntax` or `lib`, because
-`emitDecoratorMetadata` needs injected classes to survive as values. `apps/api` also has no path
-alias, because `tsc` does not rewrite aliases when it emits.
+**Consequence today.** Four modules and eleven routes since C2 — configuration, the database
+connection, health, and projects with the nested project files — which is the growth this decision
+was made for. The module system earned its place: adding the routes meant one `ProjectsModule` and
+two thin controllers rather than a restructure. Two TypeScript settings are constrained by it:
+`tsconfig.nest.json` cannot set `verbatimModuleSyntax` or `lib`, because `emitDecoratorMetadata`
+needs injected classes to survive as values. `apps/api` still has no path alias in the code it
+emits, because `tsc` does not rewrite aliases — the only `paths` entries anywhere are in
+`tsconfig.test.json`, which never emits and is paired with a matching Jest resolver.
 
-**Revisit if.** The service stays this small permanently — it will not — or Nest's decorator
-metadata requirements start blocking a compiler setting that matters more than the framework
-does.
+**Revisit if.** Nest's decorator metadata requirements start blocking a compiler setting that
+matters more than the framework does. The "it stays this small" clause has expired.
 
 ---
 
@@ -138,12 +143,13 @@ obvious before anyone is tempted to write it into an application and copy it. Fi
 boundary early is expensive: a speculative interface has to be unlearned before it can be used,
 and it makes the repository look further along than it is.
 
-**Consequence today.** Four workspaces that lint, type-check, and report honestly that they have no
+**Consequence today.** Three workspaces that lint, type-check, and report honestly that they have no
 tests. Each `src/index.ts` is a documented `export {}`, and each README states the boundary and the
 current state. `@devsync/database` was the fifth until C1 filled it — with a schema, a migration, a
-data layer, and 57 tests — which is the outcome this decision was betting on: the boundary was
-already there, so filling it was a matter of writing the implementation rather than agreeing where
-it should live.
+data layer, and 57 tests — and `@devsync/shared` the fourth until C2 did, with the schemas the API
+validates every request against. That is the outcome this decision was betting on, twice: the
+boundary was already there, so filling it was a matter of writing the implementation rather than
+agreeing where it should live. Neither arrived as a placeholder; both arrived with a consumer.
 
 **Revisit if.** A package is still empty when the milestone that was supposed to fill it has come
 and gone — that is evidence the boundary was wrong, and the workspace should be deleted rather
@@ -164,7 +170,8 @@ editor wrapper, the last two against mocked boundaries because jsdom cannot run 
 `layout.tsx` cannot be
 tested here — it imports `next/font/google`, which only the Next.js compiler resolves — so the
 metadata it declares is asserted by Playwright against the real document instead of being
-re-implemented in a mock.
+re-implemented in a mock. C1 made `packages/database` the second Vitest workspace and C2 made
+`packages/shared` the third, with 100 schema tests that run in Node and need nothing.
 
 **Revisit if.** A packages-level suite needs something Vitest cannot express. Nothing suggests it
 will.
@@ -183,10 +190,13 @@ for.
 
 **Consequence today.** Two runners in one repository, and a contributor has to know which
 directory uses which. That cost is real and accepted. `pnpm test` runs both, so it is invisible
-from the root.
+from the root. C2 added a second Jest suite in the same workspace — the PostgreSQL-backed one — with
+its own configuration and its own file pattern, and one Jest-specific workaround recorded as
+[D27](#d27--the-apis-database-suite-runs-jest-with---experimental-vm-modules).
 
 **Revisit if.** A shared helper appears that both runners need and cannot both consume, or Nest's
-testing utilities become runner-agnostic. A concrete technical reason — not uniformity.
+testing utilities become runner-agnostic. A concrete technical reason — not uniformity, and not one
+command-line flag.
 
 ---
 
@@ -324,7 +334,7 @@ the data most often cited as a reason for it, is ephemeral by design and belongs
 memory until there is more than one process.
 
 **Consequence today.** The PostgreSQL half is built: PostgreSQL 18 in Compose, reached only through
-`@devsync/database`, which `apps/api` depends on. **Redis is still absent**, and nothing in C1
+`@devsync/database`, which `apps/api` depends on. **Redis is still absent**, and nothing in C1 or C2
 made it any closer — presence and collaboration, the things that would want it, do not exist, and
 one API instance shares state with nobody.
 
@@ -408,7 +418,9 @@ abstraction rather than a directory.
 source tree, which is what makes the package build rather than be consumed as source
 ([D22](#d22--devsyncdatabase-is-a-built-commonjs-package)). The adapter means no query engine
 binary ships: the runtime image carries `@prisma/client`, `@prisma/adapter-pg`, and `pg`, and no
-Prisma CLI at all — the migration service is a separate image stage for exactly that reason. The
+Prisma CLI at all — the migration service is a separate image stage for exactly that reason. Keeping
+the CLI out needs `--no-optional` alongside `--prod`, because `@prisma/client` declares it as an
+optional peer; [`docker.md`](docker.md) has the mechanism. The
 API loads the configuration and drives connect and disconnect through Nest's lifecycle. The routes
 that use any of it are C2's.
 
@@ -419,7 +431,7 @@ _through_ the package, not a second data-access path around it. Full details are
 
 ---
 
-### D17 — **Direction:** Phase C is single-user, and deletion is permanent
+### D17 — Phase C is single-user, and deletion is permanent
 
 **Decision.** Projects and files carry no owner, no membership, no role, no visibility, no slug, no
 archive state, and no `deletedAt`. Deleting a project permanently deletes it and, by cascade, its
@@ -432,15 +444,15 @@ exists when it does not. Soft deletion is the same trade in a worse form: it mak
 carry a filter that Phase C has no reason to need, and the first query that forgets it becomes a
 data-leak bug.
 
-**Consequence today.** Nothing exists to consume it. **From C2**, when the routes exist, every
-request is anonymous: anyone who can reach the API can read, rename, and permanently delete every
-project in it. The API is not unreachable — it is published on a local host port, and Compose
-publishes it too — so this is acceptable only **inside Phase C's local, single-user development
-boundary**. It is not suitable for public deployment, and nothing in Phase C should be deployed
-where an untrusted client can reach it. Phase H is what introduces real identity and authorization;
-until then the boundary is the network the API is exposed on, which is a weaker guarantee than it
-sounds and is stated here so nobody mistakes it for a strong one. Delete is unrecoverable, so C3's
-interface has to say so plainly.
+**Consequence today.** **The routes exist from C2, and every request to them is anonymous**: anyone
+who can reach the API can read, rename, and permanently delete every project in it. The API is not
+unreachable — it is published on a local host port, and Compose publishes it too — so this is
+acceptable only **inside Phase C's local, single-user development boundary**. It is not suitable for
+public deployment, and nothing in Phase C should be deployed where an untrusted client can reach it.
+Phase H is what introduces real identity and authorization; until then the boundary is the network
+the API is exposed on, which is a weaker guarantee than it sounds and is stated here so nobody
+mistakes it for a strong one. `DELETE` is `204` and unrecoverable, so C3's interface has to say so
+plainly.
 
 **Revisit if.** Phase H arrives, which it will. That milestone adds ownership and authorization,
 and it is also the point at which recoverable deletion should be argued on its own merits rather
@@ -448,7 +460,7 @@ than smuggled in early.
 
 ---
 
-### D18 — **Direction:** flat file names, and language as a validated string
+### D18 — Flat file names, and language as a validated string
 
 **Decision.** A file has a name, unique within its project and case-sensitive, with no folder,
 path, parent, or ordering column. Its language is stored as an ordinary string, validated against
@@ -465,12 +477,14 @@ string because adding a sixth one should be a change to a list and a validator, 
 enum type would make the database the authority on a set that is really Monaco's, and would couple
 every new language to a schema change and a deployment ordering problem.
 
-**Consequence today.** None. **C1 has to make the schema and its collation configuration actually
-enforce the composite `(projectId, name)` rule as specified, and cover it with real PostgreSQL
-integration tests** — a uniqueness guarantee assumed from a database default is a guarantee nobody
-has checked. From C2, an unsupported language is a `400` rather than a constraint violation, and
-the identifiers and their validator live in `@devsync/shared`, which the API reads from C2 and the
-web application from C3.
+**Consequence today.** C1 made the schema and its collation enforce the composite
+`(projectId, name)` rule and covered it with real PostgreSQL integration tests — a uniqueness
+guarantee assumed from a database default is a guarantee nobody has checked. **C2 put the
+identifiers and their validator in `@devsync/shared`**, where the API reads them and the web
+application will from C3: an unsupported language is now a `400 VALIDATION_FAILED` with an issue on
+`language`, rejected at the boundary rather than reaching a constraint. Name and language are
+independent on the wire as well as in the schema — `PATCH` accepts either alone, and three
+integration tests assert that changing one leaves the other untouched.
 
 **Revisit if.** Real projects need directories — that is Phase F, and it is a migration that adds a
 location, not a reinterpretation of the name. Or duplicate-looking names cause genuine confusion in
@@ -478,7 +492,7 @@ practice, at which point case-insensitive uniqueness is the recorded alternative
 
 ---
 
-### D19 — **Direction:** a new project is created with its first file
+### D19 — A new project is created with its first file
 
 **Decision.** Creating a project also creates one file — `main.ts`, TypeScript, holding the starter
 content the local workspace opens with today — in a single transaction. `apps/api` owns that
@@ -492,9 +506,12 @@ ownership split is what keeps it honest — a persistence layer with an opinion 
 project should say has to be edited for a product decision, so the content comes from the API and
 only the atomicity comes from the package.
 
-**Consequence today.** None. From C1, the database package needs a transaction helper before it
-needs anything else; from C2, `POST /projects` returns the new file's identifier so the client can
-open it without guessing.
+**Consequence today.** Implemented. C1 gave the database package the transaction;
+**C2 put the policy in `apps/api/src/projects/starter-file.ts`** — one module holding the name, the
+language, and the content — and `POST /projects` answers with the new file's identifier so a client
+can open what it just created without listing the project to find one. An integration test watches
+what the data layer was handed, so the policy cannot quietly migrate into the package. It answers a
+**summary** rather than the starter content: a create is not the route that ships file contents.
 
 **Revisit if.** Project templates appear, at which point the starter stops being one hard-coded file
 and the policy — still in `apps/api` — becomes a choice. Or the first file proves unwanted, which
@@ -502,7 +519,7 @@ is a product observation rather than a technical one.
 
 ---
 
-### D20 — **Direction:** Zod contracts in `@devsync/shared`
+### D20 — Zod contracts in `@devsync/shared`
 
 **Decision.** The request schemas, the response contracts worth pinning, the supported language
 identifiers and their validator, and the single error contract are published from `@devsync/shared`,
@@ -520,14 +537,22 @@ a real user, and holding them inside `apps/api` until the client arrives would m
 twice and hoping the copies agree. What [D5](#d5--reserved-package-boundaries-stay-empty) forbids is
 speculation, not a contract that is already being enforced.
 
-**Consequence today.** None. Zod is not installed, and `@devsync/shared` still exports nothing.
-From C2 it is a runtime dependency of `apps/api`, and from C3 of `apps/web` as well, so it ships in
-the client bundle — which is the cost, and is why the package must never grow anything server-only,
-including anything that reads configuration.
+**Implemented in C2**, at Zod 4.4.3.
 
-**Revisit if.** A concrete incompatibility with the Nest validation pipeline or the Next.js bundler
-turns up in C2. Uniformity with Nest's `class-validator` convention is not a reason: DTO classes
-cannot be shared with the browser without decorators and metadata reaching it.
+**Consequence today.** `@devsync/shared` publishes the four request schemas, the resource and
+listing schemas, the identifier schemas, the five language identifiers, and the error contract — and
+the type inferred from each. `apps/api` validates every request against them through two pipes and
+declares **no Zod dependency of its own**: it calls `parseContract`, which returns either the parsed
+value or the issues already in the published `{ path, message }` shape. Zod therefore stays an
+implementation detail of one package rather than a version every consumer has to pin and keep in
+step, and no DTO class or decorator exists anywhere in the API. From C3 the package ships in the
+client bundle as well, which is the cost, and is why it must never grow anything server-only.
+
+**Revisit if.** A concrete incompatibility with the Next.js bundler turns up in C3. The Nest
+pipeline turned out to need nothing special — a pipe whose input is `unknown` and whose output is
+the schema's inferred type is all it takes. Uniformity with Nest's `class-validator` convention is
+still not a reason: DTO classes cannot be shared with the browser without decorators and metadata
+reaching it.
 
 ---
 
@@ -546,7 +571,11 @@ existing promise that the fast command builds nothing and starts nothing — the
 it usable on every save.
 
 **Consequence today.** One more command to know about, `pnpm test:db`, and a PostgreSQL that has to
-be running for it. The safety gate refuses when the target is missing, malformed, not PostgreSQL,
+be running for it — and, from C2, a fast suite that has to be able to run without the packages that
+suite builds. `apps/api`'s Jest configuration reads `@devsync/shared` and `@devsync/database` from
+source so `pnpm test` builds nothing, while `test:db` reads the compiled output; `@devsync/database`
+carries an ORM-independent `contracts.ts` to make the first half possible. `testing.md` has the
+mechanism. The safety gate refuses when the target is missing, malformed, not PostgreSQL,
 named anything but `devsync_test`, or the same database as `DATABASE_URL`. `TEST_DATABASE_URL`
 belongs to that tooling alone — the API never reads it, and an unset one does not stop the service
 from starting. The suite is Vitest in `@devsync/database`, which made it the second Vitest
@@ -579,9 +608,12 @@ own tests before it ever reached a container.
 
 **Consequence today.** The repository can no longer say every `packages/*` library emits nothing,
 and `turbo.json` grew a `generate` task that `build`, `lint`, and `typecheck` depend on so the
-generated client exists before anything reads it. `apps/api`'s production install names two
-packages explicitly rather than using pnpm's `...` suffix, which would drag `@devsync/config` and
-its TypeScript into the runtime image.
+generated client exists before anything reads it — deliberately **not** `test`, which reads source
+and must keep building nothing. `apps/api`'s production install names its
+workspaces explicitly — three of them since C2 — rather than using pnpm's `...` suffix, which would
+drag `@devsync/config` and its TypeScript into the runtime image.
+[D25](#d25--devsyncshared-is-a-built-commonjs-package-carrying-zod-4) applied the same reasoning to
+`@devsync/shared`, which is what the `tsconfig.library.json` this decision introduced was for.
 
 **Revisit if.** `apps/api` moves to ESM, at which point the CommonJS constraint disappears and the
 generator's `moduleFormat` should follow. Or a second consumer appears that cannot use CommonJS —
@@ -633,6 +665,114 @@ rejected.
 **Revisit if.** Case-insensitive uniqueness turns out to be what users expect, which is a product
 observation and a migration — and one that also needs a rule about which spelling survives a
 collision.
+
+---
+
+### D25 — `@devsync/shared` is a built, CommonJS package carrying Zod 4
+
+**Decision.** `@devsync/shared` compiles to `dist/` with `tsc` and its `exports` map points at
+JavaScript, not at `src/index.ts`. The output is **CommonJS**, so the package carries no
+`"type": "module"`. Zod 4 is a runtime dependency of that package and of no other: `apps/api`
+declares none, and reaches every schema through `parseContract`.
+
+**Implemented in C2**, at Zod 4.4.3, extending `@devsync/config/tsconfig.library.json` — the
+configuration [D22](#d22--devsyncdatabase-is-a-built-commonjs-package) added for `@devsync/database`.
+
+**Reason.** The same two constraints that made the data layer a built CommonJS package, arriving for
+the same consumer. It has to **build**, because it runs inside the API's production container where
+there is no compiler. It has to be **CommonJS**, because `apps/api` compiles to CommonJS and its
+ts-jest suite loads modules through a registry that cannot `require` an ES module — an ESM package
+would have failed the API's own tests before it ever reached a container. Keeping Zod inside the
+package is the separable half of the decision: two workspaces declaring their own Zod range is two
+places for a validator and a type to end up disagreeing, and a consumer that never imports Zod
+cannot import a different one.
+
+**Consequence today.** No bundler, no `tsup`, no dual package, and no runtime TypeScript loader — a
+second output format waits for a consumer that proves one necessary, and the Next.js client arriving
+in C3 is not one, because Next.js consumes CommonJS without complaint. A consumer wanting a schema
+type without importing Zod gets `ContractSchema`, `ContractValue`, and `ContractResult` from the
+package instead.
+
+The cost is a build that has to happen first, and it applies to **most** of the repository's
+commands rather than all of them:
+
+| Needs `@devsync/shared` built                                                  | Reads its source instead |
+| ------------------------------------------------------------------------------ | ------------------------ |
+| `pnpm build` — production compilation                                          | `pnpm test`              |
+| `pnpm typecheck` — the repository-wide check against `dist`                    | `pnpm test:unit`         |
+| `pnpm lint` — type-aware rules read the compiled declarations                  | `pnpm test:coverage`     |
+| `pnpm test:db` — the API's PostgreSQL-backed suite loads the compiled packages |                          |
+| `node apps/api/dist/main.js` and both container images                         |                          |
+
+Those three fast commands declare **no** `dependsOn` in `turbo.json`, deliberately: `apps/api`'s
+fast Jest configuration maps `@devsync/shared` to its real `src/index.ts` and `@devsync/database` to
+its ORM-independent `src/contracts.ts`, so `pnpm test` runs with nothing built and no Prisma Client
+generated. Those are the real modules, not copies. `pnpm test:db` carries no such mapping, because
+proving the compiled packages work is the only thing it is for, and production resolves both
+packages through their `exports` maps to `dist/index.js` exactly as this decision intends.
+[`testing.md`](testing.md#how-the-fast-api-suite-runs-with-nothing-built) has the mechanism.
+
+**Revisit if.** `apps/api` moves to ESM, at which point the CommonJS constraint disappears for both
+packages at once. Or the browser bundle turns out to pay a real cost for CommonJS interop in C3 —
+the recorded first move is dual output from the same source, not moving the schemas.
+
+---
+
+### D26 — The JSON body limit is 1 MiB, and an oversized body is a `400`
+
+**Decision.** `apps/api` accepts up to **1,048,576 bytes** of JSON, set once at bootstrap in
+`configureHttpApplication`. A body over that limit answers `400 VALIDATION_FAILED` in the shared
+error shape — **not** the `413` and the HTML-ish body Express produces on its own. A body that is not
+valid JSON answers the same way.
+
+**Implemented in C2.** C0 deliberately left the number to the milestone that could test it.
+
+**Reason.** Express defaults to 100 kB, which is small for a source file and would reject
+legitimate work. A mebibyte is comfortably larger than any plausible file while still being a clear
+boundary against accidental or malformed input; it is **not** a quota, and no per-project size,
+file-count, or rate limit exists. The status is a `400` because a client that sent something the
+server could not read has made a request error, and because a route answering with one shape and the
+body parser answering with another gives a client two error formats to handle for the same class of
+mistake. Doing that uniformly needs a translation **in front of the router**, because Nest rewrites a
+parser's `SyntaxError` into its own `BadRequestException`, message and all, before any exception
+filter is consulted.
+
+**Consequence today.** One `ErrorRequestHandler` registered immediately after the JSON parser, and
+one number that `main.ts` and the integration tests share, so the limit under test is the limit that
+runs. A file of a million characters is accepted and one over the limit is refused, both asserted
+against the real application.
+
+**Revisit if.** A real file is rejected — the number is a ceiling chosen against what source files
+weigh, not a measured constant, and moving it is a one-line change. A genuine quota system, if one is
+ever wanted, is a different feature and belongs to the phase that owns resource limits.
+
+---
+
+### D27 — The API's database suite runs Jest with `--experimental-vm-modules`
+
+**Decision.** `apps/api`'s `test:db` script invokes Jest through
+`node --experimental-vm-modules node_modules/jest/bin/jest.js` rather than through the `jest` shim.
+The fast suite does not.
+
+**Reason.** Prisma 7 loads its WebAssembly query compiler with a dynamic `import()`, and Jest's
+sandbox refuses one without that flag. Without it the real client cannot open a connection from
+inside a test at all: every test fails at `app.init()` with `A dynamic import callback was invoked
+without --experimental-vm-modules`. This is a Jest constraint rather than a Prisma defect —
+`packages/database`'s Vitest suite needs nothing, because Vite's runtime supports dynamic import
+natively.
+
+Invoking Jest's entry point through `node` is what makes the flag work everywhere. The
+`NODE_OPTIONS=… command` form is POSIX shell syntax and fails on Windows, where pnpm runs scripts
+through `cmd.exe`, and this repository is developed on Windows.
+
+**Consequence today.** One experimental-feature warning per run of `pnpm test:db`. The tests
+themselves are unaffected and stay CommonJS. The flag is deliberately **not** on the fast suite:
+nothing there opens a connection, and a flag carried where it is not needed is a flag nobody
+remembers the reason for.
+
+**Revisit if.** Jest enables VM modules by default, or Prisma ships a query compiler that does not
+need a dynamic import. Moving `apps/api` to Vitest to avoid the flag is not the answer —
+[D7](#d7--jest-retained-for-the-nestjs-api) needs a stronger reason than one command-line argument.
 
 ---
 

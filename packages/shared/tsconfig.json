@@ -1,4 +1,7 @@
 {
-  "extends": "@devsync/config/tsconfig.package.json",
-  "include": ["src"]
+  "extends": "@devsync/config/tsconfig.library.json",
+  "compilerOptions": {
+    "outDir": "./dist"
+  },
+  "include": ["src", "tests", "vitest.config.mts"]
 }

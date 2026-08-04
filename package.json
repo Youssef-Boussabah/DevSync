@@ -16,7 +16,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:unit": "turbo run test:unit",
-    "test:db": "turbo run test:db",
+    "test:db": "turbo run test:db --filter=@devsync/database && turbo run test:db --filter=@devsync/api",
     "test:e2e": "turbo run test:e2e",
     "test:e2e:install": "pnpm --filter @devsync/e2e run test:e2e:install",
     "test:all": "pnpm test && pnpm test:db && pnpm test:e2e",

@@ -239,6 +239,17 @@ jobs:
           echo "$body"
           [ "$body" = '{"status":"ok","service":"devsync-api"}' ]
 
+      # A read-only reach through the whole stack: the route exists, the API is
+      # talking to PostgreSQL, and the migration created a table it can list. It
+      # writes nothing, so the job leaves no data behind to clean up.
+      - name: Verify the project route reaches the database
+        run: |
+          status="$(curl --silent --show-error --max-time 10 --output /tmp/projects.json --write-out '%{http_code}' http://127.0.0.1:3001/projects)"
+          echo "HTTP $status"
+          cat /tmp/projects.json
+          [ "$status" = "200" ]
+          grep -q '^\[' /tmp/projects.json
+
       # Before the cleanup step below, so the containers still exist to be read from.
       - name: Show container status and logs
         if: failure()
