@@ -1,26 +1,107 @@
-# Docker Compose for the DevSync applications.
+# Docker Compose for DevSync.
 #
 #   docker compose up -d --build
 #
-# Two services, both built from the repository root because this is a pnpm
-# workspace. There is no `version:` key: it has been obsolete since the Compose
-# Specification, and Compose warns about it.
+# Four services, three of them built from the repository root because this is a
+# pnpm workspace. There is no `version:` key: it has been obsolete since the
+# Compose Specification, and Compose warns about it.
 #
-# There is no database, cache, queue, message broker, or named volume here,
-# because DevSync currently has none. Neither application stores anything, so an
-# empty PostgreSQL container would be scaffolding pretending to be architecture.
+# `docker compose down` keeps your projects. Only `down --volumes` deletes the
+# `postgres_data` volume, and with it every project and file in it.
 
 name: devsync
 
 services:
-  web:
+  database:
+    # Pinned to a patch release, the way the Node base image is. PostgreSQL 18
+    # moved the data directory: the volume below mounts `/var/lib/postgresql`,
+    # not the `/var/lib/postgresql/data` path that was correct up to 17.
+    image: postgres:18.3-alpine3.23
+    init: true
+    ports:
+      # Published so host-run development and `pnpm test:db` can reach the same
+      # server Compose runs.
+      #
+      # 5433 on the host, not 5432. A developer with PostgreSQL already installed
+      # is listening on 5432, and the collision is silent in the worst way: the
+      # connection succeeds against the wrong server and then fails to
+      # authenticate, or worse, does not. Inside the Compose network the port is
+      # the ordinary 5432, so only host-side URLs carry the offset.
+      - '5433:5432'
+    environment:
+      # Development credentials, stated explicitly. They are not secrets, and
+      # nothing outside a developer's machine ever authenticates with them.
+      POSTGRES_USER: devsync
+      POSTGRES_PASSWORD: devsync
+      POSTGRES_DB: devsync
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      # Runs once, when the volume is empty, to add the disposable test database.
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Proves the server accepts connections for the database the API will use,
+      # which is what the migration step and the API then wait on.
+      test: ['CMD-SHELL', 'pg_isready --username=devsync --dbname=devsync --quiet']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  migrate:
+    # One-shot. It applies the committed migrations and exits; the API waits for
+    # that exit rather than migrating itself, so two API instances starting at
+    # once cannot race each other through the schema.
     build:
       context: .
-      dockerfile: apps/web/Dockerfile
+      dockerfile: apps/api/Dockerfile
+      target: migrate
+    init: true
+    environment:
+      DATABASE_URL: postgresql://devsync:devsync@database:5432/devsync
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     # Runs the container's process under an init that forwards SIGTERM and reaps
     # children. Without it the server is PID 1, where the kernel drops signals
     # that have no explicit handler, and `docker compose down` waits the full
     # grace period before killing it.
+    init: true
+    ports:
+      - '3001:3001'
+    environment:
+      NODE_ENV: production
+      # Passed explicitly. DevSync loads `.env` only outside containers, so a
+      # value that is not stated here is not configured at all.
+      API_PORT: '3001'
+      DATABASE_URL: postgresql://devsync:devsync@database:5432/devsync
+    depends_on:
+      database:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Proves the HTTP application actually answers, not merely that a process
+      # is alive. Uses Node's built-in fetch, so the image needs no curl or wget.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
     init: true
     ports:
       - '3000:3000'
@@ -31,8 +112,6 @@ services:
       PORT: '3000'
       HOSTNAME: 0.0.0.0
     healthcheck:
-      # Proves the HTTP application actually answers, not merely that a process is
-      # alive. Uses Node's built-in fetch, so the image needs no curl or wget.
       test:
         - CMD
         - node
@@ -42,30 +121,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+# No `depends_on` from `web` to `api`, deliberately. `apps/web` still makes no
+# request to `apps/api`, so declaring one would describe a dependency that does
+# not exist. That edge arrives in C3, with the first call.
 
-  api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    init: true
-    ports:
-      - '3001:3001'
-    environment:
-      NODE_ENV: production
-      # Passed explicitly. DevSync has no configuration module and loads no `.env`
-      # file, so a port that is not stated here is not configured at all.
-      API_PORT: '3001'
-    healthcheck:
-      # The endpoint under test is the health endpoint itself.
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://127.0.0.1:3001/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-# No `depends_on` between the two services, deliberately. `apps/web` does not call
-# `apps/api` yet, so declaring an ordering would describe a dependency that does
-# not exist and would silently become wrong once a real one appears.
+volumes:
+  # Named, so `docker compose down` leaves the data behind and only
+  # `down --volumes` destroys it.
+  postgres_data:

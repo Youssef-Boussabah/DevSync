@@ -22,44 +22,53 @@ labelled selector beside the file name, with the content passed through untouche
 changes. B3 added the browser test that types into the real editor, and B4 reconciled the
 documentation and closed the phase. That is the only product functionality in the repository.
 
-**Phase C — database-backed projects: C0 is complete, and C1 is next.** C0 was a
-documentation milestone: it settled the project and file data model, the HTTP resources and the
-error boundary they answer with, which package owns Prisma and which owns the contracts shared with
-the browser, the migration and configuration policy, and the plans for PostgreSQL in Compose and
-for testing against a real database. **It added no runtime persistence** — no PostgreSQL, no
-Prisma, no schema, no migration, no endpoint, and still no call from `apps/web` to `apps/api`. C1
-is next, and it is the first milestone that builds any of it. The ladder is in
+**Phase C — database-backed projects: C0 and C1 are complete, and C2 is next.** C0 settled the data
+model, the HTTP resources, the error boundary, and the package ownership. **C1 built the storage
+half of it**: PostgreSQL 18 in Compose with a named volume and a one-shot migration service, Prisma
+7 and the schema in `@devsync/database`, one committed migration, a data layer with 57 tests — 39
+of them against a real database — and an API that loads its configuration and opens a connection
+during startup.
+
+**Nothing a user can reach touches any of it.** There is no project or file endpoint, `apps/web`
+still makes no request to `apps/api`, and the editor is still one in-memory buffer that a refresh
+discards. C2 adds the routes; C3 connects the browser. The ladder is in
 [`docs/roadmap.md`](docs/roadmap.md); the design is in
 [`docs/architecture.md`](docs/architecture.md).
 
 What exists today:
 
 - A pnpm + Turborepo workspace with root-level `dev`, `build`, `lint`, `lint:fix`, `typecheck`,
-  `test`, `test:unit`, `test:e2e`, `test:all`, `test:coverage`, `format`, `format:check`, and
-  `clean` commands.
+  `test`, `test:unit`, `test:db`, `test:e2e`, `test:all`, `test:coverage`, `format`,
+  `format:check`, and `clean` commands.
 - `apps/web` — a Next.js application whose home page identifies the project and hosts one Monaco
   editor over a single in-memory file, read as one of five selectable languages.
-- `apps/api` — a minimal NestJS service exposing a single `GET /health` endpoint.
-- Six package boundaries under `packages/`: five deliberately empty, plus `@devsync/config`,
-  which owns the shared TypeScript and ESLint configuration.
+- `apps/api` — a NestJS service exposing a single `GET /health` endpoint, which validates its
+  configuration and opens a PostgreSQL connection while it starts.
+- `packages/database` — the schema, one committed migration, and every query, behind Prisma 7 and
+  a small surface of named operations over projects and files.
+- Six package boundaries under `packages/`: four deliberately empty, plus `@devsync/config` and
+  `@devsync/database`.
 - `tests/e2e` — a Playwright workspace that builds both applications, starts them on dedicated
   ports, and checks that each answers.
-- Forty-five real tests across three layers. See [`docs/testing.md`](docs/testing.md).
-- A production Docker image for each application and a root `compose.yaml` that builds and runs
-  both. See [`docs/docker.md`](docs/docker.md).
-- A GitHub Actions pipeline with three jobs — quality, end-to-end, and Docker. See
+- One hundred and eighteen real tests across four layers. See [`docs/testing.md`](docs/testing.md).
+- A production Docker image for each application, a migration image, and a root `compose.yaml`
+  running those alongside PostgreSQL. See [`docs/docker.md`](docs/docker.md).
+- A GitHub Actions pipeline with four jobs — quality, database, end-to-end, and Docker. See
   [`docs/ci.md`](docs/ci.md).
 - Documentation covering the architecture, the milestone roadmap, the development workflow, and
   the decisions behind them. See [`docs/`](docs/README.md).
 
 **Real-time collaboration has not been implemented.** Neither has multi-file project editing, a
-file tree, editor tabs, remote cursors, project persistence, authentication, version history, or
-code execution. There is no save action and no saved-or-unsaved state, because there is nowhere to
-save to. The five languages are five readings of one file, not five files: nothing is detected from
-a name, and no content is generated or translated when the language changes. The editor talks to
-nothing: `apps/web` still makes no call to `apps/api`, and refreshing the page discards whatever was
-typed and returns the file to TypeScript. No database or message broker exists in this repository
-yet — the Compose file contains the two applications and nothing else.
+file tree, editor tabs, remote cursors, authentication, version history, or code execution. There
+is still no save action and no saved-or-unsaved state in the editor, because nothing in the
+interface can reach the database: `apps/web` makes no call to `apps/api`, and refreshing the page
+discards whatever was typed and returns the file to TypeScript. The five languages are five
+readings of one file, not five files: nothing is detected from a name, and no content is generated
+or translated when the language changes.
+
+**Persistence exists one layer down.** PostgreSQL stores projects and files, and `@devsync/database`
+can create, read, change, and delete them — but no HTTP route does, so no user can. There is still
+no cache, queue, or message broker.
 
 ## Documentation
 
@@ -69,18 +78,22 @@ yet — the Compose file contains the two applications and nothing else.
 | [Development](docs/development.md)   | Prerequisites, commands, ports, and daily workflow      |
 | [Roadmap](docs/roadmap.md)           | The milestone sequence, Phase A through Phase N         |
 | [Decisions](docs/decisions.md)       | Choices already made, and what would justify revisiting |
-| [Testing](docs/testing.md)           | The three testing layers and what each proves           |
+| [Testing](docs/testing.md)           | The four testing layers and what each proves            |
 | [Docker](docs/docker.md)             | Images, Compose, and container limitations              |
 | [Continuous integration](docs/ci.md) | The GitHub Actions workflow and its jobs                |
 
 ## Planned architecture
 
-The intended shape of the system. The editor is now real; **nothing else below is built yet**:
+The intended shape of the system. The editor and the data layer are real; **nothing else below is
+built yet**:
 
 - A Next.js client hosting a code editor, driven by a CRDT-backed shared document. The editor
   exists; the shared document does not.
-- A NestJS service owning project data, access control, and the collaboration transport.
-- A relational database reached through a single data-access package.
+- A NestJS service owning project data, access control, and the collaboration transport. It owns
+  the connection to the data; the routes, the access control, and the transport are all still
+  ahead.
+- **A relational database reached through a single data-access package.** Built: PostgreSQL behind
+  `@devsync/database`, which is the only thing in this list that is finished.
 - A separate, sandboxed runner service for executing user code, isolated from the API.
 - Shared contracts — types, schemas, and the collaboration protocol — published from
   `packages/shared` so client and server cannot drift apart.
@@ -94,21 +107,23 @@ reserved boundaries and the planned design; [`docs/roadmap.md`](docs/roadmap.md)
 ```text
 devsync/
 ├── .github/
-│   └── workflows/ci.yml      GitHub Actions: quality, end-to-end, and Docker jobs
+│   └── workflows/ci.yml      GitHub Actions: quality, database, end-to-end, Docker
 ├── apps/
 │   ├── web/                  Next.js client
 │   └── api/                  NestJS service
 ├── packages/
+│   ├── database/             PostgreSQL schema, migrations, and data access
+│   ├── config/               Shared development configuration
 │   ├── collaboration/        Future: reusable real-time collaboration logic
-│   ├── database/             Future: schema and data access
 │   ├── shared/               Future: shared types, schemas, and protocol
 │   ├── ui/                   Future: reusable interface components
-│   ├── config/               Shared development configuration
 │   └── test-utils/           Future: reusable test helpers
+├── docker/
+│   └── postgres/initdb/      Creates the disposable test database, once
 ├── tests/
 │   └── e2e/                  Playwright browser and full-stack smoke tests
 ├── docs/                     Project documentation
-├── compose.yaml              Docker Compose: the web and API services
+├── compose.yaml              Docker Compose: web, api, PostgreSQL, migrations
 ├── turbo.json                Turborepo task graph
 ├── pnpm-workspace.yaml       Workspace definition
 ├── prettier.config.mjs       Formatting, for the whole repository
@@ -120,9 +135,12 @@ Each application carries its own `Dockerfile` (`apps/web/Dockerfile`, `apps/api/
 both built from the repository root because a pnpm workspace cannot do a frozen install without
 the root lockfile and every workspace manifest.
 
-The six `packages/*` workspaces exist to fix the module boundaries early. Apart from
-`@devsync/config`, which owns the shared TypeScript and ESLint configuration, they export
-nothing — placeholder implementations would be worse than an honest empty module.
+The six `packages/*` workspaces exist to fix the module boundaries early. Two are filled —
+`@devsync/config`, which owns the shared TypeScript, ESLint, and Vitest configuration, and
+`@devsync/database`, which C1 filled with the schema and the data layer. The other four export
+nothing: placeholder implementations would be worse than an honest empty module, and having the
+boundary already there is what made filling `@devsync/database` a matter of writing code rather
+than agreeing where it should live.
 
 ## Prerequisites
 
@@ -157,22 +175,23 @@ pnpm install
 
 Run these from the repository root; Turborepo fans each one out across the workspaces.
 
-| Command                 | What it does                                              |
-| ----------------------- | --------------------------------------------------------- |
-| `pnpm dev`              | Starts the web and API development servers                |
-| `pnpm build`            | Builds every workspace that has a build step              |
-| `pnpm lint`             | Lints all nine workspaces; never writes                   |
-| `pnpm lint:fix`         | The same rules, applying every auto-fixable one           |
-| `pnpm typecheck`        | Type-checks all nine workspaces                           |
-| `pnpm test`             | Every in-process suite — Vitest and Jest, no browsers     |
-| `pnpm test:unit`        | The Vitest layer only                                     |
-| `pnpm test:e2e`         | Playwright, against freshly built applications            |
-| `pnpm test:all`         | `test` and `test:e2e` together                            |
-| `pnpm test:coverage`    | Coverage for the two workspaces that have code to measure |
-| `pnpm test:e2e:install` | Downloads Chromium for Playwright; run once per machine   |
-| `pnpm format`           | Formats the repository with Prettier                      |
-| `pnpm format:check`     | Verifies formatting without writing                       |
-| `pnpm clean`            | Removes build outputs and Turborepo caches                |
+| Command                 | What it does                                                 |
+| ----------------------- | ------------------------------------------------------------ |
+| `pnpm dev`              | Starts the web and API development servers                   |
+| `pnpm build`            | Builds every workspace that has a build step                 |
+| `pnpm lint`             | Lints all nine workspaces; never writes                      |
+| `pnpm lint:fix`         | The same rules, applying every auto-fixable one              |
+| `pnpm typecheck`        | Type-checks all nine workspaces                              |
+| `pnpm test`             | Every in-process suite — Vitest and Jest. **No database**    |
+| `pnpm test:unit`        | The Vitest layer only                                        |
+| `pnpm test:db`          | Database integration tests. Needs disposable PostgreSQL      |
+| `pnpm test:e2e`         | Playwright, against freshly built applications. Needs it too |
+| `pnpm test:all`         | All three groups, in sequence. Needs PostgreSQL              |
+| `pnpm test:coverage`    | Coverage for `apps/web` and `apps/api`                       |
+| `pnpm test:e2e:install` | Downloads Chromium for Playwright; run once per machine      |
+| `pnpm format`           | Formats the repository with Prettier                         |
+| `pnpm format:check`     | Verifies formatting without writing                          |
+| `pnpm clean`            | Removes build outputs and Turborepo caches                   |
 
 `pnpm lint` and `pnpm format:check` are read-only. `pnpm lint:fix` and `pnpm format` are the
 two commands that modify files.
@@ -196,12 +215,16 @@ curl http://localhost:3001/health
 
 ## Testing
 
-Three layers, three runners, forty-five real tests:
+Four layers, three runners, one hundred and eighteen real tests:
 
 - **Vitest** covers `apps/web` — thirty-six component tests that render the real home page, the
   workspace, and the editor wrapper in jsdom, with Monaco itself mocked at its narrowest boundary.
-- **Jest** covers `apps/api` — one HTTP-level test that boots a Nest application and checks
-  `GET /health` returns the exact expected payload.
+- **Jest** covers `apps/api` — seventeen tests over the configuration validator, the database
+  lifecycle, and `GET /health` returning the exact expected payload.
+- **Vitest** covers `packages/database` — fifty-seven tests. Thirty-nine run against a **real
+  PostgreSQL** with the committed migration applied first, because cascades, unique constraints,
+  and transaction rollback are exactly what SQLite or a mocked client does not have. The other
+  eighteen cover the safety gate that decides whether the suite may touch a database at all.
 - **Playwright** covers both applications end to end — eight tests that build the applications,
   start them on ports `4310` and `4311`, and check that the page, the editor region, the language
   selector, and the endpoint answer. One of them types into the real Monaco editor in Chromium.
@@ -210,10 +233,15 @@ Workspaces with no implementation print that they have no tests and exit success
 than pretending to run a suite.
 
 ```bash
-pnpm test               # fast: Vitest and Jest, no browsers
+pnpm test               # fast: Vitest and Jest, no browsers, no database
+docker compose up -d database
+pnpm test:db            # the data layer, against real PostgreSQL
 pnpm test:e2e:install   # once per machine — downloads Chromium
 pnpm test:e2e           # builds both applications, then drives them in a browser
 ```
+
+`pnpm test:db` drops the test schema before it runs, so it refuses to start against any database
+it cannot prove is disposable.
 
 [`docs/testing.md`](docs/testing.md) explains what each layer proves, why the API stays on Jest,
 where test artifacts go, and what is deliberately not tested yet.
@@ -228,21 +256,28 @@ above still works unchanged.
 docker compose up -d --build   # build both images and start them
 docker compose ps              # state and health of each service
 docker compose logs -f api     # follow one service's output
-docker compose down            # stop and remove both
+docker compose down            # stop and remove the services; keeps the database volume
 ```
 
-| Service | URL                          | What it serves                            |
-| ------- | ---------------------------- | ----------------------------------------- |
-| `web`   | http://127.0.0.1:3000/       | The Next.js production build              |
-| `api`   | http://127.0.0.1:3001/health | `{"status":"ok","service":"devsync-api"}` |
+| Service    | URL                             | What it serves                            |
+| ---------- | ------------------------------- | ----------------------------------------- |
+| `web`      | http://127.0.0.1:3000/          | The Next.js production build              |
+| `api`      | http://127.0.0.1:3001/health    | `{"status":"ok","service":"devsync-api"}` |
+| `database` | `postgresql://…@127.0.0.1:5433` | PostgreSQL 18, on a named volume          |
+| `migrate`  | —                               | Applies the migrations once, then exits   |
 
-Both images are multi-stage, install from the committed lockfile with `--frozen-lockfile`, run
-the compiled output rather than a dev server, and run as the image's non-root `node` user. Each
-service declares a health check that proves the HTTP application answers.
+Both application images are multi-stage, install from the committed lockfile with
+`--frozen-lockfile`, run the compiled output rather than a dev server, and run as the image's
+non-root `node` user. The API waits for PostgreSQL to be healthy **and** for the migration to have
+exited successfully, so no instance ever serves against a schema that is not there.
 
-The containers use the same ports as local development, so `docker compose up` and `pnpm dev`
-cannot run at the same time. **The Compose file contains the two applications and nothing
-else** — no database, cache, queue, or volume, because DevSync uses none of them yet.
+The application containers use the same ports as local development, so `docker compose up` and
+`pnpm dev` cannot run at the same time. **PostgreSQL is published on 5433**, not 5432, so it does
+not collide with a PostgreSQL you may already have installed — which also means
+`docker compose up -d database` and `pnpm dev` work together, the ordinary arrangement for
+development.
+
+`docker compose down` keeps your projects; **`docker compose down --volumes` deletes them.**
 
 [`docs/docker.md`](docs/docker.md) covers the image structure, environment variables, clean
 rebuilds, and the current limitations.
@@ -250,13 +285,14 @@ rebuilds, and the current limitations.
 ## Continuous integration
 
 One GitHub Actions workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on
-every pull request, on pushes to `main`, and on demand. Three independent jobs:
+every pull request, on pushes to `main`, and on demand. Four independent jobs:
 
-| Job       | What it proves                                                             |
-| --------- | -------------------------------------------------------------------------- |
-| `quality` | Formatting, lint, types, in-process tests, and both builds                 |
-| `e2e`     | Both applications start from a real build and answer in Chromium           |
-| `docker`  | Both images build, start, become healthy, and serve the expected responses |
+| Job        | What it proves                                                              |
+| ---------- | --------------------------------------------------------------------------- |
+| `quality`  | Formatting, lint, types, in-process tests, and every build                  |
+| `database` | The data layer against a real PostgreSQL, with the committed migration      |
+| `e2e`      | Both applications start from a real build and answer in Chromium            |
+| `docker`   | Every image builds, the migration exits 0, and each service becomes healthy |
 
 CI runs the same commands you run locally — there is no CI-only script — and it only ever
 reports: `format:check` and `lint`, never `format` or `lint:fix`. The workflow holds
@@ -279,18 +315,20 @@ and no generated output is linted.
 | Workspace                | lint | typecheck | test                   | build    |
 | ------------------------ | ---- | --------- | ---------------------- | -------- |
 | `@devsync/web`           | yes  | yes       | 36 Vitest tests        | `next`   |
-| `@devsync/api`           | yes  | yes       | 1 Jest test            | `nest`   |
+| `@devsync/api`           | yes  | yes       | 17 Jest tests          | `nest`   |
+| `@devsync/database`      | yes  | yes       | 57, via `pnpm test:db` | `tsc`    |
 | `@devsync/e2e`           | yes  | yes       | 8, via `pnpm test:e2e` | no build |
 | `@devsync/collaboration` | yes  | yes       | none yet               | no build |
-| `@devsync/database`      | yes  | yes       | none yet               | no build |
 | `@devsync/shared`        | yes  | yes       | none yet               | no build |
 | `@devsync/ui`            | yes  | yes       | none yet               | no build |
 | `@devsync/test-utils`    | yes  | yes       | none yet               | no build |
 | `@devsync/config`        | yes  | yes       | nothing to test        | no build |
 
-The `packages/*` libraries are consumed as TypeScript source through their `exports` map, so
-they are type-checked in place and never emit — the application that imports them compiles
-them. `@devsync/config` ships `.mjs`, which is why its type-check runs with `checkJs`.
+The reserved `packages/*` libraries are consumed as TypeScript source through their `exports` map,
+so they are type-checked in place and never emit — the application that imports them compiles them.
+**`@devsync/database` is the exception**: it holds generated Prisma Client code and runs inside the
+API's container, where there is no compiler, so it builds to `dist/` and `apps/api` depends on that
+build. `@devsync/config` ships `.mjs`, which is why its type-check runs with `checkJs`.
 
 **TypeScript.** `@devsync/config` owns a strict base and three configurations layered on top
 of it, one per kind of workspace. See
@@ -322,19 +360,24 @@ exactly one tool reformats code.
 
 ## Configuration
 
-`.env.example` is the documented inventory of the environment variables DevSync understands.
-That is currently exactly one: `API_PORT`, which the NestJS service reads on startup and
-which defaults to `3001`.
-
-There is no configuration module yet, so **`.env` files are not loaded automatically**. Set
-the variable in your shell instead:
+`.env.example` is the documented inventory of the environment variables DevSync understands. Copy
+it to `.env` at the repository root and it works with the Compose database as it stands:
 
 ```bash
-API_PORT=4000 pnpm --filter @devsync/api dev
+cp .env.example .env
 ```
 
-The Playwright suite follows the same rule: it sets `API_PORT` through its `webServer`
-configuration rather than expecting a file on disk to be read.
+| Variable            | Required | Read by                                   |
+| ------------------- | -------- | ----------------------------------------- |
+| `API_PORT`          | no       | `apps/api` — defaults to 3001             |
+| `DATABASE_URL`      | **yes**  | `apps/api`, passed to `@devsync/database` |
+| `TEST_DATABASE_URL` | no       | `pnpm test:db` and `pnpm test:e2e` only   |
 
-`.env` is git-ignored and reserved for the milestone that introduces configuration loading.
-This repository contains no secrets, credentials, or external service configuration.
+**`DATABASE_URL` has no default and never gets one.** A missing or malformed value fails startup
+with a message naming the variable, because a service quietly writing to the wrong database is
+worse than one that does not start. A value set in your shell always wins over the file, which is
+how Compose and CI keep control of their own configuration.
+
+`.env` is git-ignored, and `.dockerignore` keeps every `.env*` file out of both build contexts.
+**This repository contains no secrets**: the PostgreSQL credentials in `.env.example` and
+`compose.yaml` are development values for a database that runs on your own machine.

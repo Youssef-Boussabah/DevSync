@@ -3,27 +3,29 @@
 How DevSync is tested, what each layer is responsible for proving, and — just as
 importantly — what is not tested yet.
 
-The testing architecture was introduced in **Phase A2 — testing foundation** and its shape is
-unchanged at **Phase B complete**: the phase added tests to it rather than layers. Phase C0 added
-neither — it planned the database-testing ladder below without writing a line of it. The product
-has no collaboration,
-no persistence, no accounts, and no code execution, so none of those things are tested. What
-exists is the architecture that will hold those tests when they are written, plus real coverage of
-everything the two applications currently do.
+The testing architecture was introduced in **Phase A2 — testing foundation**, and C1 added the
+first new layer since: database integration tests, in `packages/database`, against a real
+PostgreSQL. C0 planned that layer without writing a line of it; C1 wrote it. The product still has
+no collaboration, no accounts, and no code execution, so none of those things are tested — and
+persistence is now tested at the data layer but not through any route, because no route reaches
+it.
 
 ## Layers
 
-| Layer                  | Runner         | Lives in                     | Runs against                              |
-| ---------------------- | -------------- | ---------------------------- | ----------------------------------------- |
-| Unit / component       | **Vitest**     | `apps/web`                   | React components, in jsdom, in-process    |
-| HTTP-level application | **Jest**       | `apps/api`                   | A Nest application on an ephemeral socket |
-| Browser / full-stack   | **Playwright** | `tests/e2e` (`@devsync/e2e`) | The built applications, on real ports     |
+| Layer                  | Runner         | Lives in                     | Runs against                               |
+| ---------------------- | -------------- | ---------------------------- | ------------------------------------------ |
+| Unit / component       | **Vitest**     | `apps/web`                   | React components, in jsdom, in-process     |
+| HTTP-level application | **Jest**       | `apps/api`                   | A Nest application on an ephemeral socket  |
+| Database integration   | **Vitest**     | `packages/database`          | A real PostgreSQL, with migrations applied |
+| Browser / full-stack   | **Playwright** | `tests/e2e` (`@devsync/e2e`) | The built applications, on real ports      |
 
-Three runners is a deliberate choice rather than an accident of history.
+Four layers, three runners — the database layer joined the runner `apps/web` already used rather
+than introducing a fourth.
 
-**Vitest owns the frontend and, in future, the pure TypeScript packages.** It shares Vite's
-transform pipeline with the tooling `apps/web` already uses, starts fast enough to run on every
-save, and handles TSX without extra configuration.
+**Vitest owns the frontend and the pure TypeScript packages.** It shares Vite's transform pipeline
+with the tooling `apps/web` already uses, starts fast enough to run on every save, and handles TSX
+without extra configuration. C1 made `packages/database` its second workspace, which is what moved
+the runner-agnostic parts of the configuration into `@devsync/config`.
 
 **Jest stays in `apps/api`.** `@nestjs/testing` is written against Jest's API, and `ts-jest`
 reads `apps/api/tsconfig.json` directly — including `emitDecoratorMetadata`, which NestJS's
@@ -124,6 +126,21 @@ the side of the boundary DevSync owns:
 **Nothing here proves Monaco works.** That is not what this layer is for; the Playwright suite
 covers the real editor in a real browser.
 
+### `apps/api` — configuration and lifecycle (Jest, 16 tests)
+
+`src/config/api-configuration.spec.ts` covers the validator that decides whether the API starts at
+all: the port defaults to 3001 and is rejected when it is not a TCP port, `DATABASE_URL` is
+required and rejected when it is blank, unparseable, not PostgreSQL, or names no database — and one
+test asserts that a failure message never repeats the connection string, because it carries a
+password.
+
+`src/database/database.lifecycle.spec.ts` proves the wiring, with a stand-in for the data layer
+typed as the real `Database` so it cannot drift from the interface: Nest connects during
+initialisation, disconnects during shutdown, and **a database that cannot be reached fails
+startup** rather than leaving a service that accepts requests it cannot serve. What PostgreSQL does
+is not tested here — that belongs to `pnpm test:db`, and mocking a database while claiming database
+behaviour is the thing that layer exists to avoid.
+
 ### `apps/api` — `src/health/health.http.spec.ts` (Jest, 1 test)
 
 An **HTTP-level application test**, not a unit test. It compiles the real `HealthModule`, boots
@@ -134,6 +151,10 @@ Supertest binds an ephemeral socket, so it depends on no fixed port and no runni
 It deliberately does not prove that `main.ts` bootstraps, that `AppModule` imports
 `HealthModule`, or that the compiled output in `dist` serves anything. Those are failure modes
 of the built process rather than of the health feature, and they belong to the layer below.
+
+**It boots `HealthModule` directly, so it needs no database** — which is why it stayed a
+sub-second test after C1 gave `AppModule` a connection to open. The Playwright suite is what proves
+the real `AppModule` starts, database and all.
 
 ### `tests/e2e` — Playwright, 8 tests
 
@@ -218,17 +239,37 @@ seconds, without a build or a browser. Each catches failures the other structura
 
 ### From the repository root
 
-| Command                 | What it runs                                                         |
-| ----------------------- | -------------------------------------------------------------------- |
-| `pnpm test`             | Every in-process suite: Vitest and Jest. No browsers, no builds run. |
-| `pnpm test:unit`        | The Vitest layer only — the fast inner loop.                         |
-| `pnpm test:e2e`         | Playwright. Builds both applications first, then starts them.        |
-| `pnpm test:all`         | `test` and `test:e2e` together.                                      |
-| `pnpm test:coverage`    | Coverage for the two workspaces that have code to measure.           |
-| `pnpm test:e2e:install` | Downloads the Chromium build Playwright needs. Run once per machine. |
+| Command                 | What it runs                                                                  |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| `pnpm test`             | Every in-process suite: Vitest and Jest. No browsers, no builds, no database. |
+| `pnpm test:unit`        | The Vitest layer only — the fast inner loop.                                  |
+| `pnpm test:db`          | The database integration suite, against a running PostgreSQL.                 |
+| `pnpm test:e2e`         | Playwright. Builds both applications first, then starts them.                 |
+| `pnpm test:all`         | `test`, then `test:db`, then `test:e2e`. Sequential, and needs PostgreSQL.    |
+| `pnpm test:coverage`    | Coverage for `apps/web` and `apps/api`.                                       |
+| `pnpm test:e2e:install` | Downloads the Chromium build Playwright needs. Run once per machine.          |
 
-`pnpm test` is the default because it stays fast: it neither builds anything nor launches a
-browser. End-to-end runs are separate for the same reason.
+`pnpm test` is the default because it stays fast: it neither builds anything, launches a browser,
+nor needs a database. The other two are separate for the same reason.
+
+| Command         | Needs PostgreSQL | Runs                                     |
+| --------------- | ---------------- | ---------------------------------------- |
+| `pnpm test`     | no               | Vitest in `apps/web`, Jest in `apps/api` |
+| `pnpm test:db`  | **yes**          | Vitest in `packages/database`            |
+| `pnpm test:e2e` | **yes**          | Playwright over both built applications  |
+| `pnpm test:all` | **yes**          | All three above, one after another       |
+
+```bash
+docker compose up -d database
+```
+
+The three that need it read `TEST_DATABASE_URL`; copy `.env.example` to `.env` at the repository
+root and it is set.
+
+**`pnpm test:all` is a plain shell sequence, not a Turborepo fan-out.** `test:db` drops and
+re-migrates the same disposable database that `test:e2e` migrates before starting the API, so
+running the two concurrently would have one pulling the schema out from under the other. Sequence
+is the guarantee, and `&&` is the cheapest way to state it.
 
 `pnpm test:e2e:install` is separate on purpose. It writes roughly 300 MB to a machine-level
 cache, and a command that mutates a developer's machine should be something they chose to run,
@@ -337,11 +378,20 @@ so a failing run cannot leave a stray window behind; open it deliberately with
 
 ## Coverage, and what the numbers mean
 
-Coverage is measured in the two workspaces that have code: `apps/web` through Vitest's v8
-provider, and `apps/api` through Jest. **There is no repository-wide coverage figure**, and the
-six workspaces with no implementation are not counted in either direction.
+**`pnpm test:coverage` currently measures `apps/web` and `apps/api`** — the first through Vitest's
+v8 provider, the second through Jest. **There is no repository-wide coverage figure**, and the four
+workspaces with no implementation are not counted in either direction.
 
-As of this milestone:
+`packages/database` has plenty worth measuring, and is deliberately not in that command yet. Its
+suite is the one that needs a running PostgreSQL, and folding it into the root coverage command
+would make a command that works today start failing on a machine with no database — the same
+reason it is not in `pnpm test`. It is covered by 57 tests under `pnpm test:db`; what is missing is
+a number, not the testing. Adding it means either a coverage command that requires PostgreSQL or a
+second one that does not, and that choice is worth making when there is a reason to care about the
+figure rather than now.
+
+Numbers from the last measured run of `apps/web` and `apps/api`, before C1 added the API's
+configuration and lifecycle code:
 
 ```text
 apps/web               79.54%  statements  (page.tsx, local-editor-workspace.tsx and
@@ -378,46 +428,80 @@ tests written to satisfy the number. Thresholds should be introduced with the fi
 that adds substantive application logic — a real service, a real reducer, a real protocol
 handler — and set from what that code actually achieves rather than from a round number.
 
-## How persistence will be tested — planned
+## The database layer — `packages/database` (Vitest, 57 tests)
 
-**Nothing in this section exists.** There is no database, no test database, and no such test; C0
-decided the ladder so that C1 does not have to invent it while also writing its first migration.
-The shape of the data being tested is in
-[`architecture.md`](architecture.md#phase-c--planned-persistence-architecture).
+**39 integration tests against a real PostgreSQL**, plus **18 over the safety gate** that decides
+whether they may run at all. Both are run by `pnpm test:db` and by nothing else.
 
-Two rules hold across all of it. **Database tests run against real PostgreSQL** — not SQLite, and
-not a mocked Prisma client, because the behaviour worth testing is precisely what a substitute does
-not have: cascades, unique constraints, rollback, and server-generated identifiers and timestamps.
-And **`pnpm test` keeps starting nothing.** It is the command that runs on every save; a suite that
-needs a database running belongs behind its own command, not inside the fast one.
+The 39 use a real database. Not SQLite, and not a mocked Prisma client, because the behaviour worth
+testing is precisely what a substitute does not have: cascades, unique constraints, rollback, and
+server-generated identifiers and timestamps. A mocked client would prove the code calls the library
+the way the test expects, which is a different claim.
 
-### C1 — the data layer
+**`pnpm test` still starts nothing.** It is the command that runs on every save; the suite that
+needs a database has its own command, its own non-cached Turborepo task, and no place in the fast
+one.
 
-Integration tests in `@devsync/database`, run by Vitest under the existing runner boundary, against
-a real PostgreSQL instance reached through `TEST_DATABASE_URL` with the committed migration applied
-first. They isolate deterministically: each test cleans the records it needs cleaned rather than
-depending on the order the runner happened to choose, and the destructive cleanup runs only after a
-safety check has confirmed the target is disposable — missing, unsafe, or equal to `DATABASE_URL`
-means refuse to run, not proceed carefully. They run serially until per-worker database or schema
-isolation exists, because two workers truncating one database is a flaky suite by construction.
+### Before the first test
 
-At minimum they cover project persistence, file persistence, generated UUIDs and timestamps, a
-duplicate file name within one project being rejected, the same name in two projects being
-accepted, empty content round-tripping unchanged, cascade deletion when a project is removed, the
-project-plus-first-file creation being atomic in both directions, and data still being there after
-the client disconnects and reconnects.
+`tests/global-setup.ts` drops the test schema and applies the committed migration — the same
+migration Compose and CI apply, not a schema pushed straight from `schema.prisma`. So the suite
+proves the migration produces a database the code can actually work against.
 
-Two of those deserve naming, because they are the ones an assumption could quietly get wrong:
+**It refuses to run against anything it cannot prove is disposable.** `TEST_DATABASE_URL` must be
+set, be a valid URL, be PostgreSQL, name `devsync_test`, and address a different database from
+`DATABASE_URL`. Any of those failing is a refusal with a message explaining which, and no message
+ever contains the connection string, because it carries a password. The gate lives in
+`tools/test-database.mjs` because the end-to-end suite prepares the same database and must not
+carry a second copy of the rules.
 
-- **Case-sensitive file-name uniqueness.** `README.md` and `readme.md` must both be storable in one
-  project, and a second `README.md` must be rejected. The schema and its collation are what have to
-  produce that, so the test has to exercise the real database rather than trust a default.
-- **`Project.updatedAt` moving on file changes.** Creating, renaming, retyping, editing, or deleting
-  a file must move its project's timestamp, in the same transaction — including the rollback
-  direction, where a failed file change leaves the project timestamp untouched.
+**"A different database" is decided on a canonical form, not on string equality** —
+`safety-gate.test.ts` is the 18 tests that hold it. `postgres:` and `postgresql:` are one scheme,
+an omitted port is 5432, `localhost` and `127.0.0.1` and `[::1]` are one machine, and credentials
+are excluded from a target's identity, so a development URL spelled any of those ways still stops
+the suite. A `DATABASE_URL` that is set but unparseable is also a refusal: this tooling drops a
+schema, and "I could not tell" is not the same as "they are different". There is deliberately no
+DNS lookup — a safety check that behaved differently on a train would be worse than one with a
+stated limit, and the `devsync_test` name requirement is what covers two hostnames resolving to
+one server.
 
-`TEST_DATABASE_URL` belongs to this tooling alone. The API never reads it, and leaving it unset must
-not affect anything except whether these tests can run.
+The suite runs serially — `fileParallelism: false` — because two workers truncating one database is
+a flaky suite by construction. Tables are emptied before each test rather than after, so a run that
+crashed halfway cannot leave rows that quietly change the next one.
+
+### What the 39 integration tests prove
+
+Project persistence, file persistence, UUIDs the database generated, timestamps generated on
+create, empty content round-tripping as an empty string, two projects sharing a name, the same file
+name in two projects, deterministic listing order for both resources, rename, delete, and cascade
+deletion removing a project's files and leaving another project's alone.
+
+Four groups deserve naming, because each is a claim an assumption could quietly get wrong:
+
+- **Case-sensitive file names.** `README.md` and `readme.md` coexist in one project; a second
+  `README.md` is rejected. This is what holds the `C` collation in the migration honest — the
+  property is the schema's, so only the real database can demonstrate it.
+- **The initial-file transaction, in both directions.** A project and its first file are written
+  together; a file insert that fails leaves no project behind; a project insert that fails leaves
+  no file. Both failures are forced with a value too long for its column, so the rollback is the
+  database's own rather than something the test arranged.
+- **`Project.updatedAt` following its files.** Creating, renaming, retyping, and editing a file all
+  assert that the project's timestamp **equals the file's exactly** — which is only possible if one
+  transaction wrote both. That is deliberate: "is it later than before" would pass for a write that
+  happened seconds afterwards, and would depend on two clock readings falling in different
+  milliseconds. Deletion can only support the weaker claim, since there is no surviving row to
+  compare against, and it is asserted as the weaker one. A failed change asserts the timestamp is
+  **exactly** unchanged.
+- **The connection lifecycle.** Connect, write, disconnect, reconnect through a second client, and
+  read the same data back. Repeated connects and disconnects are safe. An unreachable database —
+  a port nothing listens on, so the refusal is immediate rather than a timeout — is classified as
+  `unavailable` both at `connect()` and on a query, and the error that comes out carries no SQL, no
+  host, and no database name, with the driver's own error kept only as `cause`.
+
+`TEST_DATABASE_URL` belongs to this tooling alone. The API never reads it, and leaving it unset
+affects nothing except whether these tests can run.
+
+## Still planned
 
 ### C2 — the API
 
@@ -448,16 +532,30 @@ unavailable producing a controlled `503` instead of a stack trace.
 
 ### The task it runs under
 
-Database-backed tests get their own root script and their own `turbo.json` task, added together the
-way every other test task was — a root script calling a task Turborepo does not know about silently
-does nothing. It is `cache: false`, for the same reason `test:e2e` is: the result depends on a live
-database that is not part of the input hash.
+`pnpm test:db` is a root script with a matching `turbo.json` task, added together the way every
+other test task was — a root script calling a task Turborepo does not know about silently does
+nothing. It is `cache: false`, for the same reason `test:e2e` is: the result depends on a live
+database that is not part of the input hash. It declares `TEST_DATABASE_URL` and `DATABASE_URL` in
+its `env`, because Turborepo passes a task only the environment it names, and the safety gate needs
+both to be able to compare them.
 
-It must be explicit rather than implied by an ordinary test command, must never run against a
-developer's normal `DATABASE_URL`, must not modify a tracked file, must not wait on a fixed sleep,
-and must name what failed rather than reporting that a suite did. The local command comes first and
-CI uses that same command afterwards — CI runs what a developer runs, and this is not the place to
-start making an exception.
+It is explicit rather than implied by an ordinary test command, never runs against a developer's
+normal `DATABASE_URL`, modifies no tracked file, and waits on nothing timed. CI runs that same
+command, in a job of its own with its own PostgreSQL service — CI runs what a developer runs, and
+this is not the place to start making an exception.
+
+### How the end-to-end suite gets a database
+
+From C1 the API refuses to start without one, so `pnpm test:e2e` would otherwise fail at the
+`webServer` step. The `test:e2e` task therefore depends on `@devsync/database#migrate:test`, which
+applies the committed migrations to `devsync_test` through the same safety gate, and
+`playwright.config.ts` passes that database to the API it starts.
+
+The suite uses the disposable test database and never the development one, and it destroys nothing:
+in C1 the API it starts writes nothing at all. `reuseExistingServer` stays `false` for both
+applications. PostgreSQL is the one process the suite does not start for itself — Compose runs it,
+which is a documented prerequisite rather than a hidden one, and a suite that started its own
+database could pass while the Compose file was wrong.
 
 ## How collaboration will be tested later
 
@@ -486,6 +584,12 @@ needs the collaboration transport to exist first.
 - **No cross-application test exists**, because no such behaviour exists: `apps/web` never calls
   `apps/api` today. The end-to-end suite proves each application serves correctly; it does not
   prove they talk to each other, because they do not.
+- **No test drives persistence through HTTP**, because no route does. The data layer is covered
+  directly and the API is covered up to the point where it opens a connection; the join between
+  them is C2's to build and to test.
+- **The database suite needs a PostgreSQL somebody else started.** `docker compose up -d database`
+  is a prerequisite rather than something the suite arranges, which is a deliberate trade: a suite
+  that starts its own database could pass while the Compose file was wrong.
 - **Monaco's change callback is proved in jsdom, not in a browser.** `specs/web/local-editor.spec.ts`
   proves a real keystroke reaches Monaco and survives a workspace rerender; it cannot prove the
   Monaco → React half, for the reason set out in that test's section above. The direction is covered
@@ -523,19 +627,21 @@ needs the collaboration transport to exist first.
 
 ## Current inventory
 
-| Workspace                | Runner     | Real tests | Environment       | Coverage |
-| ------------------------ | ---------- | ---------- | ----------------- | -------- |
-| `@devsync/web`           | Vitest     | 36         | jsdom             | yes      |
-| `@devsync/api`           | Jest       | 1          | node              | yes      |
-| `@devsync/e2e`           | Playwright | 8          | Chromium and HTTP | no       |
-| `@devsync/collaboration` | none       | 0          | —                 | no       |
-| `@devsync/database`      | none       | 0          | —                 | no       |
-| `@devsync/shared`        | none       | 0          | —                 | no       |
-| `@devsync/ui`            | none       | 0          | —                 | no       |
-| `@devsync/test-utils`    | none       | 0          | —                 | no       |
-| `@devsync/config`        | none       | 0          | —                 | no       |
+| Workspace                | Runner     | Real tests | Environment           | In `pnpm test`  |
+| ------------------------ | ---------- | ---------- | --------------------- | --------------- |
+| `@devsync/web`           | Vitest     | 36         | jsdom                 | yes             |
+| `@devsync/api`           | Jest       | 17         | node                  | yes             |
+| `@devsync/database`      | Vitest     | 57         | node, real PostgreSQL | no — `test:db`  |
+| `@devsync/e2e`           | Playwright | 8          | Chromium and HTTP     | no — `test:e2e` |
+| `@devsync/collaboration` | none       | 0          | —                     | —               |
+| `@devsync/shared`        | none       | 0          | —                     | —               |
+| `@devsync/ui`            | none       | 0          | —                     | —               |
+| `@devsync/test-utils`    | none       | 0          | —                     | —               |
+| `@devsync/config`        | none       | 0          | —                     | —               |
 
-**Forty-five real tests in total.** The six workspaces without a runner print that they have no
-tests and exit successfully. That is the correct behaviour for a workspace with no implementation: a
-test runner installed into an empty package, or a test asserting that `true` is `true`, would
-make the table above look uniform while proving strictly less than the sentence it prints.
+**One hundred and eighteen real tests in total**, of which 53 run in `pnpm test`. The five workspaces without a
+runner print that they have no tests and exit successfully — as does `@devsync/database` under
+`pnpm test`, where it says its tests need PostgreSQL and names the command that runs them. That is
+the correct behaviour for a workspace with no implementation: a test runner installed into an empty
+package, or a test asserting that `true` is `true`, would make the table above look uniform while
+proving strictly less than the sentence it prints.

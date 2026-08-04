@@ -15,6 +15,11 @@ next-env.d.ts
 # NestJS / TypeScript
 *.tsbuildinfo
 
+# Prisma Client, generated into the source tree from prisma/schema.prisma.
+# Reproducible from the schema by `pnpm --filter @devsync/database generate`,
+# which the build, lint, and type-check tasks all run first.
+packages/database/src/generated/
+
 # --- Turborepo ---
 .turbo/
 

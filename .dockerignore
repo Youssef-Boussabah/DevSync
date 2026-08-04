@@ -19,6 +19,8 @@
 **/.next
 **/*.tsbuildinfo
 **/next-env.d.ts
+# Prisma Client, for the same reason: the image regenerates it from the schema.
+packages/database/src/generated
 
 # --- Turborepo ---
 **/.turbo

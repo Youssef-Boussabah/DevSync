@@ -2,21 +2,44 @@
   "name": "@devsync/database",
   "version": "0.0.0",
   "private": true,
-  "description": "Database schema and data-access layer for DevSync.",
-  "type": "module",
+  "description": "PostgreSQL schema and data-access layer for DevSync.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
+  "files": [
+    "dist",
+    "prisma"
+  ],
   "scripts": {
+    "generate": "prisma generate",
+    "build": "tsc --project tsconfig.build.json",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:test": "node tools/test-database.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
-    "test": "node -e \"console.log('@devsync/database: no tests yet.')\"",
-    "clean": "node -e \"['.turbo','tsconfig.tsbuildinfo'].forEach((p) => require('fs').rmSync(p, { recursive: true, force: true }))\""
+    "test": "node -e \"console.log('@devsync/database: its tests need PostgreSQL; run pnpm test:db.')\"",
+    "test:db": "vitest run",
+    "clean": "node -e \"['dist','src/generated','coverage','.turbo','tsconfig.tsbuildinfo','tsconfig.build.tsbuildinfo'].forEach((p) => require('fs').rmSync(p, { recursive: true, force: true }))\""
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@devsync/config": "workspace:*",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.20.3",
+    "dotenv": "^17.4.2",
     "eslint": "^9.39.5",
-    "typescript": "^5.7.3"
+    "prisma": "^7.9.1",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
   }
 }

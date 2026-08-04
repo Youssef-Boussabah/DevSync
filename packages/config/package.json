@@ -6,16 +6,23 @@
   "exports": {
     "./tsconfig.base.json": "./tsconfig.base.json",
     "./tsconfig.package.json": "./tsconfig.package.json",
+    "./tsconfig.library.json": "./tsconfig.library.json",
     "./tsconfig.nest.json": "./tsconfig.nest.json",
     "./tsconfig.next.json": "./tsconfig.next.json",
     "./tsconfig.playwright.json": "./tsconfig.playwright.json",
     "./eslint/base": "./eslint/base.mjs",
-    "./eslint/nest": "./eslint/nest.mjs"
+    "./eslint/nest": "./eslint/nest.mjs",
+    "./vitest/base": {
+      "types": "./vitest/base.d.mts",
+      "default": "./vitest/base.mjs"
+    }
   },
   "files": [
     "eslint",
+    "vitest",
     "tsconfig.base.json",
     "tsconfig.package.json",
+    "tsconfig.library.json",
     "tsconfig.nest.json",
     "tsconfig.next.json",
     "tsconfig.playwright.json"

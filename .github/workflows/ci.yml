@@ -1,8 +1,9 @@
 # Continuous integration for DevSync.
 #
-# Three independent jobs, each proving a different thing and each running the same
-# commands a developer runs locally. Nothing here is CI-only: if a job fails, the
-# way to reproduce it is to run the step's command on your own machine.
+# Four independent jobs — quality, database, e2e, docker — each proving a different
+# thing and each running the same commands a developer runs locally. Nothing here
+# is CI-only: if a job fails, the way to reproduce it is to run the step's command
+# on your own machine.
 #
 # The jobs deliberately do not depend on one another. Sharing a build between them
 # would make the end-to-end and Docker jobs prove less than they appear to — each
@@ -34,6 +35,16 @@ env:
   NODE_VERSION: '24'
   # Corepack otherwise asks for confirmation before downloading the pinned pnpm.
   COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+  # Published on 5433 to match `compose.yaml`, so this URL is character-for-
+  # character the one in `.env.example` and nothing has to be translated between
+  # a local run and a CI run.
+  TEST_DATABASE_URL: postgresql://devsync:devsync@127.0.0.1:5433/devsync_test
+
+# The PostgreSQL image is deliberately NOT a variable here. A service container's
+# `image:` cannot read the `env` context, so a variable would have to be repeated
+# at each use anyway — and one that looked authoritative while being ignored would
+# be worse than the literal. It is pinned to the same tag as `compose.yaml`, and
+# the two are changed together.
 
 jobs:
   quality:
@@ -41,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
 
       # Before setup-node, because its pnpm cache resolves the store by running
       # `pnpm store path` — which needs the Corepack shim to already exist.
@@ -49,7 +60,7 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -76,17 +87,75 @@ jobs:
       - name: Build
         run: pnpm build
 
-  e2e:
-    name: End-to-end
+  database:
+    name: Database
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # A disposable PostgreSQL for this job alone. `POSTGRES_DB` creates the test
+    # database directly, so the job needs none of Compose's initialisation.
+    # `DATABASE_URL` is deliberately unset: nothing here should be able to reach
+    # a database that is not this one.
+    services:
+      postgres:
+        image: postgres:18.3-alpine3.23
+        env:
+          POSTGRES_USER: devsync
+          POSTGRES_PASSWORD: devsync
+          POSTGRES_DB: devsync_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready --username=devsync --dbname=devsync_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
 
       - name: Enable Corepack
         run: corepack enable
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The same command a developer runs. It drops the test schema, applies the
+      # committed migration, and only then runs the suite — and it refuses to
+      # start at all against a database it cannot prove is disposable.
+      - name: Run database integration tests
+        run: pnpm test:db
+
+  e2e:
+    name: End-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # From C1 the API refuses to start without a database, so the suite that
+    # starts the real API needs one. Same image, same port, same URL as above.
+    services:
+      postgres:
+        image: postgres:18.3-alpine3.23
+        env:
+          POSTGRES_USER: devsync
+          POSTGRES_PASSWORD: devsync
+          POSTGRES_DB: devsync_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready --username=devsync --dbname=devsync_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -124,7 +193,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
 
       # No Node or pnpm setup in this job: both images install and build everything
       # they need internally, which is the property being tested.
@@ -136,9 +205,25 @@ jobs:
 
       # `--wait` blocks until every service reports healthy and exits non-zero if one
       # does not, so the health checks declared in compose.yaml are the gate rather
-      # than a fixed sleep.
+      # than a fixed sleep. The API cannot become healthy until PostgreSQL is
+      # healthy and the migration service has exited successfully, which is what
+      # its `depends_on` conditions say.
       - name: Start services and wait for health
-        run: docker compose up --detach --wait --wait-timeout 180
+        run: docker compose up --detach --wait --wait-timeout 240
+
+      - name: Verify PostgreSQL is healthy
+        run: |
+          status="$(docker inspect --format '{{.State.Health.Status}}' devsync-database-1)"
+          echo "database: $status"
+          [ "$status" = "healthy" ]
+
+      # A one-shot service: what matters is that it finished, and finished well.
+      - name: Verify the migration applied cleanly
+        run: |
+          docker compose logs migrate --no-color
+          code="$(docker inspect --format '{{.State.ExitCode}}' devsync-migrate-1)"
+          echo "migrate exit code: $code"
+          [ "$code" = "0" ]
 
       - name: Verify the web application responds
         run: |
@@ -161,6 +246,9 @@ jobs:
           docker compose ps --all
           docker compose logs --no-color
 
+      # `--volumes` here and nowhere else. A runner is disposable by definition,
+      # so dropping the database volume with it is right; the same flag on a
+      # developer's machine deletes their projects.
       - name: Stop and remove containers
         if: always()
         run: docker compose down --volumes --remove-orphans

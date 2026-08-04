@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+import { config as loadDotenv } from 'dotenv';
 
 // Ports reserved for end-to-end runs. Development uses 3000 and 3001, so a suite
 // started while `pnpm dev` is running neither collides with it nor silently tests
@@ -16,6 +17,22 @@ const API_BASE_URL = `http://127.0.0.1:${API_PORT}`;
 const repoRoot = path.resolve(__dirname, '..', '..');
 const webDir = path.join(repoRoot, 'apps', 'web');
 const apiDir = path.join(repoRoot, 'apps', 'api');
+
+// From C1 the API refuses to start without a database, so this suite needs one.
+// It uses the disposable `devsync_test` database rather than the development
+// one, and the `test:e2e` task applies the committed migrations to it first —
+// see `migrate:test` in `turbo.json`.
+loadDotenv({ path: [path.join(repoRoot, '.env')], quiet: true });
+
+const testDatabaseUrl = process.env.TEST_DATABASE_URL?.trim();
+
+if (testDatabaseUrl === undefined || testDatabaseUrl === '') {
+  throw new Error(
+    'TEST_DATABASE_URL is not set, and the API under test will not start without a database. ' +
+      'Start PostgreSQL with `docker compose up -d database` and set it — `.env.example` has the ' +
+      'value to copy.',
+  );
+}
 
 export default defineConfig({
   testDir: './specs',
@@ -54,10 +71,14 @@ export default defineConfig({
     },
   ],
 
-  // Both services are started from their production output, which the `test:e2e`
-  // task in `turbo.json` guarantees is present by depending on both application
-  // builds. Ports are passed as arguments and environment variables rather than
-  // read from a file, because this repository has no `.env` loading.
+  // Both applications are started from their production output, which the
+  // `test:e2e` task in `turbo.json` guarantees is present by depending on both
+  // builds.
+  //
+  // The port and the database URL are passed explicitly rather than left to the
+  // child process. `apps/api` does load `.env` now, and that is exactly why:
+  // inheriting it would point the API under test at the development database,
+  // which is not the one this suite migrates and not one it should touch.
   webServer: [
     {
       command: `pnpm exec next start --port ${WEB_PORT}`,
@@ -69,7 +90,10 @@ export default defineConfig({
     {
       command: 'node dist/main.js',
       cwd: apiDir,
-      env: { API_PORT: String(API_PORT) },
+      // The test database, never the development one. The API connects during
+      // startup, so a readiness check that answers is also proof the connection
+      // was made.
+      env: { API_PORT: String(API_PORT), DATABASE_URL: testDatabaseUrl },
       // The readiness probe is the endpoint under test, so the suite starts only
       // once the service is genuinely answering rather than after a fixed wait.
       url: `${API_BASE_URL}/health`,

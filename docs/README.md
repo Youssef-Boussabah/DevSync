@@ -5,10 +5,13 @@ describes an intention rather than a system. Where a document does describe dire
 architecture DevSync is being built towards, or the milestones ahead — it says so explicitly and
 keeps it separate from what exists.
 
-**Phases A and B are complete. Phase C's first milestone, C0, is complete, and C1 is next.** One
-Monaco editor on the home page, over one file the application holds in browser memory and reads as
-one of five languages, is still the only product functionality that exists: C0 decided how
-persistence will be built and built none of it. **No runtime persistence exists.**
+**Phases A and B are complete. Phase C is at C1: C0 and C1 are done, and C2 is next.** C0 decided
+how persistence would be built; C1 built the storage half — PostgreSQL, Prisma, the schema, one
+committed migration, the data layer, and an API that connects during startup.
+
+**No user can reach any of it.** One Monaco editor over one in-memory file is still the only
+product functionality that exists: there is no project or file route, and `apps/web` makes no
+request to `apps/api`.
 
 ## Start here
 
@@ -24,10 +27,11 @@ persistence will be built and built none of it. **No runtime persistence exists.
 
 ## Subject documents
 
-- **[Testing](testing.md)** — the three testing layers, which runner owns each, what the current
+- **[Testing](testing.md)** — the four testing layers, which runner owns each, what the current
   tests actually prove, and what is deliberately not tested yet.
-- **[Docker](docker.md)** — how the two applications are containerised, how to build, run, and
-  inspect them, and what the Compose setup deliberately leaves out.
+- **[Docker](docker.md)** — how the applications are containerised, how PostgreSQL and the
+  migration service fit together, what survives `docker compose down`, and what the setup
+  deliberately leaves out.
 - **[Continuous integration](ci.md)** — what runs on GitHub Actions, what each job proves, and how
   to reproduce any of it locally.
 

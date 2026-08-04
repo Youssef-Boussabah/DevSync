@@ -3,13 +3,15 @@
 How the DevSync applications are containerised, how to build and run them, and what the setup
 deliberately does not include.
 
-The container setup was introduced in **Phase A3 — Docker foundation** and is unchanged at
-**Phase B complete**: the editor, the workspace holding its contents, and the language selection over them all
-ship inside the existing web image and needed no change to it, because Monaco and its language
-workers are bundled into the client build rather than fetched at runtime, and the workspace state
-never leaves the browser. Docker is an additional way to run the
-two applications that already exist; it replaces nothing. Every `pnpm` command still works exactly
-as before, and the test architecture still runs on the host.
+The container setup was introduced in **Phase A3 — Docker foundation** and grew for the first time
+in **C1**, which added PostgreSQL, a named volume, and a one-shot migration service. Phase B needed
+no change to it at all: Monaco and its language workers are bundled into the client build rather
+than fetched at runtime, and the workspace state never leaves the browser.
+
+Docker is an additional way to run DevSync; it replaces nothing. Every `pnpm` command still works
+exactly as before, and the test architecture still runs on the host — though `pnpm test:db` and
+`pnpm test:e2e` now expect the `database` service to be up, because the API will not start without
+one.
 
 ## Prerequisites
 
@@ -26,12 +28,13 @@ depends on the host having Node or pnpm.
 
 ## Structure
 
-| File                  | Purpose                                                       |
-| --------------------- | ------------------------------------------------------------- |
-| `compose.yaml`        | The two services, their ports, environment, and health checks |
-| `apps/web/Dockerfile` | Production image for `@devsync/web`                           |
-| `apps/api/Dockerfile` | Production image for `@devsync/api`                           |
-| `.dockerignore`       | What never enters the build context                           |
+| File                      | Purpose                                                           |
+| ------------------------- | ----------------------------------------------------------------- |
+| `compose.yaml`            | Four services, their ports, environment, health checks, and order |
+| `apps/web/Dockerfile`     | Production image for `@devsync/web`                               |
+| `apps/api/Dockerfile`     | Production image for `@devsync/api`, and the `migrate` stage      |
+| `docker/postgres/initdb/` | Creates the disposable test database on first initialisation      |
+| `.dockerignore`           | What never enters the build context                               |
 
 **Both images build from the repository root**, not from their own directory:
 
@@ -115,10 +118,12 @@ docker compose build --no-cache # ignore every cached layer
 ### Start and stop
 
 ```bash
-docker compose up -d            # start both, detached
+docker compose up -d            # start everything, detached
 docker compose up -d --build    # rebuild first, then start
-docker compose ps               # state and health of both services
-docker compose down             # stop and remove containers and the default network
+docker compose up -d database   # just PostgreSQL, for host development and tests
+docker compose ps --all         # state and health, including the exited migration
+docker compose logs migrate     # what the migration did
+docker compose down             # stop and remove containers; keeps the database volume
 ```
 
 ### Rebuild cleanly
@@ -138,7 +143,7 @@ install layer.
 ### Logs
 
 ```bash
-docker compose logs              # both services, from the beginning
+docker compose logs              # every service, from the beginning
 docker compose logs -f api       # follow one service
 docker compose logs --tail 50 web
 ```
@@ -148,15 +153,22 @@ inside a container.
 
 ## Ports
 
-| Service | Container | Host | URL                          |
-| ------- | --------- | ---- | ---------------------------- |
-| `web`   | 3000      | 3000 | http://127.0.0.1:3000/       |
-| `api`   | 3001      | 3001 | http://127.0.0.1:3001/health |
+| Service    | Container | Host | URL                                           |
+| ---------- | --------- | ---- | --------------------------------------------- |
+| `web`      | 3000      | 3000 | http://127.0.0.1:3000/                        |
+| `api`      | 3001      | 3001 | http://127.0.0.1:3001/health                  |
+| `database` | 5432      | 5433 | `postgresql://devsync:devsync@127.0.0.1:5433` |
+| `migrate`  | —         | —    | one-shot, publishes nothing                   |
 
-These are the same ports the applications use in local development, deliberately: a developer
-should not have to learn a second set. The consequence is that `docker compose up` and
-`pnpm dev` cannot both run at once — whichever starts second fails to bind. The Playwright
-suite is unaffected; it uses 4310 and 4311.
+The two applications use the same ports as local development, deliberately: a developer should not
+have to learn a second set. The consequence is that `docker compose up` and `pnpm dev` cannot both
+run at once — whichever starts second fails to bind. The Playwright suite is unaffected; it uses
+4310 and 4311.
+
+**PostgreSQL is the exception, on 5433**, so that Compose's database and a PostgreSQL a developer
+already has installed can coexist. That also means `docker compose up -d database` and `pnpm dev`
+work together, which is the ordinary development arrangement: the database in a container, the
+applications on the host.
 
 ### Binding inside the container
 
@@ -177,10 +189,11 @@ experience differs, so the code is left alone.
 Both services declare a health check in `compose.yaml` rather than in their Dockerfiles, so
 there is one place to read and change them.
 
-| Service | Probe                              | Interval | Timeout | Retries | Start period |
-| ------- | ---------------------------------- | -------- | ------- | ------- | ------------ |
-| `web`   | `GET http://127.0.0.1:3000/`       | 15s      | 5s      | 5       | 20s          |
-| `api`   | `GET http://127.0.0.1:3001/health` | 15s      | 5s      | 5       | 10s          |
+| Service    | Probe                              | Interval | Timeout | Retries | Start period |
+| ---------- | ---------------------------------- | -------- | ------- | ------- | ------------ |
+| `web`      | `GET http://127.0.0.1:3000/`       | 15s      | 5s      | 5       | 20s          |
+| `api`      | `GET http://127.0.0.1:3001/health` | 15s      | 5s      | 5       | 10s          |
+| `database` | `pg_isready` as `devsync`          | 5s       | 5s      | 12      | 10s          |
 
 Each probe is `node -e` using Node's built-in `fetch`, which means the images need neither
 `curl` nor `wget`. Both prove that the HTTP application answers, not merely that a process is
@@ -191,96 +204,130 @@ mapped, both fail these.
 docker inspect --format '{{.State.Health.Status}}' devsync-web-1 devsync-api-1
 ```
 
-There is **no `depends_on` between the two services**. `apps/web` does not call `apps/api`, so
+The `migrate` service declares none: it is expected to exit, and what matters about it is its exit
+code, which the API's `service_completed_successfully` condition already waits on.
+
+There is still **no `depends_on` between `web` and `api`**. `apps/web` does not call `apps/api`, so
 an ordering constraint would describe a dependency that does not exist, and would quietly become
 wrong the moment a real one appears.
 
 ## Environment variables
 
-| Variable   | Service | Value in Compose | Meaning                                                |
-| ---------- | ------- | ---------------- | ------------------------------------------------------ |
-| `NODE_ENV` | both    | `production`     | Standard production switch                             |
-| `PORT`     | `web`   | `3000`           | Port the Next.js standalone server listens on          |
-| `HOSTNAME` | `web`   | `0.0.0.0`        | Interface the standalone server binds to               |
-| `API_PORT` | `api`   | `3001`           | The existing contract: read by `main.ts`, default 3001 |
+| Variable            | Service          | Value in Compose                                     |
+| ------------------- | ---------------- | ---------------------------------------------------- |
+| `NODE_ENV`          | `web`, `api`     | `production`                                         |
+| `PORT`              | `web`            | `3000` — the Next.js standalone server's port        |
+| `HOSTNAME`          | `web`            | `0.0.0.0` — the interface it binds to                |
+| `API_PORT`          | `api`            | `3001`                                               |
+| `DATABASE_URL`      | `api`, `migrate` | `postgresql://devsync:devsync@database:5432/devsync` |
+| `POSTGRES_USER`     | `database`       | `devsync`                                            |
+| `POSTGRES_PASSWORD` | `database`       | `devsync`                                            |
+| `POSTGRES_DB`       | `database`       | `devsync`                                            |
 
-`API_PORT` is passed **explicitly** in `compose.yaml`. DevSync still has no configuration
-module and loads no `.env` file, so a variable that is not stated in Compose is not configured
-at all — it is not silently picked up from `.env.example` or anywhere else. `.env.example`
-remains the documented inventory of what the applications understand, and `.dockerignore`
-excludes every `.env*` file from the build context so none of them can end up in an image
-layer.
+Every one is passed **explicitly** in `compose.yaml`. The containers load no `.env` file —
+`.dockerignore` excludes every `.env*` from the build context, so none can end up in an image
+layer — which means a variable not stated in Compose is not configured at all. Outside containers
+`apps/api` does read `.env`, and `.env.example` is the documented inventory.
 
-**No secrets exist in this repository**, and none are baked into either image. There is no
-registry credential, no API key, and no database URL, because there is nothing yet to
-authenticate against.
+`DATABASE_URL` uses the Compose service hostname `database`, and the container port 5432 rather
+than the 5433 published to the host: inside the network there is no other PostgreSQL to collide
+with.
 
-## Planned — PostgreSQL in Compose
+**No secrets exist in this repository.** The PostgreSQL credentials above are development values
+for a database that only ever runs on a developer's own machine, stated openly rather than hidden
+in a way that would imply they protect something. There is no registry credential and no API key.
 
-**None of this exists.** `compose.yaml` still contains two application services and nothing else,
-and neither Dockerfile mentions a database. This section records what C1 will add, decided in C0 so
-that the lifecycle questions — what survives a restart, what a stray `--volumes` destroys, when
-migrations run — are answered before there is data to lose.
+## PostgreSQL
 
-C1 adds **one PostgreSQL service**: an explicitly pinned major version, pinned the way
-`node:24.13.0-alpine` already is rather than tracking `latest`; a **named volume** for its data
-directory; a health check using `pg_isready`, so readiness means the server accepts connections
-rather than that a container started; and an explicit development-only database name, user, and
-password stated in Compose. Those credentials are development values, not secrets — the same rule
-that already applies to every variable here: **what is not stated in Compose is not configured.**
-The port is published to the host, because host-run integration tests and `pnpm dev` both need to
-reach the database that Compose is running.
+`compose.yaml` runs **one PostgreSQL service**, `database`, on `postgres:18.3-alpine3.23` — pinned
+to a patch release the way the Node base image is, rather than tracking `latest`. Its database
+name, user, and password are stated in Compose as `devsync`/`devsync`/`devsync`. Those are
+development values, not secrets, and the rule that has always applied here still does: **what is
+not stated in Compose is not configured.**
 
-`DATABASE_URL` is passed to the `api` service using the Compose service hostname, which is the
-first configuration in this repository that names another container. The API starts after the
-database is healthy **and after migrations have succeeded** — an ordering `depends_on` alone cannot
-express, which is why the planned answer is an explicit one-shot migration step the API waits on
-rather than a migration run from application startup. C1 chooses the exact mechanism and documents
-it here.
+Two details are worth knowing before changing it.
+
+- **The volume is mounted at `/var/lib/postgresql`, not `/var/lib/postgresql/data`.** PostgreSQL 18
+  moved the data directory; the older path is correct up to 17 and wrong here, and getting it wrong
+  produces a container that starts cleanly and loses everything on restart.
+- **The published host port is 5433, not 5432.** A developer with PostgreSQL already installed is
+  listening on 5432, and the collision is silent in the worst way. Inside the Compose network it is
+  the ordinary 5432, so only host-side URLs carry the offset. See
+  [D23](decisions.md#d23--postgresql-is-published-on-port-5433).
+
+`docker/postgres/initdb/` holds one script, which the official entrypoint runs the first time it
+initialises an empty data directory. It creates `devsync_test`, the disposable database `pnpm
+test:db` and `pnpm test:e2e` use. **The application never creates a database**; that script is the
+only place one appears outside a migration.
+
+The health check is `pg_isready` against the configured user and database, so readiness means the
+server accepts connections rather than that a container started.
+
+### The migration service
+
+`migrate` is a one-shot service built from the `migrate` stage of `apps/api/Dockerfile`. It waits
+for the database to be healthy, runs `prisma migrate deploy`, and exits. The API then waits for
+**that exit**, through `service_completed_successfully`:
+
+```yaml
+depends_on:
+  database:
+    condition: service_healthy
+  migrate:
+    condition: service_completed_successfully
+```
+
+That ordering is the point. Migrations never run from application startup, so however many API
+instances start at once, none of them races another through the schema — and a failed migration
+stops the API from starting at all rather than letting it serve against a schema that is not there.
+
+The migration image carries the Prisma CLI, the schema, and the committed migrations. **The API
+runtime image carries none of them**, which is why the two are separate stages rather than one
+image with two commands.
 
 Nothing else joins Compose. No Redis, no queue, no message broker, and no database administration
 UI: each would be a service nothing uses, which is the thing this file has avoided since A3.
 
-**C1 is where Compose first expresses ordering at all** — `api` after the database is healthy, and
-after migrations. **The `web` → `api` edge waits for C3**, which is the milestone where the two
-applications first talk: it is the first web-to-API runtime dependency there has ever been, not the
-first `depends_on` in the file. Until then an edge between them would describe a relationship that
-does not exist.
+**The `web` → `api` edge still does not exist**, because `apps/web` still makes no request to
+`apps/api`. It arrives in C3, and it will be the first web-to-API runtime dependency rather than
+the first `depends_on` in the file.
 
 ### What survives, and what does not
 
-- **`docker compose down` preserves project data.** It removes the containers and the default
-  network; the named volume is untouched, and starting again finds every project where it was.
-- **`docker compose down --volumes` is the destructive one**, and from C1 it is the command that
-  deletes a developer's projects. The [Shutdown](#shutdown) section below currently calls
-  `--volumes` harmless, which is true only while no volume is declared — **C1 must correct it in
-  the same change that declares one.** CI's `docker` job passes `--volumes` in its cleanup step,
-  which stays correct: a runner is disposable by definition.
+- **`docker compose down` preserves your projects.** It removes the containers and the default
+  network; the named `postgres_data` volume is untouched, and starting again finds everything where
+  it was.
+- **`docker compose down --volumes` is the destructive one.** It deletes the volume, and with it
+  every project and file. CI's `docker` job passes `--volumes` in its cleanup step, which is
+  correct there and only there: a runner is disposable by definition.
 - **Restarting the database and API containers changes nothing**, because the data lives in the
-  volume rather than in either container's writable layer. Proving that is C4's job.
+  volume rather than in either container's writable layer.
 
-### What C1 has to change about the API image
+### What the API image carries
 
-The API image gets its runtime database dependency and the generated Prisma client, without
-dragging build tooling into the runtime stage — the property the multi-stage split exists for. It
-needs them from C1 rather than C2, because the API process itself loads the configuration and opens
-and closes the connection from C1; the routes that use the data arrive later.
+The runtime image holds compiled JavaScript for `apps/api` and `packages/database`, the generated
+Prisma Client compiled with it, and the production dependency trees for both — `@prisma/client`,
+`@prisma/adapter-pg`, and `pg` among them. It holds **no** TypeScript source, no compiler, no Nest
+CLI, no test runner, and no Prisma CLI. Because the client reaches PostgreSQL through the `pg`
+driver adapter, no query engine binary ships either.
 
-One existing detail becomes load-bearing at that point. The `prod-deps` stage installs with
-`--filter @devsync/api`, deliberately without the `...` suffix, because **`@devsync/api` currently
-has no workspace dependency it needs in production**. From C1 it has one: `@devsync/database`. The
-plain filter stops being correct, and the `...` form pulls in `@devsync/config` and, through it,
-tens of megabytes of TypeScript that nothing at runtime can resolve. C1 has to solve that
-explicitly rather than by widening the filter and accepting the image size.
+One existing detail became load-bearing in C1. The `prod-deps` stage installs with
+`--filter @devsync/api --filter @devsync/database`, naming both packages rather than using pnpm's
+`...` suffix. The suffix would pull in every workspace package on a dependency edge of any kind,
+including the dev-only one to `@devsync/config`, and with it tens of megabytes of TypeScript that
+nothing at runtime can resolve.
+
+pnpm links `apps/api/node_modules/@devsync/database` to `packages/database`, so the runtime image
+copies that package's `dist`, its manifest, and its `node_modules` at their original relative
+paths — the same reason the other `node_modules` trees keep theirs.
 
 ## Current limitations
 
-- **No database, cache, queue, message broker, or any other external service exists**, in
-  Compose or anywhere else in this repository. DevSync stores nothing and talks to nothing.
-  There is no PostgreSQL container, no Redis, no volume, and no named network beyond the
-  default one Compose creates for the project. Adding an empty database container now would be
-  scaffolding pretending to be architecture — the milestone that adds a full one is C1, and what
-  it will look like is [above](#planned--postgresql-in-compose).
+- **No cache, queue, message broker, or database administration UI exists**, in Compose or
+  anywhere else. PostgreSQL is there because the API genuinely needs it; nothing else has earned
+  a place yet, and an unused service would be scaffolding pretending to be architecture.
+- **Nothing a user can reach touches the database.** The API connects to it during startup and
+  serves no route that reads or writes a project. That arrives in C2.
 - **The two services do not talk to each other.** `web` and `api` are containerised
   independently because that is what they are.
 - **No development-mode Compose setup.** There is no watch mode, no bind-mounted source, and no
@@ -310,8 +357,14 @@ Both services run with `init: true`, which puts Docker's init process at PID 1 a
 kernel drops signals that have no explicit handler — so `docker compose down` would wait out the
 full grace period and then kill the container. With it, both stop promptly and cleanly.
 
-`--volumes` is harmless here since no volume is declared; it is in the command so that the habit
-is right when one eventually is. **That stops being true at C1**: once the database volume exists,
-this flag is what deletes a developer's projects, and this paragraph has to be rewritten in the
-same change that declares it. Running plain `docker run` outside Compose should pass `--init` for
-the same reason the services set it.
+**`--volumes` deletes the database.** Since C1 there is a volume to delete, and this is the command
+that empties it: every project, every file, gone. Use it when you want a clean database and not
+otherwise:
+
+```bash
+docker compose down                        # keeps your projects
+docker compose down --volumes              # deletes them, deliberately
+```
+
+Running plain `docker run` outside Compose should pass `--init` for the same reason the services
+set it.

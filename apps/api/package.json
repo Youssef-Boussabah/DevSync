@@ -17,7 +17,9 @@
     "clean": "node -e \"['dist','coverage','.turbo','tsconfig.tsbuildinfo','tsconfig.build.tsbuildinfo'].forEach((p) => require('fs').rmSync(p, { recursive: true, force: true }))\""
   },
   "dependencies": {
+    "@devsync/database": "workspace:*",
     "@nestjs/common": "^11.0.1",
+    "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "reflect-metadata": "^0.2.2",

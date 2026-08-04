@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "@devsync/config — runtime library package",
+  "extends": "./tsconfig.base.json",
+
+  // For a `packages/*` library that runs in production rather than being
+  // compiled by whoever imports it. `tsconfig.package.json` is still the right
+  // config for the reserved packages; this one is for a package that emits.
+  //
+  // The output is CommonJS, because the only consumer is `apps/api`: NestJS
+  // compiles to CommonJS, and its Jest suite loads modules through ts-jest's
+  // CommonJS registry, which cannot require an ES module. `module: NodeNext`
+  // produces CommonJS here only because the package has no `"type": "module"` —
+  // adding one would silently change the emit for every consumer.
+  //
+  // `verbatimModuleSyntax` is deliberately NOT set, for that same reason: it
+  // rejects ESM syntax in a file TypeScript has decided is CommonJS, which is
+  // every file in a package emitting CommonJS.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}

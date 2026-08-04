@@ -3,22 +3,45 @@
   "ui": "stream",
   "globalDependencies": [".env.example"],
   "tasks": {
+    // Code a workspace generates before anything can compile it. Only
+    // `@devsync/database` has one — `prisma generate` — and it needs no
+    // database, which is what lets a fresh checkout type-check and build
+    // before anyone has configured one. Narrow inputs, so an unrelated edit
+    // does not invalidate it.
+    "generate": {
+      "inputs": ["prisma/schema.prisma", "prisma.config.ts", "tools/**", "package.json"],
+      "outputs": ["src/generated/**"]
+    },
     "build": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "generate"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
+    // Type-aware lint rules read the generated client's types, so it has to
+    // exist before ESLint runs, exactly as it does for `tsc`.
     "lint": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build", "generate"]
     },
     "lint:fix": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "generate"],
       "cache": false
     },
     "typecheck": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build", "generate"]
     },
     "test": {
       "dependsOn": ["^build"]
+    },
+    "test:db": {
+      // Real PostgreSQL, reached through TEST_DATABASE_URL, so the result
+      // depends on a live server that is not part of the input hash. Never
+      // part of `test`: the fast command starts no external service.
+      //
+      // Both variables are declared because Turborepo passes a task only the
+      // environment it names, and the safety gate compares the two: it refuses
+      // to run when the test database turns out to be the development one.
+      "dependsOn": ["generate"],
+      "env": ["TEST_DATABASE_URL", "DATABASE_URL"],
+      "cache": false
     },
     "test:unit": {
       "dependsOn": ["^build"]
@@ -27,15 +50,24 @@
       "dependsOn": ["^build"],
       "outputs": ["coverage/**"]
     },
+    // Applies the committed migrations to the disposable test database. Split
+    // out so the end-to-end suite can depend on it: from C1 the API refuses to
+    // start without a database, so a browser run needs one that is migrated.
+    "migrate:test": {
+      "dependsOn": ["generate"],
+      "env": ["TEST_DATABASE_URL", "DATABASE_URL"],
+      "cache": false
+    },
     "test:e2e": {
       // Named explicitly rather than through `^build`, because `@devsync/e2e` does
       // not import the applications — it starts them. Declaring them as package
       // dependencies to obtain the same ordering would also drag both builds into
       // `pnpm test`, which is meant to stay fast and build nothing.
-      "dependsOn": ["@devsync/web#build", "@devsync/api#build"],
+      "dependsOn": ["@devsync/web#build", "@devsync/api#build", "@devsync/database#migrate:test"],
       // Never cached. The result depends on real processes binding real ports and
       // on a browser being installed, none of which is part of the input hash, so a
       // cache hit here would report a pass without having proved anything.
+      "env": ["TEST_DATABASE_URL"],
       "cache": false
     },
     "dev": {

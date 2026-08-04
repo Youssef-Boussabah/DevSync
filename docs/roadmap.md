@@ -2,12 +2,13 @@
 
 The milestone sequence DevSync is being built in, and the current position within it.
 
-**Phases A and B are complete, and Phase C has started: C0 is complete and C1 is next.** C0 is a
-documentation milestone: it settles how persistence will be shaped before any of it is built.
-**No Phase C runtime persistence exists** — no database, no ORM, no dependency, and no workspace
-content for any of it is present in this repository. Everything from C1 onward is a plan. A phase
-is described here so that the order and the boundaries are decided in advance, not so that it can
-be mistaken for progress.
+**Phases A and B are complete, and Phase C is under way: C0 and C1 are complete, and C2 is next.**
+C0 settled how persistence would be shaped; C1 built it. PostgreSQL, Prisma, the schema, the
+committed migration, and the data layer all exist, and the API opens a connection during startup.
+**No project or file is reachable over HTTP yet**, and the web application still makes no request
+to the API — those are C2 and C3. Everything from C2 onward is a plan. A phase is described here so
+that the order and the boundaries are decided in advance, not so that it can be mistaken for
+progress.
 
 No dates or durations appear in this document, deliberately. A phase is done when its completion
 boundary is met, and estimating that in advance would produce a number that gets quoted long
@@ -19,7 +20,7 @@ after it stopped being true.
 | ----- | ------------------------- | --------------- |
 | **A** | Project foundation        | **Complete**    |
 | **B** | Local editor              | **Complete**    |
-| **C** | Database-backed projects  | **C0 complete** |
+| **C** | Database-backed projects  | **C1 complete** |
 | D     | Rooms and presence        | Not started     |
 | E     | Single-file collaboration | Not started     |
 | F     | Multi-file collaboration  | Not started     |
@@ -35,8 +36,9 @@ after it stopped being true.
 **One piece of product functionality exists**: the Monaco editor on the home page, the single-file
 workspace holding its contents, and the language that file is read as — delivered by milestones B0,
 B1, and B2, covered in a real browser by B3, and closed by B4. Nothing else in the table above is
-built. Phase C has begun, but its first milestone decided an architecture rather than shipping one:
-**no project, no file record, and no database exists.**
+built. Phase C now has a database behind it, but **nothing a user can reach**: projects and files
+can be created through `@devsync/database` and survive a restart, and no route, button, or request
+in the product does so.
 
 ---
 
@@ -152,8 +154,8 @@ before any collaboration exists.
 | Milestone | Deliverable                                        | Status        |
 | --------- | -------------------------------------------------- | ------------- |
 | C0        | Persistence architecture and project data contract | **Delivered** |
-| C1        | PostgreSQL and Prisma data layer                   | **Next**      |
-| C2        | Project and file API                               | Not started   |
+| C1        | PostgreSQL and Prisma data layer                   | **Delivered** |
+| C2        | Project and file API                               | **Next**      |
 | C3        | Persistent web workspace                           | Not started   |
 | C4        | Persistence and restart validation                 | Not started   |
 | C5        | Phase closure                                      | Not started   |
@@ -198,37 +200,35 @@ Dockerfiles are untouched, and every existing check still passes. **Met.**
 `DATABASE_URL`, no configuration module, no controller, no repository, no DTO, and no call from
 `apps/web` to `apps/api`.
 
-### C1 — PostgreSQL and Prisma data layer
+### C1 — PostgreSQL and Prisma data layer ✅ Delivered
 
-**Deliverables.** PostgreSQL in `compose.yaml` — the first service there that is not an
-application, with a pinned major version, a named volume, a `pg_isready` health check, and the
-migration step the API waits on. Prisma installed in `@devsync/database`, with the schema, the
-initial migration, the client construction, and the connection lifecycle all owned by that package.
-Data-access functions for projects and files, including the transaction that creates a project
-together with its first file. Persistence errors classified by the package rather than left as raw
-Prisma exceptions.
+**Delivered.** PostgreSQL 18 is in `compose.yaml` — the first service there that is not an
+application — with a named volume, a `pg_isready` health check, and a one-shot `migrate` service
+the API waits on. Prisma 7 lives in `@devsync/database`: the schema, one committed migration, the
+generated client, the pool, and every query. The package exposes named operations over projects and
+files, creates a project and its first file in one transaction, moves a project's `updatedAt` when
+one of its files changes, and classifies persistence failures into four meanings so that no Prisma
+error can escape it.
 
-**`apps/api` takes its first dependency on `@devsync/database` here.** The API owns configuration
-loading, asks the package to connect during startup and to disconnect during shutdown through
-Nest's lifecycle hooks, and carries the package and its generated client in its production image.
-The connection is exercised by the real API process, not only by tests — a data layer nothing runs
-is a data layer nobody has proved.
+**`apps/api` took its first dependency on `@devsync/database`.** The API owns configuration —
+`DATABASE_URL` is required and validated before the application exists — and asks the package to
+connect during startup and disconnect during shutdown through Nest's lifecycle hooks. An unreachable
+database is a failed startup, not a service that accepts requests it cannot serve. The production
+image carries the compiled package and its generated client, and none of the Prisma CLI.
 
-`DATABASE_URL` is required from C1, loaded and validated when that runtime starts, so a missing or
-malformed value fails startup rather than falling back to another database. `TEST_DATABASE_URL` is
-read only by the database-backed test tooling and validated only when those tests run; its absence
-must never stop the API from starting. Integration tests against a real PostgreSQL database sit
-behind their own non-cached task.
+Two decisions were forced by the repository rather than chosen freely, and both are recorded in
+[`decisions.md`](decisions.md): `@devsync/database` emits **CommonJS**, because the Nest service and
+its ts-jest suite cannot load an ES module; and Compose publishes PostgreSQL on **5433**, because
+5432 belongs to whatever a developer already has installed.
 
-**Completion boundary.** The API process starts, connects through `@devsync/database`, and shuts
-down cleanly; a record written through the package is still there after the client disconnects and
-reconnects, and after the container is restarted; the committed migration applies to an empty
-database; and the integration suite refuses to run against a database it has not been told is
-disposable.
+**Completion boundary.** The API process starts, connects, serves, and shuts down cleanly; a record
+written through the package survives a disconnect and reconnect, an API restart, and a PostgreSQL
+restart; the committed migration applies to an empty database; and the integration suite refuses to
+run against a database it has not been told is disposable. **Met.**
 
-**Excluded.** No project or file HTTP route, controller, DTO, or public persistence API — those are
-C2 — and no change to `apps/web`. The API depends on the package and holds a connection, but
-nothing it serves reads or writes a project yet.
+**Excluded, and still absent.** No project or file HTTP route, controller, or DTO — those are C2 —
+and no change to `apps/web`. `@devsync/shared` is still empty. The API holds a connection, and
+nothing it serves reads or writes a project.
 
 ### C2 — project and file API
 

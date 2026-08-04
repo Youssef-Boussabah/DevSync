@@ -22,18 +22,21 @@ exists. Nothing in a direction entry is installed.
 | [D7](#d7--jest-retained-for-the-nestjs-api)                               | Jest retained for `apps/api`                      |
 | [D8](#d8--playwright-for-browser-and-full-stack-testing)                  | Playwright for browser tests                      |
 | [D9](#d9--docker-compose-for-production-style-local-execution)            | Docker Compose locally                            |
-| [D10](#d10--one-workflow-three-independent-ci-jobs)                       | One workflow, three independent jobs              |
-| [D11](#d11--no-env-loading-yet)                                           | No `.env` loading yet                             |
+| [D10](#d10--one-workflow-four-independent-ci-jobs)                        | One workflow, four independent jobs               |
+| [D11](#d11--no-env-loading-yet)                                           | No `.env` loading yet — **superseded in C1**      |
 | [D12](#d12--direction-monaco-and-yjs-for-collaborative-editing)           | **Direction:** Monaco + Yjs                       |
 | [D13](#d13--direction-postgresql-before-redis)                            | **Direction:** PostgreSQL before Redis            |
 | [D14](#d14--direction-an-isolated-execution-runner)                       | **Direction:** an isolated runner                 |
 | [D15](#d15--monaco-is-bundled-not-loaded-from-a-cdn)                      | Monaco is bundled, not loaded from a CDN          |
-| [D16](#d16--direction-prisma-owned-by-devsyncdatabase)                    | **Direction:** Prisma, owned by one package       |
+| [D16](#d16--prisma-owned-by-devsyncdatabase)                              | Prisma, owned by one package                      |
 | [D17](#d17--direction-phase-c-is-single-user-and-deletion-is-permanent)   | **Direction:** single-user, permanent deletes     |
 | [D18](#d18--direction-flat-file-names-and-language-as-a-validated-string) | **Direction:** flat names, language as a string   |
 | [D19](#d19--direction-a-new-project-is-created-with-its-first-file)       | **Direction:** projects start with one file       |
 | [D20](#d20--direction-zod-contracts-in-devsyncshared)                     | **Direction:** Zod contracts in `@devsync/shared` |
-| [D21](#d21--direction-database-tests-run-against-real-postgresql)         | **Direction:** database tests use real PostgreSQL |
+| [D21](#d21--database-tests-run-against-real-postgresql)                   | Database tests use real PostgreSQL                |
+| [D22](#d22--devsyncdatabase-is-a-built-commonjs-package)                  | `@devsync/database` is built, and CommonJS        |
+| [D23](#d23--postgresql-is-published-on-port-5433)                         | PostgreSQL is published on 5433                   |
+| [D24](#d24--file-name-uniqueness-is-pinned-to-the-c-collation)            | File-name uniqueness uses the `C` collation       |
 
 ---
 
@@ -135,9 +138,12 @@ obvious before anyone is tempted to write it into an application and copy it. Fi
 boundary early is expensive: a speculative interface has to be unlearned before it can be used,
 and it makes the repository look further along than it is.
 
-**Consequence today.** Five workspaces that lint, type-check, and report honestly that they have
-no tests. Each `src/index.ts` is a documented `export {}`, and each README states the boundary and
-the current state.
+**Consequence today.** Four workspaces that lint, type-check, and report honestly that they have no
+tests. Each `src/index.ts` is a documented `export {}`, and each README states the boundary and the
+current state. `@devsync/database` was the fifth until C1 filled it — with a schema, a migration, a
+data layer, and 57 tests — which is the outcome this decision was betting on: the boundary was
+already there, so filling it was a matter of writing the implementation rather than agreeing where
+it should live.
 
 **Revisit if.** A package is still empty when the milestone that was supposed to fill it has come
 and gone — that is evidence the boundary was wrong, and the workspace should be deleted rather
@@ -209,8 +215,9 @@ then, not before.
 
 ### D9 — Docker Compose for production-style local execution
 
-**Decision.** Two multi-stage production images and one root `compose.yaml`. Nothing else: no
-database, cache, queue, volume, named network, or `depends_on` edge.
+**Decision.** Multi-stage production images and one root `compose.yaml`, carrying only services
+something actually uses. Until C1 that meant two applications and nothing else; C1 added PostgreSQL
+and the one-shot migration service, because the API now genuinely needs both.
 
 **Reason.** Running the compiled output the way production would run it catches a category of
 failure no `pnpm dev` session can — a missing runtime dependency, a traced bundle that cannot
@@ -224,28 +231,30 @@ as the non-root `node` user. Containers use the same ports as `pnpm dev`, so the
 at once. `pnpm` commands keep working outside Docker — it is an additional way to run DevSync,
 not the way.
 
-**Revisit if.** C1 introduces PostgreSQL, which is the first service that will genuinely belong in
-Compose, and brings the first named volume and the first ordering edges with it — `api` after the
-database and after migrations. The `web` → `api` edge waits for C3, which is when the two
-applications first talk and therefore the first time `web` depends on `api` at runtime. The planned
-topology is in [`docker.md`](docker.md).
+**Revisit if.** The `web` → `api` edge, which waits for C3 — the first time `web` depends on `api`
+at runtime. C1 already brought the rest: PostgreSQL, the first named volume, and the first ordering
+edges, with `api` starting after the database is healthy and after the migration service has
+exited successfully. [`docker.md`](docker.md) is the full topology.
 
 ---
 
-### D10 — One workflow, three independent CI jobs
+### D10 — One workflow, four independent CI jobs
 
-**Decision.** A single `.github/workflows/ci.yml` with `quality`, `e2e`, and `docker` jobs that
-do not depend on one another. CI runs the same commands a developer runs, holds `contents: read`,
-uses no secrets, and never rewrites the tree.
+**Decision.** A single `.github/workflows/ci.yml` with `quality`, `database`, `e2e`, and `docker`
+jobs that do not depend on one another. CI runs the same commands a developer runs, holds
+`contents: read`, uses no secrets, and never rewrites the tree. It began with three; C1 added
+`database` when there was a data layer to exercise.
 
-**Reason.** Passing a build between jobs would make the end-to-end and Docker jobs prove less than
-they appear to: each would be exercising an artifact assembled elsewhere rather than the workflow
-a developer or a production image actually follows. Independence costs a duplicated install and
-buys three complete, honest reproductions. Keeping every command identical to a local one means a
-red run never requires reading CI internals to reproduce.
+**Reason.** Passing a build between jobs would make the later jobs prove less than they appear to:
+each would be exercising an artifact assembled elsewhere rather than the workflow a developer or a
+production image actually follows. Independence costs a duplicated install and buys four complete,
+honest reproductions. Keeping every command identical to a local one means a red run never requires
+reading CI internals to reproduce.
 
-**Consequence today.** Dependencies install twice, and Playwright's Chromium downloads on every
-`e2e` run — both recorded as known costs rather than optimised away with something fragile. CI
+**Consequence today.** Dependencies install three times, and Playwright's Chromium downloads on
+every `e2e` run — both recorded as known costs rather than optimised away with something fragile.
+Two jobs now start their own PostgreSQL service container rather than sharing one, which is the
+same trade: a shared database between jobs would make each prove less about its own setup. CI
 validates and ships nothing: no registry, no tag, no deployment.
 
 **Revisit if.** Run time becomes a real obstacle, at which point caching Chromium by resolved
@@ -264,13 +273,17 @@ the variables; values come from the shell, from `compose.yaml`, or from the Play
 worst outcome: a value that is silently defaulted from a file in one environment and absent in
 another. Being explicit means an unset variable is unconfigured, visibly.
 
-**Consequence today.** `API_PORT` must be set in the shell to change the API's port, and
-`compose.yaml` passes it explicitly rather than relying on a file. `.dockerignore` keeps every
-`.env*` file out of both build contexts.
+**Consequence today.** None: the trigger arrived. **C1 superseded this decision**, exactly as it
+said it would, and on the terms it set — loading, validation, documentation, and ignore rules
+together, with a missing or malformed `DATABASE_URL` failing startup rather than falling back to
+some other database. `apps/api` reads `.env` through `@nestjs/config`; the database and end-to-end
+tooling read it through `dotenv`. A value already in the environment still wins over the file, so
+Compose and CI keep control, and `.dockerignore` still keeps every `.env*` file out of both build
+contexts.
 
-**Revisit if.** The first milestone that needs more than a port — `DATABASE_URL`, in C1. Loading,
-validation, documentation, and ignore rules arrive together at that point, and a missing or
-malformed value has to fail startup rather than fall back to some other database.
+**Revisit if.** Nothing left to revisit. The entry stays because the reasoning — that a half-built
+configuration layer is worse than none, and that an unset variable should be visibly unset —
+is what the C1 implementation was held to.
 
 ---
 
@@ -310,10 +323,10 @@ an extra failure mode, and a cache-invalidation problem in exchange for nothing 
 the data most often cited as a reason for it, is ephemeral by design and belongs in process
 memory until there is more than one process.
 
-**Consequence today.** No database, ORM, migration, or connection exists. `@devsync/database` is
-an empty boundary, and `apps/api` does not depend on it. Compose contains no data service. Phase C
-is where the PostgreSQL half becomes concrete — [D16](#d16--direction-prisma-owned-by-devsyncdatabase)
-is how it is reached — and Redis is still explicitly not part of it.
+**Consequence today.** The PostgreSQL half is built: PostgreSQL 18 in Compose, reached only through
+`@devsync/database`, which `apps/api` depends on. **Redis is still absent**, and nothing in C1
+made it any closer — presence and collaboration, the things that would want it, do not exist, and
+one API instance shares state with nobody.
 
 **Revisit if.** More than one API instance has to serve one project's room — a Phase M concern.
 That is the trigger, and nothing earlier is.
@@ -372,13 +385,16 @@ that is a simplification to take, not a reason to revisit the decision itself.
 
 ---
 
-### D16 — **Direction:** Prisma, owned by `@devsync/database`
+### D16 — Prisma, owned by `@devsync/database`
 
 **Decision.** Prisma is the ORM, and it lives entirely inside `@devsync/database`: schema,
 migrations, client construction, connection lifecycle, and the project and file operations. Nothing
 else in the repository constructs a client, and `apps/web` never imports the package at all.
 Migrations are committed, an applied migration is immutable, and `prisma migrate deploy` — never
 `migrate dev` or `db push` — is what applies them outside local development.
+
+**Implemented in C1**, at Prisma 7.9.1 against PostgreSQL 18.3, through the `@prisma/adapter-pg`
+driver adapter.
 
 **Reason.** A generated, fully typed client is the shortest path from a schema to compile-time
 safety across a strict TypeScript workspace, and Prisma's migration files are ordinary reviewable
@@ -388,12 +404,13 @@ runs, and an ORM reachable from every caller stops being replaceable the week af
 introduced. Exposing named operations instead of an open connection keeps the boundary an
 abstraction rather than a directory.
 
-**Consequence today.** None — Prisma is not installed, no version is selected, and
-`@devsync/database` is still an empty module. The cost is paid in C1, which is also where
-`apps/api` first depends on the package: the API loads the configuration and drives connect and
-disconnect through Nest's lifecycle, the production image carries the package and its generated
-client, and a migration has to be applied before the service answers a persistence request. The
-routes that use any of it are C2's.
+**Consequence today.** Prisma 7's generator writes the client as TypeScript into the package's own
+source tree, which is what makes the package build rather than be consumed as source
+([D22](#d22--devsyncdatabase-is-a-built-commonjs-package)). The adapter means no query engine
+binary ships: the runtime image carries `@prisma/client`, `@prisma/adapter-pg`, and `pg`, and no
+Prisma CLI at all — the migration service is a separate image stage for exactly that reason. The
+API loads the configuration and drives connect and disconnect through Nest's lifecycle. The routes
+that use any of it are C2's.
 
 **Revisit if.** The generated client turns out not to fit the workspace's consumed-as-source model,
 or a query the product genuinely needs cannot be expressed. The recorded first move is a raw query
@@ -514,7 +531,7 @@ cannot be shared with the browser without decorators and metadata reaching it.
 
 ---
 
-### D21 — **Direction:** database tests run against real PostgreSQL
+### D21 — Database tests run against real PostgreSQL
 
 **Decision.** Tests that claim database behaviour run against a real PostgreSQL instance reached
 through `TEST_DATABASE_URL`, with the committed migration applied first. Not SQLite, and not a
@@ -528,19 +545,94 @@ SQLite would prove a different engine's semantics. Keeping it out of `pnpm test`
 existing promise that the fast command builds nothing and starts nothing — the property that makes
 it usable on every save.
 
-**Consequence today.** None; there is no database and no such test. From C1 it means one more
-command to know about, a database that has to be running for it, and a safety check that refuses to
-run when the target is missing, unsafe, or the same URL as ordinary development. `TEST_DATABASE_URL`
-belongs to that tooling alone — the API never reads it, and an unset one must not stop the service
-from starting. Under the current
-runner boundaries the database suite is Vitest in `@devsync/database` and the API suite is Jest in
-`apps/api`, which makes C1 the second Vitest workspace — the trigger [D4](#d4--one-shared-configuration-package)
-recorded for moving the runner-agnostic Vitest configuration into `@devsync/config`.
+**Consequence today.** One more command to know about, `pnpm test:db`, and a PostgreSQL that has to
+be running for it. The safety gate refuses when the target is missing, malformed, not PostgreSQL,
+named anything but `devsync_test`, or the same database as `DATABASE_URL`. `TEST_DATABASE_URL`
+belongs to that tooling alone — the API never reads it, and an unset one does not stop the service
+from starting. The suite is Vitest in `@devsync/database`, which made it the second Vitest
+workspace and triggered [D4](#d4--one-shared-configuration-package)'s recorded move of the
+runner-agnostic Vitest configuration into `@devsync/config`. The end-to-end suite depends on the
+same tooling, because from C1 the API it starts will not run without a migrated database.
 
 **Revisit if.** Per-worker database or schema isolation gets implemented, at which point the suite
 can stop running serially. A container started by the test run itself is the recorded alternative to
 requiring one to be up, and it is worth taking only if it does not smuggle a service start back into
 `pnpm test`.
+
+---
+
+### D22 — `@devsync/database` is a built, CommonJS package
+
+**Decision.** `@devsync/database` compiles to `dist/` with `tsc` and its `exports` map points at
+JavaScript, not at `src/index.ts`. The output is **CommonJS**, and Prisma's generator is configured
+to match with `moduleFormat = "cjs"`. It extends a new shared configuration,
+`@devsync/config/tsconfig.library.json`; the four reserved packages keep
+`tsconfig.package.json` and still emit nothing.
+
+**Reason.** Two constraints, both from the repository rather than from preference. It has to
+**build**, because it runs inside the API's production container, where there is no compiler — and
+the alternatives are shipping TypeScript and hoping, or adding a runtime loader, both of which put
+a compiler-shaped problem into production. It has to be **CommonJS**, because its only consumer is
+`apps/api`: NestJS compiles to CommonJS, and its Jest suite loads modules through ts-jest's
+CommonJS registry, which cannot `require` an ES module. An ESM package would have failed the API's
+own tests before it ever reached a container.
+
+**Consequence today.** The repository can no longer say every `packages/*` library emits nothing,
+and `turbo.json` grew a `generate` task that `build`, `lint`, and `typecheck` depend on so the
+generated client exists before anything reads it. `apps/api`'s production install names two
+packages explicitly rather than using pnpm's `...` suffix, which would drag `@devsync/config` and
+its TypeScript into the runtime image.
+
+**Revisit if.** `apps/api` moves to ESM, at which point the CommonJS constraint disappears and the
+generator's `moduleFormat` should follow. Or a second consumer appears that cannot use CommonJS —
+the browser is not one, because it must never import this package at all.
+
+---
+
+### D23 — PostgreSQL is published on port 5433
+
+**Decision.** Compose publishes PostgreSQL on host port **5433**, not the default 5432. Inside the
+Compose network it is the ordinary 5432, so only host-side URLs carry the offset.
+
+**Reason.** A developer with PostgreSQL already installed is listening on 5432, and the collision
+is silent in the worst way: `docker compose up` succeeds, the host port is quietly taken by the
+other server, and the first connection fails to authenticate against a database nobody meant to
+use. This was not hypothetical — it happened on the machine C1 was built on, and cost the time it
+takes to work out that the error came from the wrong PostgreSQL. The repository already moves ports
+to avoid exactly this: Playwright uses 4310 and 4311 so a suite cannot silently test a development
+server.
+
+**Consequence today.** Every host-side URL — `.env.example`, the documentation, and the CI service
+container's published port — says 5433, so the string is identical everywhere and nothing has to be
+translated between a local run and a CI run. Anyone reading a connection string has one number to
+notice.
+
+**Revisit if.** Never, in substance; the cost is one unusual number in a URL, and the alternative
+is an error message that means something other than what it says.
+
+---
+
+### D24 — File-name uniqueness is pinned to the `C` collation
+
+**Decision.** `project_files.name` is declared `COLLATE "C"` in the initial migration, by hand,
+because Prisma cannot express a collation. File names are therefore compared byte-wise, and
+uniqueness within a project is case-sensitive wherever the migration is applied.
+
+**Reason.** The C0 contract says file names are case-sensitive. Without pinning it, that would be a
+property of whichever locale the server happened to be initialised with — true on a developer's
+machine, and quietly false on a database created with a case-insensitive ICU collation. A rule that
+holds by accident is a rule nobody has checked. `citext` and lowercased storage were both rejected:
+they change what is stored or add an extension to solve a problem this product does not have.
+
+**Consequence today.** One hand-edited line in a generated migration, with the reason written in
+the SQL beside it. `prisma migrate diff` reports no drift, because Prisma does not model collations
+at all — which is the same reason it could not generate the line. Two integration tests hold the
+behaviour: `README.md` and `readme.md` coexist in one project, and a second `README.md` is
+rejected.
+
+**Revisit if.** Case-insensitive uniqueness turns out to be what users expect, which is a product
+observation and a migration — and one that also needs a rule about which spelling survives a
+collision.
 
 ---
 

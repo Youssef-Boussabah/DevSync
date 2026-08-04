@@ -1,5 +1,8 @@
 node_modules/
 pnpm-lock.yaml
+
+# Generated Prisma Client. Nothing here is hand-written.
+packages/database/src/generated/
 .next/
 dist/
 build/

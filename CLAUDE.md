@@ -12,7 +12,8 @@ monorepo it is being built in.
 - `apps/web` — Next.js client (`@devsync/web`).
 - `apps/api` — NestJS service (`@devsync/api`).
 - `packages/collaboration` — reusable real-time collaboration logic.
-- `packages/database` — schema and data access.
+- `packages/database` — PostgreSQL schema, migrations, and data access. The only `packages/*`
+  workspace that builds, because it runs in production.
 - `packages/shared` — shared types, schemas, constants, and protocol definitions.
 - `packages/ui` — reusable interface components.
 - `packages/config` — shared development configuration.
@@ -39,8 +40,9 @@ errors with `@ts-ignore`, `@ts-expect-error`, or by disabling a lint rule — fi
 type.
 
 Every workspace extends a configuration from `@devsync/config`, which owns the strictness
-settings: `tsconfig.package.json` for `packages/*`, `tsconfig.nest.json` for `apps/api`,
-`tsconfig.next.json` for `apps/web`, `tsconfig.playwright.json` for `tests/e2e`. A workspace's
+settings: `tsconfig.package.json` for the `packages/*` that emit nothing,
+`tsconfig.library.json` for `packages/database`, which does emit, `tsconfig.nest.json` for
+`apps/api`, `tsconfig.next.json` for `apps/web`, `tsconfig.playwright.json` for `tests/e2e`. A workspace's
 own `tsconfig.json` should only hold what
 is genuinely local to it — `include`, `outDir`, `paths`, the `next` plugin. If a compiler
 option belongs to more than one workspace, it belongs in `@devsync/config`.
@@ -80,16 +82,23 @@ is real behaviour to cover.
 
 Three runners, each with a boundary:
 
-- **Vitest** — `apps/web`, and any `packages/*` that gains testable code. jsdom for components.
+- **Vitest** — `apps/web` and `packages/database`, and any other `packages/*` that gains testable
+  code. jsdom for components, Node for packages. Runner-agnostic configuration lives in
+  `@devsync/config/vitest/base`.
 - **Jest** — `apps/api` only. It stays there because `@nestjs/testing` targets Jest's API and
   `ts-jest` already honours `emitDecoratorMetadata`. Do not migrate it for uniformity; a
   migration needs a concrete technical reason.
 - **Playwright** — `tests/e2e` only, and it is the only layer allowed to start real processes.
   Chromium only for now. Do not add a second browser-testing framework.
 
-`pnpm test` must stay fast: in-process suites only, no builds, no browsers. Browser runs live
-behind `pnpm test:e2e`, and the browser download behind `pnpm test:e2e:install` — never inside
-an ordinary test command.
+`pnpm test` must stay fast: in-process suites only, no builds, no browsers, **no database**.
+Browser runs live behind `pnpm test:e2e`, the browser download behind `pnpm test:e2e:install`, and
+database runs behind `pnpm test:db` — never inside an ordinary test command.
+
+Database tests use real PostgreSQL through `TEST_DATABASE_URL`. Never SQLite, and never a mocked
+Prisma client while claiming database behaviour. The suite drops a schema, so its safety gate — in
+`packages/database/tools/test-database.mjs` — must keep refusing any database it cannot prove is
+disposable.
 
 End-to-end tests start their own servers on ports 4310 and 4311, wait on an HTTP readiness
 check, and must never reuse a server a developer started by hand or sleep for a fixed interval.
@@ -108,7 +117,8 @@ change that makes it inaccurate.
 
 ## Docker
 
-Two production images, one Compose file at the root, and nothing else.
+Two production images, a migration image stage, and one Compose file at the root running those
+alongside PostgreSQL.
 
 - **Build context is always the repository root**, for both Dockerfiles. A pnpm workspace
   cannot do a frozen install without the root lockfile, `pnpm-workspace.yaml`, and every
@@ -118,10 +128,18 @@ Two production images, one Compose file at the root, and nothing else.
 - Multi-stage, always: build tooling must not reach the runtime image. `apps/web` ships the
   Next.js `standalone` output; `apps/api` ships `dist` plus a `--prod` install.
 - Run as the image's `node` user, never root. Run the compiled output, never a dev server.
-- Compose passes `API_PORT` explicitly. There is still no `.env` loading, so an unset variable
+- Compose passes every variable explicitly. Containers load no `.env`, so an unset variable there
   is unconfigured, not defaulted from a file.
-- Do not add a database, cache, queue, volume, or named network until something uses one, and
-  do not add a `depends_on` edge between `web` and `api` until `web` actually calls `api`.
+- **PostgreSQL's volume mounts at `/var/lib/postgresql`** — the PostgreSQL 18 path, not the
+  `/data` suffix that was correct up to 17. `docker compose down` must keep the data; only
+  `--volumes` may destroy it.
+- **Migrations run in the one-shot `migrate` service, never from API startup**, and the API waits
+  on `service_completed_successfully`.
+- The API runtime image carries no Prisma CLI, compiler, or test runner. Its production install
+  names `@devsync/api` and `@devsync/database` explicitly rather than using pnpm's `...` suffix,
+  which would drag `@devsync/config` and TypeScript in.
+- Do not add a cache, queue, or database UI until something uses one, and do not add a
+  `depends_on` edge between `web` and `api` until `web` actually calls `api`.
 - Never run Playwright, install browsers, or add test tooling inside an application image.
 - `pnpm` commands must keep working outside Docker; Docker is an additional way to run
   DevSync, not the way.
@@ -130,8 +148,8 @@ Two production images, one Compose file at the root, and nothing else.
 
 ## Continuous integration
 
-One workflow, `.github/workflows/ci.yml`, with three independent jobs: `quality`, `e2e`,
-`docker`.
+One workflow, `.github/workflows/ci.yml`, with four independent jobs: `quality`, `database`,
+`e2e`, `docker`.
 
 - **CI runs the same commands a developer runs.** Do not add a CI-only script, and do not let a
   workflow step drift from the `package.json` script it mirrors. If a job needs a new command,
@@ -209,34 +227,39 @@ here is installed, and none may be installed ahead of the milestone that calls f
 
 ## Current boundary
 
-**Phase A and Phase B are complete. Phase C — database-backed projects — has started: C0 is
-complete, C1 is next, and no runtime persistence exists.** Phase A's foundation is in place: monorepo scaffold, centralised TypeScript and quality
+**Phase A and Phase B are complete. Phase C — database-backed projects — is at C1: C0 and C1 are
+complete, and C2 is next.** Phase A's foundation is in place: monorepo scaffold, centralised TypeScript and quality
 configuration, three testing layers, two production Docker images, GitHub Actions CI, and the
 documentation above. Phase B added the local editor: `apps/web` renders one Monaco editor over one
 file whose contents and language a client workspace component holds in React state, and Playwright
 types into the real editor in Chromium against the production build.
 
-**C0 was documentation only. No runtime persistence exists.** It fixed the Phase C data model, the
-HTTP resources and their error boundary, the package ownership, the Prisma and migration policy, and
-the configuration, Compose, and database-testing plans — in `docs/architecture.md`,
-`docs/roadmap.md`, and `docs/decisions.md`. It installed nothing and changed no runtime file.
+**C1 built the storage half of Phase C.** PostgreSQL 18 and a one-shot `migrate` service are in
+Compose; Prisma 7, the schema, one committed migration, and the data layer are in
+`@devsync/database`; `apps/api` validates `DATABASE_URL` and opens a connection during startup.
+**No project or file route exists, and `apps/web` still makes no request to `apps/api`** — those
+are C2 and C3.
 
-Five Phase C rules are durable enough to state here; the reasoning is in `docs/`:
+Six Phase C rules are durable enough to state here; the reasoning is in `docs/`:
 
 - **Phase C is single-user.** No users, owners, memberships, roles, authorization, slugs,
   visibility, archival, soft deletion, folders, or paths — and no placeholder column or contract for
   any of them.
 - **Prisma, the schema, the migrations, and the client belong to `@devsync/database`.** Nothing else
-  constructs a client, and `apps/web` never imports the package, Prisma, or a database URL.
-  `apps/api` depends on the package from C1 — configuration, connection lifecycle, production
-  image — but the project and file routes are C2's.
+  constructs a client, no caller gets the raw Prisma client, and no Prisma error escapes the
+  package. `apps/web` never imports it, Prisma, or a database URL.
+- **`@devsync/database` emits CommonJS and must keep doing so.** `apps/api` is CommonJS and its
+  ts-jest suite cannot `require` an ES module. That is why the Prisma generator is set to
+  `moduleFormat = "cjs"` and why the package builds to `dist/` rather than being consumed as
+  source.
 - **Runtime contracts belong to `@devsync/shared`** — request and response schemas, the supported
   language identifiers and their validator, and the one error contract — published in C2 for
-  `apps/api`, consumed by `apps/web` from C3. Nothing is added to it during C0.
-- **Database tests use real PostgreSQL** through `TEST_DATABASE_URL`, behind their own non-cached
-  task. `pnpm test` must keep building nothing and starting nothing.
-- **Nothing from C1 may be installed early**: no Prisma, no PostgreSQL client, no Zod, no
-  `DATABASE_URL`, no schema, no migration, no route.
+  `apps/api`, consumed by `apps/web` from C3. It is still empty.
+- **Database tests use real PostgreSQL** through `TEST_DATABASE_URL`, behind `pnpm test:db` and its
+  own non-cached task. `pnpm test` must keep building nothing and starting nothing.
+- **Migrations are committed and immutable.** `prisma migrate dev` creates them locally,
+  `prisma migrate deploy` applies them everywhere else, and a mistake is corrected by a new
+  migration. Generated Prisma Client stays untracked and reproducible.
 
 **That workspace is the only product functionality.** Its content and its language live in browser
 memory and are never read, written, or sent anywhere; remounting or reloading starts again from the
@@ -258,8 +281,8 @@ Two Monaco integration facts are worth knowing before changing the editor:
   paste are unaffected. Phase E applies remote CRDT operations programmatically and is where the
   model-ownership design has to be reconsidered.
 
-Do not implement later milestones early. Specifically, do not add a database, an ORM, a runtime
-validation library, authentication, WebSockets, a CRDT library, code execution, Kubernetes, cloud
-deployment, release automation, or a dependency bot until the milestone that calls for it. If a task seems to require
+Do not implement later milestones early. Specifically, do not add a runtime validation library,
+authentication, WebSockets, a CRDT library, code execution, Kubernetes, cloud deployment, release
+automation, or a dependency bot until the milestone that calls for it. If a task seems to require
 one of these, say so and stop rather than building ahead.
 [`docs/roadmap.md`](docs/roadmap.md) is the sequence and the boundary each milestone must meet.

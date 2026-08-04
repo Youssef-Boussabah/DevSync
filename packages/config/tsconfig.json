@@ -7,5 +7,5 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["eslint/**/*.mjs", "eslint.config.mjs"]
+  "include": ["eslint/**/*.mjs", "vitest/**/*.mjs", "vitest/**/*.d.mts", "eslint.config.mjs"]
 }
