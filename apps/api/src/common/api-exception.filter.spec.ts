@@ -40,7 +40,9 @@ async function startApi(database: Database): Promise<NestExpressApplication> {
 
   const app = moduleRef.createNestApplication<NestExpressApplication>(HTTP_APPLICATION_OPTIONS);
 
-  configureHttpApplication(app);
+  // Configured exactly as the running service is, CORS included, so the error
+  // boundary under test is the one behind the middleware that ships.
+  configureHttpApplication(app, { webOrigin: 'http://127.0.0.1:3000' });
   await app.init();
 
   return app;

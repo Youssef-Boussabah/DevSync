@@ -22,18 +22,19 @@ labelled selector beside the file name, with the content passed through untouche
 changes. B3 added the browser test that types into the real editor, and B4 reconciled the
 documentation and closed the phase. That is the only product functionality in the repository.
 
-**Phase C — database-backed projects: C0, C1, and C2 are complete, and C3 is next.** C0 settled the
-data model, the HTTP resources, the error boundary, and the package ownership. **C1 built the
+**Phase C — database-backed projects: C0, C1, C2, and C3 are complete, and C4 is next.** C0 settled
+the data model, the HTTP resources, the error boundary, and the package ownership. **C1 built the
 storage half of it**: PostgreSQL 18 in Compose with a named volume and a one-shot migration service,
 Prisma 7 and the schema in `@devsync/database`, one committed migration, a data layer with 57 tests,
 and an API that loads its configuration and opens a connection during startup. **C2 put an HTTP
 surface on it**: ten routes over projects and the files inside them, request validation against Zod
 schemas published from `@devsync/shared`, one error shape from every route, and 110 integration
-tests against a real Nest application and a real database.
+tests against a real Nest application and a real database. **C3 connected the browser**: the first
+call `apps/web` has ever made to `apps/api`, a project list, a project workspace, an explicit save,
+and 14 Playwright tests that create, edit, save, reload, and delete through a real browser.
 
-**Nothing a user can reach touches any of it.** `apps/web` still makes no request to `apps/api`, and
-the editor is still one in-memory buffer that a refresh discards — so a person using DevSync cannot
-save or load a project, while an HTTP client can. C3 connects the browser. The ladder is in
+**A person can now use it.** Open the application, create a project, edit its `main.ts`, press Save,
+reload — the work is still there, because it is in PostgreSQL. The ladder is in
 [`docs/roadmap.md`](docs/roadmap.md); the design is in
 [`docs/architecture.md`](docs/architecture.md).
 
@@ -42,20 +43,21 @@ What exists today:
 - A pnpm + Turborepo workspace with root-level `dev`, `build`, `lint`, `lint:fix`, `typecheck`,
   `test`, `test:unit`, `test:db`, `test:e2e`, `test:all`, `test:coverage`, `format`,
   `format:check`, and `clean` commands.
-- `apps/web` — a Next.js application whose home page identifies the project and hosts one Monaco
-  editor over a single in-memory file, read as one of five selectable languages.
+- `apps/web` — a Next.js application with two routes: a project list, and a project workspace that
+  opens one file at a time in Monaco with an explicit Save.
 - `apps/api` — a NestJS service serving `GET /health` plus five project routes and five nested
-  project-file routes, which validates its configuration and opens a PostgreSQL connection while it
-  starts.
+  project-file routes, which validates its configuration, opens a PostgreSQL connection while it
+  starts, and answers cross-origin requests from exactly one configured origin.
 - `packages/database` — the schema, one committed migration, and every query, behind Prisma 7 and
   a small surface of named operations over projects and files.
-- `packages/shared` — the request, response, and error contracts both applications will agree on,
-  as Zod 4 schemas with the TypeScript types inferred from them. The API is its first consumer.
+- `packages/shared` — the request, response, and error contracts both applications agree on, as
+  Zod 4 schemas with the TypeScript types inferred from them. **Both applications consume it**, and
+  neither declares Zod.
 - Six package boundaries under `packages/`: three deliberately empty, plus `@devsync/config`,
   `@devsync/database`, and `@devsync/shared`.
-- `tests/e2e` — a Playwright workspace that builds both applications, starts them on dedicated
-  ports, and checks that each answers.
-- Three hundred and fifty-seven real tests across six layers. See
+- `tests/e2e` — a Playwright workspace that resets a disposable database, builds both applications,
+  starts them on dedicated ports, and drives the whole persistence flow in Chromium.
+- Five hundred and seven real tests across six layers. See
   [`docs/testing.md`](docs/testing.md).
 - A production Docker image for each application, a migration image, and a root `compose.yaml`
   running those alongside PostgreSQL. See [`docs/docker.md`](docs/docker.md).
@@ -64,19 +66,22 @@ What exists today:
 - Documentation covering the architecture, the milestone roadmap, the development workflow, and
   the decisions behind them. See [`docs/`](docs/README.md).
 
-**Real-time collaboration has not been implemented.** Neither has multi-file project editing, a
-file tree, editor tabs, remote cursors, authentication, version history, or code execution. There
-is still no save action and no saved-or-unsaved state in the editor, because nothing in the
-interface can reach the API: `apps/web` makes no call to `apps/api`, and refreshing the page
-discards whatever was typed and returns the file to TypeScript. The five languages are five
-readings of one file, not five files: nothing is detected from a name, and no content is generated
-or translated when the language changes.
+**Real-time collaboration has not been implemented.** Neither has authentication, version history,
+code execution, a file tree, editor tabs, or remote cursors. A second browser sees your work only
+after it reloads, and two people editing the same file at once is undefined behaviour.
 
-**Persistence is reachable over HTTP, and not from the browser.** An HTTP client can create a
-project, add files, edit them, and find everything unchanged after a restart. **Every request is
-anonymous** — there are no accounts and no authorization — so the API is safe only on a machine you
-control, and nothing in Phase C may be deployed where an untrusted client can reach it. There is
-still no cache, queue, or message broker.
+**Saving is explicit.** A change reaches the database when you press Save and at no other time:
+there is no autosave, and nothing is kept in browser storage — no `localStorage`, no
+`sessionStorage`, no IndexedDB. The interface says which of saved, unsaved changes, saving, and save
+failed it is in, and it asks before discarding an unsaved draft.
+
+**Every request is anonymous** — there are no accounts and no authorization — so the API is safe only
+on a machine you control, and nothing in Phase C may be deployed where an untrusted client can reach
+it. The CORS configuration C3 added constrains browsers; it is not access control. There is still no
+cache, queue, or message broker.
+
+**Restart survival is not yet proved.** C3 proves a browser reload. Restarting the API or PostgreSQL,
+and applying the committed migration over existing rows, are C4's to demonstrate.
 
 ## Documentation
 
@@ -95,16 +100,16 @@ still no cache, queue, or message broker.
 The intended shape of the system. The editor, the data layer, and the API over it are real;
 **nothing else below is built yet**:
 
-- A Next.js client hosting a code editor, driven by a CRDT-backed shared document. The editor
-  exists; the shared document does not.
+- A Next.js client hosting a code editor, driven by a CRDT-backed shared document. **The editor and
+  the client exist**; the shared document does not.
 - A NestJS service owning project data, access control, and the collaboration transport. **It owns
   the project data**; the access control and the transport are still ahead.
 - **A relational database reached through a single data-access package.** Built: PostgreSQL behind
-  `@devsync/database`, which is the only thing in this list that is finished.
+  `@devsync/database`.
 - A separate, sandboxed runner service for executing user code, isolated from the API.
 - Shared contracts — types, schemas, and eventually the collaboration protocol — published from
-  `packages/shared` so client and server cannot drift apart. **The HTTP half exists and the API
-  consumes it**; the client does not yet, and the protocol does not exist.
+  `packages/shared` so client and server cannot drift apart. **The HTTP half exists and both
+  applications consume it**; the collaboration protocol does not exist.
 
 Each arrives in a later milestone, and this README is updated as it does.
 [`docs/architecture.md`](docs/architecture.md) separates the implemented architecture from the
@@ -215,7 +220,11 @@ pnpm --filter @devsync/web dev     # http://localhost:3000
 pnpm --filter @devsync/api dev     # http://localhost:3001
 ```
 
-Check the API is up, and create a project through it:
+Then open **http://127.0.0.1:3000** and create a project. Use that address rather than
+`localhost:3000`: to a browser they are different origins, and the API allows exactly the one in
+`WEB_ORIGIN`.
+
+The same routes are reachable from an HTTP client:
 
 ```bash
 curl http://localhost:3001/health
@@ -226,39 +235,41 @@ curl -X POST http://localhost:3001/projects \
 # 201, the project and the main.ts it was created with
 ```
 
-Nothing in the browser calls those routes yet; that is C3.
-
 ## Testing
 
-Six layers, three runners, three hundred and fifty-seven real tests:
+Six layers, three runners, five hundred and seven real tests:
 
-- **Vitest** covers `packages/shared` — one hundred tests over the schemas the API validates every
-  request against: trimming, length boundaries, defaults, strictness, the language list, the
-  identifier and timestamp formats, and the error contract.
-- **Vitest** covers `apps/web` — thirty-six component tests that render the real home page, the
-  workspace, and the editor wrapper in jsdom, with Monaco itself mocked at its narrowest boundary.
-- **Jest** covers `apps/api` twice. Forty-six fast tests over the configuration validator, the
-  database lifecycle, `GET /health`, the validation pipes, the storage-to-wire mappers, and the
-  error boundary — including every persistence failure mapped to its documented status and code,
-  proved by making the data layer fail on purpose. **One hundred and ten more run the real
-  `AppModule` over a real PostgreSQL**, covering every route and every failure the contract names.
+- **Vitest** covers `packages/shared` — one hundred tests over the schemas both applications agree
+  on: trimming, length boundaries, defaults, strictness, the language list, the identifier and
+  timestamp formats, and the error contract.
+- **Vitest** covers `apps/web` — one hundred and fifty-one tests over the home page, the project
+  list, the project workspace, the typed API client and its configuration, the language metadata,
+  the draft model, and the editor wrapper, in jsdom, with `fetch` and Monaco replaced at their
+  narrowest boundaries.
+- **Jest** covers `apps/api` twice. Seventy-five fast tests over the configuration validator, the
+  CORS policy, the database lifecycle, `GET /health`, the validation pipes, the storage-to-wire
+  mappers, and the error boundary — including every persistence failure mapped to its documented
+  status and code, proved by making the data layer fail on purpose. **One hundred and ten more run
+  the real `AppModule` over a real PostgreSQL**, covering every route and every failure the contract
+  names.
 - **Vitest** covers `packages/database` — fifty-seven tests. Thirty-nine run against a **real
   PostgreSQL** with the committed migration applied first, because cascades, unique constraints,
   and transaction rollback are exactly what SQLite or a mocked client does not have. The other
   eighteen cover the safety gate that decides whether the suite may touch a database at all.
-- **Playwright** covers both applications end to end — eight tests that build the applications,
-  start them on ports `4310` and `4311`, and check that the page, the editor region, the language
-  selector, and the endpoint answer. One of them types into the real Monaco editor in Chromium.
+- **Playwright** covers the whole stack — fourteen tests against a real web build, a real API, and a
+  real disposable PostgreSQL. They create a project, type into the real Monaco editor, save, reload,
+  and find the work unchanged; add, rename, retype, and delete files; rename and delete projects; and
+  check that a duplicate file name is refused with a message beside the field.
 
 Workspaces with no implementation print that they have no tests and exit successfully, rather
 than pretending to run a suite.
 
 ```bash
-pnpm test               # 182, fast: Vitest and Jest over source. Builds nothing, starts nothing
+pnpm test               # 326, fast: Vitest and Jest over source. Builds nothing, starts nothing
 docker compose up -d database
 pnpm test:db            # 167, the data layer then the API's routes, against real PostgreSQL
 pnpm test:e2e:install   # once per machine — downloads Chromium
-pnpm test:e2e           # 8, builds both applications, then drives them in a browser
+pnpm test:e2e           # 14, resets the test database, builds both apps, then drives a browser
 ```
 
 `pnpm test` runs only in-process source-level suites: no workspace build, no Prisma generation, no
@@ -293,10 +304,15 @@ docker compose down            # stop and remove the services; keeps the databas
 | `database` | `postgresql://…@127.0.0.1:5433` | PostgreSQL 18, on a named volume          |
 | `migrate`  | —                               | Applies the migrations once, then exits   |
 
+**Open the stack at `http://127.0.0.1:3000`**, not `localhost`: the API allows exactly one browser
+origin, and those two are different ones.
+
 Both application images are multi-stage, install from the committed lockfile with
 `--frozen-lockfile`, run the compiled output rather than a dev server, and run as the image's
 non-root `node` user. The API waits for PostgreSQL to be healthy **and** for the migration to have
-exited successfully, so no instance ever serves against a schema that is not there.
+exited successfully, so no instance ever serves against a schema that is not there, and `web` waits
+for a healthy `api`. The browser API URL is a **build argument**, because `next build` embeds it —
+which is why it is the host-published address rather than the Compose service name.
 
 The application containers use the same ports as local development, so `docker compose up` and
 `pnpm dev` cannot run at the same time. **PostgreSQL is published on 5433**, not 5432, so it does
@@ -341,11 +357,11 @@ and no generated output is linted.
 
 | Workspace                | lint | typecheck | test                            | build    |
 | ------------------------ | ---- | --------- | ------------------------------- | -------- |
-| `@devsync/web`           | yes  | yes       | 36 Vitest tests                 | `next`   |
-| `@devsync/api`           | yes  | yes       | 46 Jest, plus 110 via `test:db` | `nest`   |
+| `@devsync/web`           | yes  | yes       | 151 Vitest tests                | `next`   |
+| `@devsync/api`           | yes  | yes       | 75 Jest, plus 110 via `test:db` | `nest`   |
 | `@devsync/database`      | yes  | yes       | 57, via `pnpm test:db`          | `tsc`    |
 | `@devsync/shared`        | yes  | yes       | 100 Vitest tests                | `tsc`    |
-| `@devsync/e2e`           | yes  | yes       | 8, via `pnpm test:e2e`          | no build |
+| `@devsync/e2e`           | yes  | yes       | 14, via `pnpm test:e2e`         | no build |
 | `@devsync/collaboration` | yes  | yes       | none yet                        | no build |
 | `@devsync/ui`            | yes  | yes       | none yet                        | no build |
 | `@devsync/test-utils`    | yes  | yes       | none yet                        | no build |
@@ -394,16 +410,22 @@ it to `.env` at the repository root and it works with the Compose database as it
 cp .env.example .env
 ```
 
-| Variable            | Required | Read by                                   |
-| ------------------- | -------- | ----------------------------------------- |
-| `API_PORT`          | no       | `apps/api` — defaults to 3001             |
-| `DATABASE_URL`      | **yes**  | `apps/api`, passed to `@devsync/database` |
-| `TEST_DATABASE_URL` | no       | `pnpm test:db` and `pnpm test:e2e` only   |
+| Variable              | Required | Read by                                   |
+| --------------------- | -------- | ----------------------------------------- |
+| `API_PORT`            | no       | `apps/api` — defaults to 3001             |
+| `DATABASE_URL`        | **yes**  | `apps/api`, passed to `@devsync/database` |
+| `WEB_ORIGIN`          | **yes**  | `apps/api` — the one origin CORS allows   |
+| `NEXT_PUBLIC_API_URL` | **yes**  | `apps/web`, **while it builds**           |
+| `TEST_DATABASE_URL`   | no       | `pnpm test:db` and `pnpm test:e2e` only   |
 
-**`DATABASE_URL` has no default and never gets one.** A missing or malformed value fails startup
-with a message naming the variable, because a service quietly writing to the wrong database is
-worse than one that does not start. A value set in your shell always wins over the file, which is
-how Compose and CI keep control of their own configuration.
+**None of the three required values has a default, and none ever gets one.** A missing or malformed
+value fails startup — or, for the web variable, the build — with a message naming it, because a
+service quietly writing to the wrong database, answering a site nobody configured, or calling an API
+nobody chose is worse than one that does not start. A value set in your shell always wins over the
+file, which is how Compose and CI keep control of their own configuration.
+
+**`NEXT_PUBLIC_API_URL` is embedded by `next build`**, so changing it means rebuilding — and
+`NEXT_PUBLIC_` means public: no server-only value may ever be given such a name.
 
 `.env` is git-ignored, and `.dockerignore` keeps every `.env*` file out of both build contexts.
 **This repository contains no secrets**: the PostgreSQL credentials in `.env.example` and

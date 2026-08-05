@@ -58,8 +58,12 @@ function registerMonacoWorkers() {
 /**
  * The single editor pane the application currently has. The content belongs to
  * the caller rather than to Monaco's own model, so the application can read and
- * set what is being edited. It is held in the browser and goes nowhere: nothing
- * is saved, sent, or shared.
+ * set what is being edited — which is what makes an explicit save possible at
+ * all: the workspace above knows what the user has typed without asking Monaco.
+ *
+ * This component still stores nothing and sends nothing. It displays what it is
+ * given and reports edits back; whether an edit reaches the database is the
+ * caller's decision, and in C3 that decision is the Save button.
  */
 export function CodeEditor({ value, language, onChange }: CodeEditorProps) {
   const [state, setState] = useState<EditorState>('loading');

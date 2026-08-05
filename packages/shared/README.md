@@ -7,9 +7,10 @@ definition, so the check that runs and the type that compiles cannot drift apart
 That is the whole reason this package exists: client and server disagreeing about a
 wire format is the failure the monorepo was chosen to prevent.
 
-**C2 filled it.** `apps/api` is the first consumer, and validates every request
-against these schemas. `apps/web` becomes the second in C3 — it consumes nothing
-from here yet.
+**C2 filled it and C3 gave it a second consumer.** `apps/api` validates every
+request against these schemas; `apps/web` parses every response through them. That
+is what makes the guarantee real rather than a claim: a schema change now breaks
+whichever side has not been updated, at compile time.
 
 ## What it exports
 
@@ -36,7 +37,8 @@ if (!result.ok) {
 parsed value or the issues, never throwing, and it converts Zod's own issue objects
 into the `{ path, message }` shape the error contract publishes — so Zod stays an
 implementation detail of this package rather than a dependency every consumer has
-to install, pin, and keep in step.
+to install, pin, and keep in step. **Neither application declares Zod**, and both
+run schemas exclusively through this function.
 
 ## What is deliberately not here
 
@@ -44,8 +46,9 @@ to install, pin, and keep in step.
   React. This package ships in the browser bundle from C3, and a package that reads
   configuration cannot safely do that.
 - **No presentation.** Language identifiers, yes; the labels a user reads
-  (`TypeScript`) and the file names a client shows (`main.ts`) belong to whichever
-  interface is doing the showing.
+  (`TypeScript`) belong to whichever interface is doing the showing —
+  `apps/web/src/editor/languages.ts` is where they live, and it builds its options
+  by mapping `SUPPORTED_LANGUAGE_IDS` rather than restating them.
 - **No dependency on another workspace.** It imports nothing from `apps/*` or from
   `@devsync/database`.
 - **No response envelope.** Routes answer with resources and arrays directly. A
@@ -64,8 +67,12 @@ modules through a CommonJS registry that cannot `require` an ES module. It is th
 same reasoning that made `@devsync/database` a built CommonJS package in C1, and it
 extends `@devsync/config/tsconfig.library.json` for the same reason.
 
-CommonJS is fine for the Next.js consumer that arrives in C3; a second output
-format waits for a consumer that proves it necessary.
+CommonJS turned out to be fine for the Next.js consumer as well: Turbopack bundles
+this package, and the Zod inside it, into the chunks it emits, with no
+`transpilePackages` entry and no second output format. `apps/web`'s Vitest
+configuration aliases `@devsync/shared` to `src/index.ts` so its suites read the
+source, exactly as `apps/api`'s Jest configuration does — which is what keeps
+`pnpm test` building nothing.
 
 ## Testing
 

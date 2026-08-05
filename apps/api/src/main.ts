@@ -11,16 +11,18 @@ async function bootstrap(): Promise<void> {
   // malformed `DATABASE_URL` therefore rejects here, before anything connects.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, HTTP_APPLICATION_OPTIONS);
 
+  const config = app.get(ConfigService<ApiConfiguration, true>);
+
   // Before `listen`, because the global filter has to be registered by the time
   // Nest installs its router hooks — that is what puts it in front of a body the
-  // parser rejected as well as in front of every route.
-  configureHttpApplication(app);
+  // parser rejected as well as in front of every route. The allowed origin comes
+  // from the validated configuration, so the running service and the integration
+  // suite are configured by the same function from the same kind of value.
+  configureHttpApplication(app, { webOrigin: config.get('webOrigin', { infer: true }) });
 
   // Without this, SIGTERM kills the process before `onModuleDestroy` runs and
   // the connection pool is never closed. Compose sends exactly that on `down`.
   app.enableShutdownHooks();
-
-  const config = app.get(ConfigService<ApiConfiguration, true>);
 
   // `listen` initialises the application first, which is what runs the
   // `onModuleInit` hooks — including the one that opens the database. A

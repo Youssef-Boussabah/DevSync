@@ -1,7 +1,13 @@
 {
   "$schema": "https://turborepo.com/schema.json",
   "ui": "stream",
-  "globalDependencies": [".env.example"],
+  // `.env` joins `.env.example` in the global hash from C3. The web build embeds
+  // `NEXT_PUBLIC_API_URL` into the JavaScript it emits, and a developer who
+  // changes that value in `.env` must not be served the previous build from the
+  // cache. The task-level `env` below covers the same variable when it arrives
+  // from the environment instead — which is how Compose, CI, and the end-to-end
+  // runner set it.
+  "globalDependencies": [".env.example", ".env"],
   "tasks": {
     // Code a workspace generates before anything can compile it. Only
     // `@devsync/database` has one — `prisma generate` — and it needs no
@@ -14,6 +20,12 @@
     },
     "build": {
       "dependsOn": ["^build", "generate"],
+      // Read only by `apps/web`, and declared on the shared task rather than in a
+      // package-specific override that would have to restate `dependsOn` and
+      // `outputs` and could then drift from them. The cost is that changing the
+      // API URL also misses the API's build cache, which is a rebuild of compiled
+      // TypeScript rather than a correctness problem.
+      "env": ["NEXT_PUBLIC_API_URL"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     // Type-aware lint rules read the generated client's types, so it has to
@@ -33,11 +45,12 @@
     //
     // That is only possible because every suite in it reads source.
     // `packages/shared` tests its own `src`, `apps/web` renders its own
-    // components, and `apps/api`'s Jest configuration maps `@devsync/shared` and
-    // `@devsync/database` to their TypeScript rather than to `dist` — see
-    // `apps/api/jest.config.mjs`. Adding `^build` back would make `pnpm test`
-    // run `prisma generate` and two `tsc` invocations before its first
-    // assertion, which is precisely what this task must never do.
+    // components with `@devsync/shared` aliased to that same `src` in
+    // `vitest.config.mts`, and `apps/api`'s Jest configuration maps
+    // `@devsync/shared` and `@devsync/database` to their TypeScript rather than
+    // to `dist` — see `apps/api/jest.config.mjs`. Adding `^build` back would make
+    // `pnpm test` run `prisma generate` and two `tsc` invocations before its
+    // first assertion, which is precisely what this task must never do.
     "test": {},
     "test:db": {
       // Real PostgreSQL, reached through TEST_DATABASE_URL, so the result
@@ -63,9 +76,10 @@
     "test:coverage": {
       "outputs": ["coverage/**"]
     },
-    // Applies the committed migrations to the disposable test database. Split
-    // out so the end-to-end suite can depend on it: from C1 the API refuses to
-    // start without a database, so a browser run needs one that is migrated.
+    // Applies the committed migrations to the disposable test database. Kept as a
+    // command of its own so a developer can migrate that database by hand; the
+    // end-to-end suite no longer depends on it, because its own global setup
+    // resets and migrates through the same helper before the first test.
     "migrate:test": {
       "dependsOn": ["generate"],
       "env": ["TEST_DATABASE_URL", "DATABASE_URL"],
@@ -76,11 +90,16 @@
       // not import the applications — it starts them. Declaring them as package
       // dependencies to obtain the same ordering would also drag both builds into
       // `pnpm test`, which is meant to stay fast and build nothing.
-      "dependsOn": ["@devsync/web#build", "@devsync/api#build", "@devsync/database#migrate:test"],
+      "dependsOn": ["@devsync/web#build", "@devsync/api#build"],
       // Never cached. The result depends on real processes binding real ports and
       // on a browser being installed, none of which is part of the input hash, so a
       // cache hit here would report a pass without having proved anything.
-      "env": ["TEST_DATABASE_URL"],
+      //
+      // `NEXT_PUBLIC_API_URL` is declared so the suite can check that the web
+      // build it is about to drive was built for the API it is about to start.
+      // `DATABASE_URL` is declared because the disposable-database safety gate
+      // compares it with `TEST_DATABASE_URL` and refuses when they match.
+      "env": ["TEST_DATABASE_URL", "DATABASE_URL", "NEXT_PUBLIC_API_URL"],
       "cache": false
     },
     "dev": {

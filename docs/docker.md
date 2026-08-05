@@ -5,10 +5,14 @@ deliberately does not include.
 
 The container setup was introduced in **Phase A3 — Docker foundation** and grew for the first time
 in **C1**, which added PostgreSQL, a named volume, and a one-shot migration service. Phase B needed
-no change to it at all: Monaco and its language workers are bundled into the client build rather
-than fetched at runtime, and the workspace state never leaves the browser. **C2 added no service and
-no dependency edge** — only a third workspace to the API image, `@devsync/shared`, because the API
-now validates every request against the schemas it publishes.
+no change to it at all. C2 added no service and no dependency edge — only a third workspace to the
+API image, `@devsync/shared`.
+
+**C3 added the last edge in the graph and one build argument.** `web` now depends on a healthy
+`api`, because the browser the web image serves calls it; the web image builds `@devsync/shared`
+alongside the application, because `apps/web` imports it; and `NEXT_PUBLIC_API_URL` is passed as a
+**build argument**, because `next build` embeds it into the JavaScript it emits. No new service was
+added.
 
 Docker is an additional way to run DevSync; it replaces nothing. Every `pnpm` command still works
 exactly as before, and the test architecture still runs on the host — though `pnpm test:db` and
@@ -62,9 +66,13 @@ Three stages, plus a shared base.
    manifest, then runs `pnpm install --frozen-lockfile --filter @devsync/web...`. Manifests
    first means this layer is reused until a dependency genuinely changes. The filter is why no
    NestJS, no Jest, and no Playwright is ever installed — and therefore why no browser is ever
-   downloaded into an application image.
-3. **builder** — adds `packages/config` (which owns the TypeScript configuration `apps/web`
-   extends) and `apps/web`, then runs `next build`.
+   downloaded into an application image. From C3 it also installs `@devsync/shared`, which
+   `apps/web` now imports the request and response contracts from.
+3. **builder** — declares `ARG NEXT_PUBLIC_API_URL` and puts it in the environment, adds
+   `packages/config` (which owns the TypeScript configuration both workspaces extend),
+   `packages/shared`, and `apps/web`, then builds the shared package and runs `next build`. The
+   package is built first because `apps/web` resolves it through its `exports` map to `dist`, which
+   does not exist until its own build has run.
 4. **runner** — a fresh `node:24.13.0-alpine` with no pnpm, no sources, no dev dependencies and
    no build cache. It receives only `.next/standalone` and `.next/static`.
 
@@ -80,6 +88,22 @@ The result is that the runtime image needs no package manager and no `node_modul
 entire `node_modules` is the single traced `next` package. `output: 'standalone'` is an
 _additional_ output, so `next dev` and `next start` are unaffected — the Playwright suite still
 starts the application with `next start`.
+
+`@devsync/shared` needs nothing at runtime either: Turbopack bundles it, and the Zod it brings, into
+the chunks it emits, so the runtime image carries no copy of the package and resolves no workspace
+link. The API image is the opposite — it loads the compiled package through Node's own resolution —
+and that difference is a property of the two bundlers rather than of the package.
+
+### What the web image carries, and what it must not
+
+The image holds `.next/standalone` and `.next/static` and nothing else of the repository: no
+`package.json` graph to install, no pnpm, no compiler, and no test runner. **It carries no database
+configuration of any kind** — no connection string, no `DATABASE_URL`, and no `TEST_DATABASE_URL` —
+because none of that is ever given to `apps/web`. The one configuration value baked into it is the
+public API origin, which is public by definition.
+
+CI asserts both halves: that `http://127.0.0.1:3001` appears in the emitted client chunks, and that
+nothing matching a PostgreSQL connection string or `DATABASE_URL` appears anywhere in `.next`.
 
 ### API image
 
@@ -212,31 +236,52 @@ docker inspect --format '{{.State.Health.Status}}' devsync-web-1 devsync-api-1
 The `migrate` service declares none: it is expected to exit, and what matters about it is its exit
 code, which the API's `service_completed_successfully` condition already waits on.
 
-There is still **no `depends_on` between `web` and `api`**. `apps/web` does not call `apps/api`, so
-an ordering constraint would describe a dependency that does not exist, and would quietly become
-wrong the moment a real one appears.
+**`web` depends on a healthy `api` from C3.** The dependency is real now — the browser the web image
+serves calls the API for everything it displays. What the edge does **not** do is make the page fail
+without it: the request is the browser's, not the container's, so the page still renders and shows
+its error state. What it does is stop `docker compose up --wait` reporting the stack as up while the
+only thing a visitor could do is read an error, and it makes the ordering in the file describe the
+system rather than understate it.
 
 ## Environment variables
 
-| Variable            | Service          | Value in Compose                                     |
-| ------------------- | ---------------- | ---------------------------------------------------- |
-| `NODE_ENV`          | `web`, `api`     | `production`                                         |
-| `PORT`              | `web`            | `3000` — the Next.js standalone server's port        |
-| `HOSTNAME`          | `web`            | `0.0.0.0` — the interface it binds to                |
-| `API_PORT`          | `api`            | `3001`                                               |
-| `DATABASE_URL`      | `api`, `migrate` | `postgresql://devsync:devsync@database:5432/devsync` |
-| `POSTGRES_USER`     | `database`       | `devsync`                                            |
-| `POSTGRES_PASSWORD` | `database`       | `devsync`                                            |
-| `POSTGRES_DB`       | `database`       | `devsync`                                            |
+| Variable              | Service          | Value in Compose                                     |
+| --------------------- | ---------------- | ---------------------------------------------------- |
+| `NODE_ENV`            | `web`, `api`     | `production`                                         |
+| `PORT`                | `web`            | `3000` — the Next.js standalone server's port        |
+| `HOSTNAME`            | `web`            | `0.0.0.0` — the interface it binds to                |
+| `NEXT_PUBLIC_API_URL` | `web`            | `http://127.0.0.1:3001` — a **build argument**       |
+| `API_PORT`            | `api`            | `3001`                                               |
+| `DATABASE_URL`        | `api`, `migrate` | `postgresql://devsync:devsync@database:5432/devsync` |
+| `WEB_ORIGIN`          | `api`            | `http://127.0.0.1:3000`                              |
+| `POSTGRES_USER`       | `database`       | `devsync`                                            |
+| `POSTGRES_PASSWORD`   | `database`       | `devsync`                                            |
+| `POSTGRES_DB`         | `database`       | `devsync`                                            |
 
 Every one is passed **explicitly** in `compose.yaml`. The containers load no `.env` file —
 `.dockerignore` excludes every `.env*` from the build context, so none can end up in an image
 layer — which means a variable not stated in Compose is not configured at all. Outside containers
-`apps/api` does read `.env`, and `.env.example` is the documented inventory.
+`apps/api` reads `.env` and `apps/web` reads it while it builds, and `.env.example` is the documented
+inventory.
 
 `DATABASE_URL` uses the Compose service hostname `database`, and the container port 5432 rather
 than the 5433 published to the host: inside the network there is no other PostgreSQL to collide
 with.
+
+**`NEXT_PUBLIC_API_URL` and `WEB_ORIGIN` are the opposite case, and the reason is worth stating
+plainly: the code that uses them runs in the user's browser, which is not on the Compose network.**
+
+- `NEXT_PUBLIC_API_URL` is under `build.args`, not `environment`, because `next build` embeds it into
+  the JavaScript it emits — an image built for one API origin cannot be pointed at another by
+  restarting it with a different variable. Its value is the **host-published** `http://127.0.0.1:3001`.
+  `http://api:3001` would resolve inside the Compose network and nowhere else, and every request the
+  page made would fail on a name the browser cannot look up.
+- `WEB_ORIGIN` is the address the browser loads DevSync from, `http://127.0.0.1:3000`, and it is
+  matched **exactly**. `http://localhost:3000` is a different origin to a browser and gets no
+  allow-origin header, so **open the stack at `http://127.0.0.1:3000`**.
+
+Neither is a secret. The API URL is embedded in code every visitor downloads, and the origin is the
+address they typed.
 
 **No secrets exist in this repository.** The PostgreSQL credentials above are development values
 for a database that only ever runs on a developer's own machine, stated openly rather than hidden
@@ -291,11 +336,8 @@ runtime image carries none of them**, which is why the two are separate stages r
 image with two commands.
 
 Nothing else joins Compose. No Redis, no queue, no message broker, and no database administration
-UI: each would be a service nothing uses, which is the thing this file has avoided since A3.
-
-**The `web` → `api` edge still does not exist**, because `apps/web` still makes no request to
-`apps/api`. It arrives in C3, and it will be the first web-to-API runtime dependency rather than
-the first `depends_on` in the file.
+UI: each would be a service nothing uses, which is the thing this file has avoided since A3. C3 added
+an edge and a build argument, and no service.
 
 ### What survives, and what does not
 
@@ -385,15 +427,15 @@ has no use for the request contracts.
 - **No cache, queue, message broker, or database administration UI exists**, in Compose or
   anywhere else. PostgreSQL is there because the API genuinely needs it; nothing else has earned
   a place yet, and an unused service would be scaffolding pretending to be architecture.
-- **Nothing a user can reach touches the database.** The API serves ten routes over projects and
-  files, and no page in `apps/web` calls any of them, so a person using the containers still cannot
-  save or load anything. That arrives in C3.
 - **The API in a container is anonymous and published on a host port.** Anything that can reach
-  3001 can read, rename, and permanently delete every project in the volume. That is acceptable on
-  a developer's own machine and nowhere else; **do not expose these containers.**
-- **The two application services do not talk to each other.** `web` and `api` are containerised
-  independently because that is what they are. Compose runs four services in total; the other two
-  are PostgreSQL and the one-shot `migrate`.
+  3001 can read, rename, and permanently delete every project in the volume. CORS does not change
+  that — it constrains browsers, not clients. That is acceptable on a developer's own machine and
+  nowhere else; **do not expose these containers.**
+- **The two application containers still do not talk to each other.** The browser talks to both:
+  `web` serves the pages, and the JavaScript in them calls `api` directly. That is why the API URL is
+  a host address rather than a service name, and it is why there is no proxy in the stack.
+- **The stack must be opened at `http://127.0.0.1:3000`.** `localhost` is a different origin and the
+  API allows exactly one.
 - **No development-mode Compose setup.** There is no watch mode, no bind-mounted source, and no
   hot reload in Docker. `pnpm dev` remains the development loop; these images run production
   builds only.

@@ -40,6 +40,9 @@ exists. Nothing in a direction entry is installed.
 | [D25](#d25--devsyncshared-is-a-built-commonjs-package-carrying-zod-4)         | `@devsync/shared` is built, CommonJS, and owns Zod  |
 | [D26](#d26--the-json-body-limit-is-1-mib-and-an-oversized-body-is-a-400)      | 1 MiB of JSON, and oversize is a `400`              |
 | [D27](#d27--the-apis-database-suite-runs-jest-with---experimental-vm-modules) | Jest needs `--experimental-vm-modules` for Prisma 7 |
+| [D28](#d28--the-browser-api-url-is-a-build-time-public-variable)              | The browser API URL is public and build-time        |
+| [D29](#d29--cors-allows-exactly-one-configured-origin)                        | CORS allows exactly one configured origin           |
+| [D30](#d30--saving-is-explicit-and-there-is-no-autosave)                      | Saving is explicit; there is no autosave            |
 
 ---
 
@@ -75,10 +78,14 @@ views alongside a heavily client-side editor. Next.js provides all of that as de
 than as configuration, and its `standalone` output makes a small production container possible
 without a bundler of our own.
 
-**Consequence today.** One route, `/`. `output: 'standalone'` and `outputFileTracingRoot` are set
-so the production image can run a self-contained server with no package manager. The `@/*` alias
-works identically in `next dev`, `next build`, and `tsc`, and is restated in
-`vitest.config.mts` because Vitest does not read `tsconfig.json`.
+**Consequence today.** Two routes since C3 — `/` and `/projects/[projectId]` — the first static, the
+second rendered on demand, with neither fetching project data on the server. `output: 'standalone'`
+and `outputFileTracingRoot` are set so the production image can run a self-contained server with no
+package manager. The `@/*` alias works identically in `next dev`, `next build`, and `tsc`, and is
+restated in `vitest.config.mts` because Vitest does not read `tsconfig.json`. C3 added a second alias
+there, for `@devsync/shared`, and one Next.js-specific fact turned out to matter more than expected:
+`.env` is read from the application's own directory, not the repository root, so `next.config.ts`
+loads the root file explicitly.
 
 **Revisit if.** The editor turns out to fight server rendering badly enough that a plain SPA is
 simpler, or the framework's release cadence becomes a maintenance cost out of proportion to what
@@ -97,8 +104,8 @@ emerges from whichever file grew fastest. Its testing utilities also make HTTP-l
 which is what `apps/api` tests today.
 
 **Consequence today.** Four modules and eleven routes since C2 — configuration, the database
-connection, health, and projects with the nested project files — which is the growth this decision
-was made for. The module system earned its place: adding the routes meant one `ProjectsModule` and
+connection, health, and projects with the nested project files — with a browser calling them from
+C3, which is the growth this decision was made for. The module system earned its place: adding the routes meant one `ProjectsModule` and
 two thin controllers rather than a restructure. Two TypeScript settings are constrained by it:
 `tsconfig.nest.json` cannot set `verbatimModuleSyntax` or `lib`, because `emitDecoratorMetadata`
 needs injected classes to survive as values. `apps/api` still has no path alias in the code it
@@ -165,12 +172,12 @@ code. jsdom for components.
 **Reason.** It shares Vite's transform pipeline with the tooling `apps/web` already uses, so TSX
 needs no additional configuration, and it starts fast enough to run on every save.
 
-**Consequence today.** Thirty-six component tests across the home page, the workspace, and the
-editor wrapper, the last two against mocked boundaries because jsdom cannot run the real editor.
-`layout.tsx` cannot be
-tested here — it imports `next/font/google`, which only the Next.js compiler resolves — so the
-metadata it declares is asserted by Playwright against the real document instead of being
-re-implemented in a mock. C1 made `packages/database` the second Vitest workspace and C2 made
+**Consequence today.** 151 tests in `apps/web` since C3 — the home page, the project list, the
+workspace, the API client, the language metadata, the draft model, and the editor wrapper — with the
+API layer and Monaco replaced at their narrowest boundaries because jsdom can run neither.
+`layout.tsx` cannot be tested here — it imports `next/font/google`, which only the Next.js compiler
+resolves — so the metadata it declares is asserted by Playwright against the real document instead of
+being re-implemented in a mock. C1 made `packages/database` the second Vitest workspace and C2 made
 `packages/shared` the third, with 100 schema tests that run in Node and need nothing.
 
 **Revisit if.** A packages-level suite needs something Vitest cannot express. Nothing suggests it
@@ -210,12 +217,14 @@ cannot be proved by a single-client test. `browser.newContext()` produces fully 
 inside one browser process, so a single test can act as two users — which is exactly the shape
 the collaboration tests will need. Nothing else in the ecosystem makes that as direct.
 
-**Consequence today.** Eight tests that build both applications, start them on ports 4310 and
-4311, and check that each answers, that the editor region paints, that the language selector over it
-works in a real browser, and that a real keystroke reaches the real Monaco editor. The suite polls
-HTTP readiness rather than sleeping, and
-`reuseExistingServer` is off so it can never pass by talking to a server someone started by hand.
-One manual step per machine, `pnpm test:e2e:install`, is the price.
+**Consequence today.** Fourteen tests since C3, and the first that are genuinely full-stack: they
+build both applications, reset a disposable PostgreSQL, start the applications on ports 4310 and
+4311, and drive a real browser through creating a project, typing into the real Monaco editor,
+saving, reloading, and finding the work unchanged. The suite polls HTTP readiness rather than
+sleeping, and `reuseExistingServer` is off so it can never pass by talking to a server someone
+started by hand. Because it now **writes**, it runs serially — one worker against one schema — which
+is the trade recorded in [`testing.md`](testing.md). One manual step per machine,
+`pnpm test:e2e:install`, is the price.
 
 **Revisit if.** Browser-specific behaviour appears that Chromium alone cannot catch — the editor
 and the collaboration transport are the likely candidates. Cross-browser coverage earns its place
@@ -241,10 +250,12 @@ as the non-root `node` user. Containers use the same ports as `pnpm dev`, so the
 at once. `pnpm` commands keep working outside Docker — it is an additional way to run DevSync,
 not the way.
 
-**Revisit if.** The `web` → `api` edge, which waits for C3 — the first time `web` depends on `api`
-at runtime. C1 already brought the rest: PostgreSQL, the first named volume, and the first ordering
-edges, with `api` starting after the database is healthy and after the migration service has
-exited successfully. [`docker.md`](docker.md) is the full topology.
+**Revisit if.** Nothing outstanding. The trigger this entry named — the `web` → `api` edge — arrived
+in C3, and the file now describes the whole graph: `web` after a healthy `api`, `api` after a healthy
+database and a migration that exited 0. C3 also added the one build argument in the file,
+`NEXT_PUBLIC_API_URL`, because `next build` embeds it; [`docker.md`](docker.md) is the full topology,
+and [D28](#d28--the-browser-api-url-is-a-build-time-public-variable) is why it is an argument rather
+than a variable.
 
 ---
 
@@ -451,8 +462,10 @@ acceptable only **inside Phase C's local, single-user development boundary**. It
 public deployment, and nothing in Phase C should be deployed where an untrusted client can reach it.
 Phase H is what introduces real identity and authorization; until then the boundary is the network
 the API is exposed on, which is a weaker guarantee than it sounds and is stated here so nobody
-mistakes it for a strong one. `DELETE` is `204` and unrecoverable, so C3's interface has to say so
-plainly.
+mistakes it for a strong one. **C3's CORS configuration does not change any of it** — it constrains
+browsers and nothing else; see [D29](#d29--cors-allows-exactly-one-configured-origin). `DELETE` is
+`204` and unrecoverable, and C3's interface says so: both delete confirmations use the word
+"permanent", and neither offers an undo.
 
 **Revisit if.** Phase H arrives, which it will. That milestone adds ownership and authorization,
 and it is also the point at which recoverable deletion should be argued on its own merits rather
@@ -479,12 +492,14 @@ every new language to a schema change and a deployment ordering problem.
 
 **Consequence today.** C1 made the schema and its collation enforce the composite
 `(projectId, name)` rule and covered it with real PostgreSQL integration tests — a uniqueness
-guarantee assumed from a database default is a guarantee nobody has checked. **C2 put the
-identifiers and their validator in `@devsync/shared`**, where the API reads them and the web
-application will from C3: an unsupported language is now a `400 VALIDATION_FAILED` with an issue on
-`language`, rejected at the boundary rather than reaching a constraint. Name and language are
-independent on the wire as well as in the schema — `PATCH` accepts either alone, and three
-integration tests assert that changing one leaves the other untouched.
+guarantee assumed from a database default is a guarantee nobody has checked. C2 put the identifiers
+and their validator in `@devsync/shared`: an unsupported language is a `400 VALIDATION_FAILED` with
+an issue on `language`, rejected at the boundary rather than reaching a constraint. **C3 made the
+browser read them from there too**, which deleted the duplicated list in
+`apps/web/src/editor/languages.ts` and, with it, the derived file name Phase B had shown. Name and
+language are independent on the wire, in the schema, and now in the interface — `PATCH` accepts
+either alone, three integration tests assert that changing one leaves the other untouched, and a
+Playwright test proves the same thing through a real browser and a reload.
 
 **Revisit if.** Real projects need directories — that is Phase F, and it is a migration that adds a
 location, not a reinterpretation of the name. Or duplicate-looking names cause genuine confusion in
@@ -495,7 +510,7 @@ practice, at which point case-insensitive uniqueness is the recorded alternative
 ### D19 — A new project is created with its first file
 
 **Decision.** Creating a project also creates one file — `main.ts`, TypeScript, holding the starter
-content the local workspace opens with today — in a single transaction. `apps/api` owns that
+content `apps/api/src/projects/starter-file.ts` owns — in a single transaction. `apps/api` owns that
 policy; `@devsync/database` owns the transaction. If either insert fails, neither row remains. A
 project may later hold zero files, because the last one can be deleted.
 
@@ -511,7 +526,10 @@ only the atomicity comes from the package.
 language, and the content — and `POST /projects` answers with the new file's identifier so a client
 can open what it just created without listing the project to find one. An integration test watches
 what the data layer was handed, so the policy cannot quietly migrate into the package. It answers a
-**summary** rather than the starter content: a create is not the route that ships file contents.
+**summary** rather than the starter content: a create is not the route that ships file contents. C3
+rewrote the content itself, because the file it creates is now stored rather than held in a tab, and
+the browser goes straight into the new project on the strength of the identifier the route answers
+with.
 
 **Revisit if.** Project templates appear, at which point the starter stops being one hard-coded file
 and the policy — still in `apps/api` — becomes a choice. Or the first file proves unwanted, which
@@ -541,18 +559,20 @@ speculation, not a contract that is already being enforced.
 
 **Consequence today.** `@devsync/shared` publishes the four request schemas, the resource and
 listing schemas, the identifier schemas, the five language identifiers, and the error contract — and
-the type inferred from each. `apps/api` validates every request against them through two pipes and
-declares **no Zod dependency of its own**: it calls `parseContract`, which returns either the parsed
-value or the issues already in the published `{ path, message }` shape. Zod therefore stays an
-implementation detail of one package rather than a version every consumer has to pin and keep in
-step, and no DTO class or decorator exists anywhere in the API. From C3 the package ships in the
-client bundle as well, which is the cost, and is why it must never grow anything server-only.
+the type inferred from each. **Both applications validate against them and neither declares a Zod
+dependency**: each calls `parseContract`, which returns either the parsed value or the issues already
+in the published `{ path, message }` shape. The API validates every request that way through two
+pipes; from C3 the browser parses every response the same way, so a route that grew a property or
+dropped a timestamp fails at the client's parse rather than rendering as `undefined`. Zod therefore
+stays an implementation detail of one package, and no DTO class or decorator exists anywhere. The
+package now ships in the client bundle, which is the cost, and is why it must never grow anything
+server-only.
 
-**Revisit if.** A concrete incompatibility with the Next.js bundler turns up in C3. The Nest
-pipeline turned out to need nothing special — a pipe whose input is `unknown` and whose output is
-the schema's inferred type is all it takes. Uniformity with Nest's `class-validator` convention is
-still not a reason: DTO classes cannot be shared with the browser without decorators and metadata
-reaching it.
+**Revisit if.** Nothing outstanding. The incompatibility this entry was watching for — the Next.js
+bundler and a CommonJS package — did not appear: Turbopack bundles it, and Zod with it, without a
+second output format or a `transpilePackages` entry. Uniformity with Nest's `class-validator`
+convention is still not a reason to change: DTO classes cannot be shared with the browser without
+decorators and metadata reaching it.
 
 ---
 
@@ -574,8 +594,9 @@ it usable on every save.
 be running for it — and, from C2, a fast suite that has to be able to run without the packages that
 suite builds. `apps/api`'s Jest configuration reads `@devsync/shared` and `@devsync/database` from
 source so `pnpm test` builds nothing, while `test:db` reads the compiled output; `@devsync/database`
-carries an ORM-independent `contracts.ts` to make the first half possible. `testing.md` has the
-mechanism. The safety gate refuses when the target is missing, malformed, not PostgreSQL,
+carries an ORM-independent `contracts.ts` to make the first half possible. **C3 extended the same
+arrangement to `apps/web`**, which now depends on `@devsync/shared` too — one alias in
+`vitest.config.mts`, and the fast command still builds nothing. `testing.md` has the mechanism. The safety gate refuses when the target is missing, malformed, not PostgreSQL,
 named anything but `devsync_test`, or the same database as `DATABASE_URL`. `TEST_DATABASE_URL`
 belongs to that tooling alone — the API never reads it, and an unset one does not stop the service
 from starting. The suite is Vitest in `@devsync/database`, which made it the second Vitest
@@ -688,33 +709,34 @@ places for a validator and a type to end up disagreeing, and a consumer that nev
 cannot import a different one.
 
 **Consequence today.** No bundler, no `tsup`, no dual package, and no runtime TypeScript loader — a
-second output format waits for a consumer that proves one necessary, and the Next.js client arriving
-in C3 is not one, because Next.js consumes CommonJS without complaint. A consumer wanting a schema
-type without importing Zod gets `ContractSchema`, `ContractValue`, and `ContractResult` from the
-package instead.
+second output format waits for a consumer that proves one necessary, and **the Next.js client that
+arrived in C3 did not**: Turbopack bundles the CommonJS output, and the Zod inside it, into the
+chunks it emits without complaint or configuration. A consumer wanting a schema type without
+importing Zod gets `ContractSchema`, `ContractValue`, and `ContractResult` from the package instead.
 
 The cost is a build that has to happen first, and it applies to **most** of the repository's
 commands rather than all of them:
 
 | Needs `@devsync/shared` built                                                  | Reads its source instead |
 | ------------------------------------------------------------------------------ | ------------------------ |
-| `pnpm build` — production compilation                                          | `pnpm test`              |
+| `pnpm build` — production compilation, including `next build`                  | `pnpm test`              |
 | `pnpm typecheck` — the repository-wide check against `dist`                    | `pnpm test:unit`         |
 | `pnpm lint` — type-aware rules read the compiled declarations                  | `pnpm test:coverage`     |
 | `pnpm test:db` — the API's PostgreSQL-backed suite loads the compiled packages |                          |
-| `node apps/api/dist/main.js` and both container images                         |                          |
+| `node apps/api/dist/main.js`, `next start`, and both container images          |                          |
 
 Those three fast commands declare **no** `dependsOn` in `turbo.json`, deliberately: `apps/api`'s
 fast Jest configuration maps `@devsync/shared` to its real `src/index.ts` and `@devsync/database` to
-its ORM-independent `src/contracts.ts`, so `pnpm test` runs with nothing built and no Prisma Client
+its ORM-independent `src/contracts.ts`, and from C3 `apps/web`'s Vitest configuration maps
+`@devsync/shared` the same way — so `pnpm test` runs with nothing built and no Prisma Client
 generated. Those are the real modules, not copies. `pnpm test:db` carries no such mapping, because
 proving the compiled packages work is the only thing it is for, and production resolves both
 packages through their `exports` maps to `dist/index.js` exactly as this decision intends.
-[`testing.md`](testing.md#how-the-fast-api-suite-runs-with-nothing-built) has the mechanism.
+[`testing.md`](testing.md#how-the-fast-suites-run-with-nothing-built) has the mechanism.
 
 **Revisit if.** `apps/api` moves to ESM, at which point the CommonJS constraint disappears for both
-packages at once. Or the browser bundle turns out to pay a real cost for CommonJS interop in C3 —
-the recorded first move is dual output from the same source, not moving the schemas.
+packages at once. The other trigger this entry named — a real cost for CommonJS interop in the
+browser bundle — did not materialise in C3.
 
 ---
 
@@ -773,6 +795,121 @@ remembers the reason for.
 **Revisit if.** Jest enables VM modules by default, or Prisma ships a query compiler that does not
 need a dynamic import. Moving `apps/api` to Vitest to avoid the flag is not the answer —
 [D7](#d7--jest-retained-for-the-nestjs-api) needs a stronger reason than one command-line argument.
+
+---
+
+### D28 — The browser API URL is a build-time, public variable
+
+**Decision.** `apps/web` reads one variable, `NEXT_PUBLIC_API_URL`, holding the API **origin**. It is
+validated once, in `src/api/api-url.ts`, at module scope; there is no default, no fallback to
+`window.location`, and no Next.js route handler or proxy in front of the API. The browser calls
+`apps/api` directly.
+
+**Implemented in C3.**
+
+**Reason.** A client that guessed where its API was would find one on the wrong host the first time
+it was deployed anywhere, and guessing from `window.location` bakes in an assumption — same origin —
+that is false in every arrangement this repository actually runs, including Compose. Validating an
+**origin** rather than a base URL is the same reasoning applied one level down: DevSync's API has no
+global prefix, so a path, a query, a fragment, or credentials in that value would each mean the
+author was describing something else, and silently trimming it would hide the mistake until a request
+404ed.
+
+A Next.js proxy was the obvious alternative and was rejected. It would have removed the need for
+CORS by adding a second hop that has to be operated, secured, and reasoned about — and it would have
+made the deployed topology quietly different from the one
+[`architecture.md`](architecture.md#the-system-today--implemented) draws, where the browser reaches
+the API and the API reaches the database.
+
+**Consequence today.** Three things follow from `NEXT_PUBLIC_*` being **inlined by `next build`**
+rather than read at runtime, and each is visible somewhere else in the repository. The value is
+**public**, so no server-only value may ever be given such a name — a database URL there would be a
+published credential. A build for one API origin **cannot be reused** for another, so the variable is
+in the `build` task's `env` in `turbo.json`, and `tests/e2e/tools/run-e2e.mjs` sets it before
+Turborepo builds anything. And the Docker image takes it as a **build argument**, whose value must be
+the host-published address rather than the Compose service name, because the browser is not on the
+Compose network.
+
+The costs are real and accepted: changing the API origin is a rebuild, `pnpm build` now fails without
+the variable, and CI has to set it. `apps/web`'s Vitest configuration supplies its own value, which
+is what keeps `pnpm test` runnable with no environment at all.
+
+**Revisit if.** DevSync is ever served from the same origin as its API — behind one reverse proxy,
+say — at which point a same-origin default becomes defensible. That is a deployment decision and
+belongs to the phase that makes one.
+
+---
+
+### D29 — CORS allows exactly one configured origin
+
+**Decision.** `apps/api` requires `WEB_ORIGIN`, validated as an exact `http:` or `https:` origin, and
+allows cross-origin requests from that origin and no other. No wildcard, no pattern, no reflected
+origin, and no credentials. The allowed methods are the five the client uses and the one allowed
+request header is `Content-Type`. It is registered in `configureHttpApplication`, so the running
+service, the fast HTTP tests, and the PostgreSQL-backed suite are configured identically.
+
+**Implemented in C3**, which is when the first legitimate cross-origin browser request existed.
+
+**Reason.** A wildcard would let any page on the internet make requests to a developer's API on
+behalf of their browser, and this API is anonymous — there is nothing behind it to refuse. Reflecting
+whatever `Origin` arrives is the same thing spelled differently. A required variable with no default
+is the other half: an API that guessed which site may read it would have stopped enforcing anything,
+and a default of `localhost:3000` would be a guess that looks like a policy.
+
+Credentials are off because DevSync sends none. Turning them on would widen what another origin could
+attempt in exchange for nothing the product asked for, and it is the setting that makes a wildcard
+illegal anyway.
+
+**What this is not.** **CORS is not access control.** It constrains browsers, and it protects nothing
+from `curl`. Every request to this API is still anonymous, and the boundary in Phase C is the network
+the API is exposed on — see [D17](#d17--phase-c-is-single-user-and-deletion-is-permanent). Phase H is
+what makes it safe.
+
+**Consequence today.** One more required variable, set in `.env.example`, in Compose, in
+`apps/api/tests/global-setup.mjs`, and in the Playwright `webServer` block. The exactness has a
+usability edge that has to be documented rather than smoothed over: `http://localhost:3000` and
+`http://127.0.0.1:3000` are different origins to a browser, so DevSync has to be opened at the
+address `WEB_ORIGIN` names. Seventeen fast tests and two end-to-end tests hold the policy, and the
+`docker` CI job checks it through the real stack.
+
+**Revisit if.** DevSync is served from more than one origin — a staging host alongside production,
+or a domain and its `www` — at which point the value becomes a list and the validator checks each
+entry. A wildcard is not the recorded alternative, and reflecting arbitrary origins never is.
+
+---
+
+### D30 — Saving is explicit, and there is no autosave
+
+**Decision.** A file's contents reach the database when the user presses Save, and at no other time.
+The workspace keeps the persisted resource and the browser draft apart, sends only the properties
+that differ, shows saved, unsaved changes, saving, and failed, and never discards a draft without a
+deliberate confirmation. **Nothing is written to browser storage** — no `localStorage`,
+`sessionStorage`, IndexedDB, or service-worker cache.
+
+**Implemented in C3.**
+
+**Reason.** Autosave is a good feature and a bad first one. It needs debouncing, request coalescing,
+a conflict story for the save that is still in flight when the next keystroke lands, and an answer
+for what a failed background write should do to a user who has moved on — and every one of those
+answers is easier to design once the collaboration model exists, because Phase E replaces the
+question entirely: a CRDT synchronises continuously and "saving" stops being an event. Building an
+autosave now would mean building it twice.
+
+Explicit saving also makes the state legible, which is the property this milestone is judged on: a
+user can tell what is stored and what is not, and the four visible states say which. Browser storage
+was rejected for a related reason — a draft cached in one tab is a second source of truth that has to
+be reconciled with the server, invalidated, and explained, and Phase C has one source of truth on
+purpose.
+
+**Consequence today.** A Save button, disabled until something changes, and a confirmation before
+anything that would abandon a draft — switching file, adding a file, deleting the open file,
+deleting the project, or leaving for the list — plus a `beforeunload` warning for the ways out the
+application does not control. A user who closes the tab through the dialog loses the draft, and that
+is the stated behaviour rather than a gap.
+
+**Revisit if.** Phase E arrives, which changes the question rather than answering it: with a CRDT
+there is no draft to save. If autosave is ever wanted before then, the recorded first move is to keep
+the explicit Save and add a background write on top of the same draft model, not to replace it.
 
 ---
 

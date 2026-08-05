@@ -2,14 +2,13 @@
 
 The milestone sequence DevSync is being built in, and the current position within it.
 
-**Phases A and B are complete, and Phase C is under way: C0, C1, and C2 are complete, and C3 is
+**Phases A and B are complete, and Phase C is under way: C0, C1, C2, and C3 are complete, and C4 is
 next.** C0 settled how persistence would be shaped; C1 built the storage half; C2 put an HTTP
-surface on it. PostgreSQL, Prisma, the schema, the committed migration, the data layer, ten
-project and file routes, and the request and response contracts in `@devsync/shared` all exist.
-**The web application still makes no request to the API**, so nothing a user can reach saves or
-loads anything — that is C3. Everything from C3 onward is a plan. A phase is described here so
-that the order and the boundaries are decided in advance, not so that it can be mistaken for
-progress.
+surface on it; **C3 connected the browser to it**. PostgreSQL, Prisma, the schema, the committed
+migration, the data layer, ten project and file routes, the contracts in `@devsync/shared`, and a
+web application that creates, opens, edits, saves, and deletes projects and files through them all
+exist. Everything from C4 onward is a plan. A phase is described here so that the order and the
+boundaries are decided in advance, not so that it can be mistaken for progress.
 
 No dates or durations appear in this document, deliberately. A phase is done when its completion
 boundary is met, and estimating that in advance would produce a number that gets quoted long
@@ -21,7 +20,7 @@ after it stopped being true.
 | ----- | ------------------------- | --------------- |
 | **A** | Project foundation        | **Complete**    |
 | **B** | Local editor              | **Complete**    |
-| **C** | Database-backed projects  | **C2 complete** |
+| **C** | Database-backed projects  | **C3 complete** |
 | D     | Rooms and presence        | Not started     |
 | E     | Single-file collaboration | Not started     |
 | F     | Multi-file collaboration  | Not started     |
@@ -34,12 +33,10 @@ after it stopped being true.
 | M     | Production hardening      | Not started     |
 | N     | Portfolio closure         | Not started     |
 
-**One piece of product functionality exists**: the Monaco editor on the home page, the single-file
-workspace holding its contents, and the language that file is read as — delivered by milestones B0,
-B1, and B2, covered in a real browser by B3, and closed by B4. Nothing else in the table above is
-built. Phase C now has a database behind it **and an HTTP API over that database**, but **nothing a
-user can reach**: an HTTP client can create a project, add files, edit them, and find them all
-still there after a restart, and no button, page, or request in the product does any of it.
+**The product is a persistent single-user workspace.** Phase B's Monaco editor is still the editing
+surface, and C3 put a database-backed project and file model around it: a project list, a project
+workspace, an explicit save, and work that survives a reload. Nothing else in the table above is
+built — no accounts, no collaboration, no presence, no history, and no execution.
 
 ---
 
@@ -134,8 +131,9 @@ reaches the real Monaco editor, survives a language change, and is discarded by 
 not independently prove that Monaco's change callback reaches React state: `@monaco-editor/react`
 pushes the controlled value into the model only when that value changes, so an integration whose
 callback never fired would still pass every browser assertion. That direction is proved
-compositionally by the component suites — `code-editor.test.tsx` for the callback, and
-`local-editor-workspace.test.tsx` for the state it lands in. This is test layering, not missing
+compositionally by the component suites — `code-editor.test.tsx` for the callback, and the workspace
+suite for the state it lands in. (`local-editor-workspace.test.tsx` was that suite until C3 replaced
+the local workspace; `project-workspace.test.tsx` is now.) This is test layering, not missing
 product behaviour; the editor works, and [`testing.md`](testing.md) is the full account.
 
 **Exclusions and dependencies.** No persistence, no collaboration, no CRDT, no WebSocket, no
@@ -157,8 +155,8 @@ before any collaboration exists.
 | C0        | Persistence architecture and project data contract | **Delivered** |
 | C1        | PostgreSQL and Prisma data layer                   | **Delivered** |
 | C2        | Project and file API                               | **Delivered** |
-| C3        | Persistent web workspace                           | **Next**      |
-| C4        | Persistence and restart validation                 | Not started   |
+| C3        | Persistent web workspace                           | **Delivered** |
+| C4        | Persistence and restart validation                 | **Next**      |
 | C5        | Phase closure                                      | Not started   |
 
 **What the phase has to add up to.** By C5, one person can create a project, list their projects,
@@ -260,44 +258,66 @@ contains SQL, a Prisma code, a table name, a connection string, or a stack. The 
 failures: an invalid UUID, an unsupported language, an empty patch, a duplicate file name within a
 project, a file addressed through the wrong project, and a project that does not exist. A file
 mutation moves its project's `updatedAt`, so the project list orders by real recent work. **Met**,
-and held by 110 integration tests against a real Nest application and a real PostgreSQL, plus 100
-schema tests and 46 fast API tests that need neither.
+and held at closure by 110 integration tests against a real Nest application and a real PostgreSQL,
+plus 100 schema tests and the 46 fast API tests that existed then. (C3 added CORS coverage to that
+fast suite; [`testing.md`](testing.md) carries the current counts.)
 
-**Excluded, and still absent.** No change to `apps/web` — it consumes nothing from
-`@devsync/shared`, makes no request to `apps/api`, and still cannot save or load anything. No CORS,
-because nothing cross-origin exists to allow yet. And no authentication: every request is anonymous,
-and the API is published on a local host port, so anything that can reach that port can read and
-delete everything in it. That is acceptable only inside Phase C's local single-user development
-boundary, and it is why **nothing in Phase C may be deployed publicly**. Phase H is what makes it
-safe.
+**Excluded at C2 closure, and delivered by C3.** When C2 finished, `apps/web` consumed nothing from
+`@devsync/shared`, made no request to `apps/api`, and could not save or load anything, and no CORS
+configuration existed. **C3 delivered all of that**, and the section below records it. What C2's
+exclusions still hold is authentication: every request is anonymous, and the API is published on a
+local host port, so anything that can reach that port can read and delete everything in it. That is
+acceptable only inside Phase C's local single-user development boundary, and it is why **nothing in
+Phase C may be deployed publicly**. Phase H is what makes it safe.
 
-### C3 — persistent web workspace
+### C3 — persistent web workspace ✅ Delivered
 
-**Deliverables.** The first call `apps/web` ever makes to `apps/api` — the first web-to-API runtime
-dependency there has ever been, and with it the Compose dependency edge from `web` to `api` and the
-first reason for CORS to exist. The database and migration ordering edges already exist; C1 added
-them. `apps/web` becomes the second application consuming `@devsync/shared`, which C2 published and
-whose schemas the API is already validating every request against. A project list and a project view;
-creating, renaming, and deleting a project; creating, opening, renaming, and deleting a file; and
-editing a file's contents against a save path that is explicit about what has reached the server.
-The language selection becomes a stored property of a file rather than a reading of one buffer,
-which is what retires the derived file name in `apps/web/src/editor/languages.ts` — the labels a
-user reads may stay there, but the identifiers and their validator are `@devsync/shared`'s from C2.
-Playwright drives the whole flow against a real web application, a real API, and a disposable
-database.
+**Delivered.** The first call `apps/web` has ever made to `apps/api`, and with it the first
+web-to-API runtime dependency, the Compose `depends_on` edge from `web` to `api`, and the first
+reason for CORS to exist. Two routes: `/` lists projects and creates, opens, renames, and deletes
+them; `/projects/[projectId]` opens one project, its files, and one file in Monaco. Files are
+created, opened, renamed, retyped, edited, and deleted, and deleting the last one is allowed.
+Phase B's `LocalEditorWorkspace` is gone — there are not two competing workspaces.
+
+**`apps/web` became the second consumer of `@devsync/shared`.** It reads the resource and request
+contracts, the error contract and its stable codes, the language identifiers, and `parseContract`,
+and it declares no Zod dependency of its own. The duplicated identifier list in
+`apps/web/src/editor/languages.ts` is gone: the file now builds its options from
+`SUPPORTED_LANGUAGE_IDS` and adds only the labels a user reads. **The derived file name is gone
+too** — a file has a stored name, and renaming it and changing its language are independent.
+
+**Saving is explicit, and the interface says what has reached the server.** A persisted snapshot and
+a browser draft are kept apart; Save is disabled until they differ, sends only the properties that
+changed, and takes the server's answer as the new authority. Saved, unsaved changes, saving, and
+failed are shown in a live region, a failed save keeps the draft, and nothing is discarded — by
+switching file, deleting, or leaving — without a deliberate confirmation. **There is no autosave and
+no browser storage.**
+
+**Two configuration values arrived**, one per side of the boundary. `NEXT_PUBLIC_API_URL` is
+validated once in `apps/web` and embedded by `next build`; `WEB_ORIGIN` is validated in `apps/api`'s
+configuration and is the one origin CORS allows — no wildcard, no credentials, and no allow-origin
+header for anything else. Both are recorded in [`decisions.md`](decisions.md) as
+[D28](decisions.md#d28--the-browser-api-url-is-a-build-time-public-variable) and
+[D29](decisions.md#d29--cors-allows-exactly-one-configured-origin).
 
 **Completion boundary.** A person opens the application, creates a project, edits a file, reloads
-the page, and finds their work exactly as they left it.
+the page, and finds their work exactly as they left it. **Met**, and held by 14 Playwright tests
+against a real web build, a real API, and a disposable PostgreSQL, plus 151 component and client
+tests in `apps/web` and 17 CORS tests in the API's fast suite.
 
-**Excluded.** No collaboration and no presence — a second browser sees the same data only by
-reloading, and two people editing the same file at once is undefined behaviour until Phase E.
+**Excluded, and still absent.** No collaboration and no presence — a second browser sees the same
+data only by reloading, and two people editing the same file at once is undefined behaviour until
+Phase E. No tabs, no file tree, no autosave, no browser storage, no pagination, and no search. And
+**no proof that the data survives a restart**: C3 proves a browser reload, and the API restart, the
+PostgreSQL restart, and the migration over existing rows are C4's.
 
 ### C4 — persistence and restart validation
 
-**Deliverables.** Proof, rather than assertion, that the data survives: a browser reload, an API
-restart, a PostgreSQL container restart, closing and reopening a project, applying the committed
-migration to an existing database without losing rows, and a database that is temporarily
-unavailable producing a controlled failure instead of a stack trace.
+**Deliverables.** Proof, rather than assertion, that the data survives everything C3 did not test:
+an API restart, a PostgreSQL container restart, applying the committed migration to an existing
+database without losing rows, and a database that is temporarily unavailable producing a controlled
+failure instead of a stack trace. The browser reload and reopening a project are C3's, and are
+covered by its Playwright suite.
 
 **Completion boundary.** Every one of those is covered by a test or a documented, reproducible
 procedure, and none of them loses a record.

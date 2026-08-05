@@ -4,23 +4,23 @@ How DevSync is tested, what each layer is responsible for proving, and — just 
 importantly — what is not tested yet.
 
 The testing architecture was introduced in **Phase A2 — testing foundation**. C1 added database
-integration tests, in `packages/database`, against a real PostgreSQL. **C2 added two more layers**:
+integration tests, in `packages/database`, against a real PostgreSQL. C2 added two more layers:
 schema tests in `packages/shared`, which need nothing, and HTTP integration tests in `apps/api`
-against the real application over that same real PostgreSQL. The product still has no collaboration,
-no accounts, and no code execution, so none of those things are tested — and persistence is now
-tested at the data layer _and_ through every route, but not from a browser, because `apps/web` makes
-no request to `apps/api`.
+against the real application over that same real PostgreSQL. **C3 added no layer and closed the
+oldest gap in this document**: the Playwright suite now drives `apps/web` calling `apps/api`, so
+persistence is tested at the data layer, through every route, _and_ from a real browser. The product
+still has no collaboration, no accounts, and no code execution, so none of those things are tested.
 
 ## Layers
 
-| Layer                  | Runner         | Lives in                     | Runs against                               |
-| ---------------------- | -------------- | ---------------------------- | ------------------------------------------ |
-| Contract               | **Vitest**     | `packages/shared`            | Schemas, in Node, in-process               |
-| Unit / component       | **Vitest**     | `apps/web`                   | React components, in jsdom, in-process     |
-| HTTP-level application | **Jest**       | `apps/api`                   | A Nest application on an ephemeral socket  |
-| Database integration   | **Vitest**     | `packages/database`          | A real PostgreSQL, with migrations applied |
-| API integration        | **Jest**       | `apps/api`                   | The real `AppModule`, over that PostgreSQL |
-| Browser / full-stack   | **Playwright** | `tests/e2e` (`@devsync/e2e`) | The built applications, on real ports      |
+| Layer                  | Runner         | Lives in                     | Runs against                                  |
+| ---------------------- | -------------- | ---------------------------- | --------------------------------------------- |
+| Contract               | **Vitest**     | `packages/shared`            | Schemas, in Node, in-process                  |
+| Unit / component       | **Vitest**     | `apps/web`                   | React components and the API client, in jsdom |
+| HTTP-level application | **Jest**       | `apps/api`                   | A Nest application on an ephemeral socket     |
+| Database integration   | **Vitest**     | `packages/database`          | A real PostgreSQL, with migrations applied    |
+| API integration        | **Jest**       | `apps/api`                   | The real `AppModule`, over that PostgreSQL    |
+| Browser / full-stack   | **Playwright** | `tests/e2e` (`@devsync/e2e`) | Both built applications and a real database   |
 
 Six layers, three runners. No runner was added: the two new layers joined the runner their workspace
 already used.
@@ -70,16 +70,16 @@ refuses unknown keys, parsing a summary that leaked a `content` property _is_ th
 
 ### `apps/web` — `tests/home-page.test.tsx` (Vitest, jsdom, 8 tests)
 
-Renders the real `src/app/page.tsx` with React Testing Library and asserts that the page
-identifies the product as DevSync, describes what DevSync is, states which phase the repository
-is at, gives the workspace a place on the page, says that the file is temporary and that a refresh
-discards the changes and returns the file to TypeScript, says that choosing a language re-reads the
-one file rather than opening another, and does not claim that collaboration, persistence, or
-execution work yet.
+Renders the real `src/app/page.tsx` with React Testing Library and asserts that the page identifies
+the product as DevSync, describes what DevSync is, states which phase the repository is at, gives the
+project list a place on the page, says that saved work survives a reload and that nothing is saved
+until Save, and does not claim collaboration, presence, version history, or accounts exist. One test
+asserts the **absence** of Phase B's copy about a refresh discarding changes, because that sentence
+became false the moment C3 made saving real.
 
-The workspace is stubbed to a bare element here. This file is about what the page says and what it
-places on the page; the workspace and the editor each have their own file below, and a page test
-that also drove Monaco's loading behaviour would fail for two unrelated reasons at once.
+The list is stubbed to a bare element here. This file is about what the page says and what it places
+on the page; the list and the workspace each have their own file below, and a page test that also
+drove data loading would fail for two unrelated reasons at once.
 
 The home page is a Server Component, but a synchronous one that touches no server-only API — it
 is an ordinary function returning JSX, so it mounts directly and no test-only wrapper had to be
@@ -87,46 +87,118 @@ invented for it. `layout.tsx` is different: it imports `next/font/google`, which
 Next.js compiler resolves, so Vitest cannot load it. The metadata it declares is therefore
 asserted by Playwright against the real document instead of being re-implemented in a mock.
 
-### `apps/web` — `tests/local-editor-workspace.test.tsx` (Vitest, jsdom, 17 tests)
+### `apps/web` — the API client (Vitest, jsdom, 38 tests)
 
-The state-ownership layer, and the reason B1 and B2 are testable at all. `CodeEditor` is replaced by
-a plain textarea honouring the same controlled contract, typed as the real `CodeEditorProps` so the
-stand-in cannot drift from the boundary without the type-check noticing. That is enough to act as a
-user typing and a user choosing, without pretending jsdom can run Monaco. What it proves about the
-content:
+`tests/api-url.test.ts` (15) covers the one value `apps/web` reads from its environment: an http or
+https origin is accepted, a trailing slash is normalised away, and a missing value, a non-URL, a
+non-browser scheme, credentials, a query, a fragment, and a path are each refused with a message
+naming what was wrong. One test asserts that `API_BASE_URL` resolves at module scope, which is what
+makes a bad value fail the build rather than a request.
 
-- the workspace opens the sample file, names it `main.ts`, and opens it as TypeScript;
-- what the user types is kept — the value is the workspace's, not the editor's;
-- a re-render does not reset it, which is what distinguishes owned state from a prop passed down
-  every render;
-- a file emptied to `''` stays empty, because empty is valid content;
-- **remounting starts again from the sample**, which is the positive proof that nothing is stored
-  anywhere.
+`tests/api-client.test.ts` (23) drives every operation against a stubbed `fetch`. It asserts the URL
+and method of each route, `cache: 'no-store'` on reads, `Content-Type` only when there is a body, an
+abort signal reaching the request, and an abort being rethrown untouched rather than reported as a
+failure. On the failure side: the shared error resource becomes a typed failure carrying its stable
+code, status, and field-level issue; a success body that does not match its contract, a body that is
+not JSON, and a failure body that is not the error resource all become the client's own
+`MALFORMED_RESPONSE`; a rejected request becomes `API_UNAVAILABLE`; and a driver-level message such
+as `ECONNREFUSED 127.0.0.1:5433` is proved **not** to reach the message a user would see.
 
-And about the language:
+**The delete contract is asserted in both directions.** A `204` is proved to be treated as no body by
+answering with a `Response` whose `json()` would reject; a `200`, a `201`, and a `202` are each
+proved to be **refused** as `MALFORMED_RESPONSE`, because the delete routes answer `204` and nothing
+else, and reporting a deletion that may not have happened is the failure worth refusing. A
+documented `404 PROJECT_NOT_FOUND` from a delete is still read as that error rather than swept into
+the malformed case.
 
-- TypeScript is the selected language on first render, and the selector says so;
-- exactly five options are offered, with the labels a user reads — asserted against a list restated
-  in the test rather than imported from the component, which would only prove it agrees with
-  itself;
-- selecting each of the other four hands that Monaco language to the editor and shows the file
-  under the matching name — `main.js`, `main.py`, `data.json`, `README.md`;
-- **content typed before a language change is still there afterwards**, which is the whole claim of
-  the milestone: one buffer, read differently;
-- a re-render does not reset the language, for the same reason it does not reset the content;
-- **remounting opens as TypeScript again**, so the language is stored exactly as little as the
-  content is;
-- a value the markup never offered — which a `<select>` reports as an empty string — is ignored
-  rather than stored, which is the guard that keeps an arbitrary DOM string out of the state
-  without a cast.
+Nothing here starts a server. The claim being tested is what the client sends and what it makes of
+what comes back — decisions this layer makes on its own. That the routes behave is `pnpm test:db`'s,
+and that the two meet is `pnpm test:e2e`'s.
 
-The selector is queried by its accessible name rather than by a test id, so the test fails if the
-label stops being associated with the control.
+### `apps/web` — `tests/languages.test.ts` and `tests/file-draft.test.ts` (Vitest, 26 tests)
 
-The workspace can never be handed an `undefined` value: `CodeEditorProps` promises a string, and
-the file below covers Monaco's `undefined` being dropped before it could reach here. That is a
-boundary the type system enforces, so it is tested where it is actually decided rather than
-re-asserted through a cast.
+`languages.test.ts` (14) holds the boundary C3 moved. The offered identifiers are asserted to equal
+`SUPPORTED_LANGUAGE_IDS` **in its order**, so a second list cannot reappear; the five labels are
+written out in the test rather than imported, because a test reading the same metadata the component
+renders from would only prove it agrees with itself; and every option is asserted to carry exactly
+`id` and `label`, which is what fails if a derived `fileName` ever comes back. The validator is
+proved exact — `TypeScript` is not `typescript`, `rust` is refused, an empty string is refused, and
+`main.ts` infers nothing.
+
+`file-draft.test.ts` (12) covers what a save sends and what "unsaved changes" means: a draft is the
+three editable properties and nothing else, each of them alone marks the file dirty, emptying the
+content is a real change, an unchanged draft produces **no** patch, and a patch carries only the
+properties that actually differ.
+
+### `apps/web` — `tests/project-list-view.test.tsx` (Vitest, jsdom, 16 tests)
+
+The list, with the four operations it uses replaced and everything else real — the error type, the
+code check, and the issue lookup are the actual ones, so a component that read a failure wrongly
+fails here.
+
+It covers the loading state, a loaded list in the API's order, the empty state still offering the
+create form, and an API-unavailable state whose retry succeeds. Creating navigates to the new
+project and refuses to submit twice while a request is in flight; a validation failure is shown
+against the name field and does not navigate. Renaming is proved **not** to show the new name until
+the server has answered — the request is left pending and the old heading asserted, then resolved —
+and a rename or delete that comes back `PROJECT_NOT_FOUND` removes the row, because the list was
+stale rather than the request wrong. Deleting asks first, does nothing when refused, and warns that
+it is permanent.
+
+Timestamps are asserted through the `datetime` attribute rather than the rendered text, which is
+formatted in the reader's own locale.
+
+### `apps/web` — `tests/project-workspace.test.tsx` (Vitest, jsdom, 52 tests)
+
+The state-ownership layer, and the file that replaced `local-editor-workspace.test.tsx`. `CodeEditor`
+is replaced by a plain textarea honouring the same controlled contract, typed as the real
+`CodeEditorProps` so the stand-in cannot drift from the boundary without the type-check noticing.
+That is enough to act as a user typing, without pretending jsdom can run Monaco.
+
+- **Loading a project** — the loading state, the project name and its files, the first file opened
+  with its content and its stored language, a `PROJECT_NOT_FOUND` shown as a not-found view with a
+  route back rather than a blank editor, a failed load offering a retry that succeeds, and a project
+  with no files showing an empty state without requesting a file at all.
+- **The save model** — Save is disabled and the status says `Saved` until something differs; a
+  keystroke makes it `Unsaved changes`; a save sends **only** the property that changed, proved
+  separately for content, name, and language; an emptied file is saved as `''`; a language change
+  leaves the name alone and a rename leaves the language alone; a value the selector never offered is
+  ignored; the server's answer becomes the new authority, so a name the API trimmed settles instead
+  of staying dirty; the file list shows the new name; a failed save keeps the draft and says
+  `Save failed`; a duplicate name is shown at the name field with `aria-invalid`; a later success
+  clears the earlier failure; and the status is in an `aria-live` region.
+- **Switching files** — the other file loads; an unsaved draft is protected by a confirmation that,
+  refused, leaves the draft alone and makes **no** second request; accepted, it switches; and with
+  nothing unsaved nothing is asked.
+- **Creating a file** — created empty with the chosen language, added to the list, opened; a
+  duplicate name is shown at the field; and an unsaved draft is protected **before** the request, so
+  a refused confirmation creates nothing.
+- **Deleting a file** — asks first, does nothing when refused, removes it and opens the next file,
+  allows the **last** file to go and shows the empty state without deleting the project, warns that
+  an unsaved draft goes with it, and reconciles the list when a file turns out to be gone already.
+- **The project itself** — renaming shows the name the server answered with, deleting asks and then
+  returns to the list, a refused confirmation deletes nothing, and leaving for the list with an
+  unsaved draft asks first.
+- **A write that finds the resource gone** — a save answering `FILE_NOT_FOUND` removes the file and
+  opens the next one, or shows the empty state when it was the only one; a save answering
+  `PROJECT_NOT_FOUND` shows the project-not-found view; and a delete answering either does the same.
+  **Neither is shown as a retryable error**, because a retry could never succeed. Reverting either
+  path to the code it replaced fails exactly the three assertions that cover what was broken, which
+  is how the fix was confirmed to be real rather than reasoned about.
+- **One write at a time** — using deferred promises so a request genuinely stays open: a delete
+  cannot start while a save is in flight (the button is disabled, the API is not called, and the
+  confirmation is not even asked), and a save cannot start while a delete is, **including through a
+  form submit**, which is the path pressing Enter in the name field takes and therefore the one that
+  reaches the handler past a disabled button. A failed save and a failed delete each return both
+  controls to a usable state with no pending indicator left behind, and a delete refused during a
+  save is proved to go through once that save completes.
+- **Retrying a file that failed to load** — a temporary failure offers a retry and leaves the file
+  selected and in the list; the retry makes a second request for the same file and opens it; the
+  loading state is shown while it is in flight; a second failure stays retryable; and a file that is
+  genuinely gone reconciles instead of offering a retry.
+
+The controls are queried by accessible name rather than by test id, so a test fails if a label stops
+being associated with its control.
 
 ### `apps/web` — `tests/code-editor.test.tsx` (Vitest, jsdom, 11 tests)
 
@@ -155,13 +227,18 @@ the side of the boundary DevSync owns:
 **Nothing here proves Monaco works.** That is not what this layer is for; the Playwright suite
 covers the real editor in a real browser.
 
-### `apps/api` — configuration and lifecycle (Jest, 16 tests)
+### `apps/api` — configuration and lifecycle (Jest, 28 tests)
 
 `src/config/api-configuration.spec.ts` covers the validator that decides whether the API starts at
 all: the port defaults to 3001 and is rejected when it is not a TCP port, `DATABASE_URL` is
 required and rejected when it is blank, unparseable, not PostgreSQL, or names no database — and one
 test asserts that a failure message never repeats the connection string, because it carries a
 password.
+
+**C3 added `WEB_ORIGIN` to the same file.** It is required and refused when blank; an https origin is
+accepted; a trailing slash is normalised away, because a browser never sends one; and a value that
+is not a URL, a non-browser scheme, credentials, a query, a fragment, or a path is each refused —
+the path case asserting that the message names the origin that was meant.
 
 `src/database/database.lifecycle.spec.ts` proves the wiring, with a stand-in for the data layer
 typed as the real `Database` so it cannot drift from the interface: Nest connects during
@@ -184,6 +261,31 @@ of the built process rather than of the health feature, and they belong to the l
 **It boots `HealthModule` directly, so it needs no database** — which is why it stayed a
 sub-second test after C1 gave `AppModule` a connection to open. The API integration suite and the
 Playwright suite are what prove the real `AppModule` starts, database and all.
+
+### `apps/api` — `src/http-application.spec.ts` (Jest, 17 tests)
+
+C3's layer, and the one that proves the cross-origin boundary without a database. It boots a real
+Nest application through the **same** `configureHttpApplication` that `main.ts` calls, so the
+settings under test are the ones that run. `HealthModule` is the module it uses, because CORS is
+middleware in front of the router: what it does to a request has nothing to do with which route the
+request was going to reach, and a preflight never reaches one at all.
+
+- the configured origin is allowed, and the header is never a wildcard;
+- `Vary: Origin` is sent, so one origin cannot be served a cached answer meant for another;
+- another origin — including one crafted to look like a prefix of the allowed one — gets **no**
+  allow-origin header, while the request itself still succeeds, because CORS is enforced by the
+  browser rather than by refusing to answer;
+- no `Access-Control-Allow-Credentials` header is ever sent;
+- a request with no `Origin` at all is answered exactly as before, which is what keeps non-browser
+  clients working;
+- a preflight from the web origin is answered for each of the five methods, names exactly those five
+  and not `PUT`, allows exactly `Content-Type`, and exposes no additional response header;
+- a preflight from another origin gets nothing to work with.
+
+It is not a claim that any route works. That is `pnpm test:db`'s, and those routes run with this same
+configuration — `api-exception.filter.spec.ts` and the PostgreSQL-backed suite both call
+`configureHttpApplication`, so the body limit and the error boundary are proved **behind** the CORS
+middleware rather than beside it.
 
 ### `apps/api` — the error boundary and the mappers (Jest, 29 tests)
 
@@ -214,37 +316,63 @@ a property rather than being dropped, a column the contract does not name is not
 a stored language the supported list no longer contains fails as an internal error instead of being
 coerced.
 
-### `tests/e2e` — Playwright, 8 tests
+### `tests/e2e` — Playwright, 14 tests
 
-`specs/web/home.spec.ts` (6 tests) loads `/` from the production build served by `next start`
-and asserts the response status is `200`, that the document title is `DevSync`, that the
-level-1 heading names the product, and that the editor region is visible. The title assertion is
-what covers `layout.tsx`.
+**This is the layer C3 changed most.** Before it, the browser wrote nothing and the suite proved that
+each application served correctly without proving they talked to each other, because they did not.
+Now every test below runs against a real production web build, a real compiled API, and a real
+disposable PostgreSQL, with nothing mocked at any layer.
 
-The editor assertion is deliberately shallow. It proves the thing jsdom cannot: that a client
-component carrying Monaco survives server rendering, reaches a real browser, and paints. It
-matches the region DevSync labels rather than anything inside Monaco's own DOM, so a Monaco
-upgrade cannot break it for a reason that has nothing to do with DevSync.
+`specs/web/home.spec.ts` (4 tests) loads `/` and asserts the response status is `200`, the document
+title is `DevSync` — the assertion that covers `layout.tsx` — and the level-1 heading names the
+product. One test asserts that the **project list loaded**: the heading, the create form, no loading
+message left over, and no API-unavailable message. That is a stronger claim than it looks, because
+the list is fetched by the browser from another origin: a page that never got past `loading`, or one
+whose request was refused by CORS, fails there. The last asserts that Phase B's "refreshing discards
+your changes" copy is gone and the replacement is present.
 
-The remaining three drive the language selector in the real browser, which they can do in full
-because it is ordinary application markup rather than part of Monaco: the file opens as TypeScript
-under `main.ts`; selecting Python leaves the selector on `python`, shows the file as `main.py`, and
-leaves the editor region mounted; and switching away and reloading returns both the selector and
-the name to TypeScript and `main.ts`, because nothing is stored. The selector is found by its
-label, and the assertions stay on DevSync's own values — how Monaco then highlights the text is
-Monaco's business.
+`specs/web/persistence.spec.ts` (4 tests) is the milestone's claim.
 
-### `tests/e2e` — `specs/web/local-editor.spec.ts` (Playwright, 1 test)
+- **Create, edit, save, reload.** It opens `/`, creates a uniquely named project, arrives at
+  `/projects/:projectId`, and asserts the generated `main.ts` — its name, its TypeScript language,
+  and the starter content. It clicks the **real Monaco** code surface, replaces the buffer with a
+  unique marker, asserts the status became `Unsaved changes`, presses Save, asserts it became
+  `Saved`, and reloads. After the reload the marker is present, the starter content is not, and the
+  name and language are unchanged. Nothing in the browser could have supplied that: it came back from
+  PostgreSQL.
+- **No autosave.** A second test types into the editor, never saves, navigates away and back, and
+  asserts the starter content is what the server still has.
+- **Project operations.** Rename in the workspace, return to the list, find the new name there —
+  which is the rename having reached the database rather than a heading that changed — reopen it,
+  delete it, and assert it is gone from the list **and** still gone after a reload.
+- **A project that is not there** is shown as a not-found view with a route back, and no editor.
 
-The only place in the repository that drives the real Monaco editor. One test, because the guarantee
-is one sequence: a browser user types, changes the language, and reloads. It clicks the rendered
-code surface, selects the buffer with `ControlOrMeta+A`, types `const browserEdit = 42;`, and
-asserts the line appears in the editor. It then selects Python and asserts the selector, the file
-name, **and that the typed line is still there and the sample is not**. Finally it reloads and
-asserts the sample is back, the typed line is gone, and the selector and name have returned to
-TypeScript and `main.ts`.
+`specs/web/files.spec.ts` (3 tests) covers the file half: a second file created with its own name and
+a chosen language, content saved into it, switching to the starter file and back with each keeping
+its own name, language, and content, a rename that leaves the language alone, a language change that
+leaves the name alone, a reload proving all three were stored, and finally deleting it. A second test
+deletes the **last** file, asserts the empty state survives a reload, asserts the project itself is
+untouched, and adds a new file to it. A third covers the browser-visible conflict: creating a file
+named `main.ts` in a project that already has one shows the API's `409 FILE_NAME_TAKEN` as a
+field-level message with `aria-invalid` on the input, and a reload proves nothing was created.
 
-Three properties of it are deliberate:
+`specs/api/cors.spec.ts` (2 tests) asks the **running** service for `/projects` with the browser's
+origin and with another one, asserting the allow-origin header is present and exact for the first and
+absent for the second, with no credential allowance. The fast Jest suite proves the same settings
+against an application it configures itself; this proves the deployed process read `WEB_ORIGIN` from
+its environment and is answering the origin the browser in this suite actually loads from.
+
+`specs/api/health.spec.ts` (1 test) requests `/health` from the compiled `dist/main.js` running on a
+real port and asserts status `200` and the exact expected payload. The overlap with the Jest test is
+intentional and is not duplication: the Playwright test is the only thing that proves the service
+bootstraps, that `AppModule` really imports `HealthModule`, that the build produced working output,
+and that the process binds the port it was given. The Jest test is the only thing that catches a
+regression in the health feature in under two seconds, without a build or a browser.
+
+#### Driving the real Monaco editor
+
+`specs/web/support/workspace.ts` holds the one helper that reaches into Monaco, and three properties
+of it are deliberate — inherited from the Phase B test it replaced, for the same reasons:
 
 - **One Monaco-owned selector, scoped beneath the region DevSync labels.** Monaco's accessible
   textbox is real but drawn off-view at effectively zero size, so it can be found by role and never
@@ -265,33 +393,30 @@ Three properties of it are deliberate:
   to machine-speed _programmatic_ edits — a CRDT applying remote operations, in Phase E — and that
   is the milestone that has to answer it.
 
-**What this test proves, and what it does not.** Both halves of this were established by mutation
-rather than reasoned about, which is why they can be stated precisely.
+**What the browser now proves that it could not before.** In Phase B, `@monaco-editor/react` only
+pushes the controlled value into the model when that value changes, so a `CodeEditor` that never
+forwarded a change would have left Monaco behaving as an uncontrolled editor and every browser
+assertion would still have passed. **C3 closed that gap without a test hook**: the save status is
+application state rendered outside the editor and derived from the draft, so a keystroke that never
+reached React would leave the status on `Saved`, and the assertion that it became `Unsaved changes`
+would fail. The save-and-reload assertion closes it a second time, from the database's side.
 
-It proves that a real keystroke in Chromium reaches Monaco's model and renders, that a legitimate
-workspace rerender does not restore stale content over it, and that a reload discards it. Making the
-workspace hand `CodeEditor` the initial sample instead of the current content on a language change
-fails it, at the assertion that the typed line is still present.
+That is a real gain rather than a rewording, and it is why the mutation-tested caveat that used to
+sit here has been removed: the direction is now observable in a real browser, and the component
+suites cover it as well.
 
-It does **not** prove that Monaco's change callback reaches React state. Stopping `CodeEditor` from
-forwarding a valid change leaves this test passing, because `@monaco-editor/react` re-drives the
-controlled value into the editor only when that value actually changes: if the callback never fires
-the prop never changes, nothing is ever pushed back, and Monaco simply behaves as an uncontrolled
-editor. That direction is proved compositionally in jsdom instead — `code-editor.test.tsx` for
-Monaco's change reaching `onChange`, and `local-editor-workspace.test.tsx` for `onChange` reaching
-the content state. That is sound layering, but the browser test must not be described as observing
-it. Closing the gap in a real browser would need application state visible somewhere other than the
-editor, which nothing in the product requires; it is recorded here rather than manufactured with a
-test-only hook.
+#### Serial, and why
 
-`specs/api/health.spec.ts` (1 test) requests `/health` from the compiled `dist/main.js` running
-on a real port and asserts status `200` and the exact expected payload.
+`fullyParallel` is off and `workers` is `1`. The browser tests write — they create projects and files
+through the real interface, against one schema in one database — so running them concurrently would
+make the project list a shared mutable fixture, and a suite whose assertions depend on what another
+test happened to have created is flaky by construction. Per-worker isolation is not worth building
+for a suite this size; when it is, that is the setting that changes.
 
-The overlap with the Jest test is intentional and is not duplication: the Playwright test is the
-only thing that proves the service bootstraps, that `AppModule` really imports `HealthModule`,
-that the build produced working output, and that the process binds the port it was given. The
-Jest test is the only thing that catches a regression in the health feature in under two
-seconds, without a build or a browser. Each catches failures the other structurally cannot.
+Every test still names its project uniquely and deletes it in a `finally`, through the API rather
+than the interface — a cleanup step that drove the UI would fail for the same reason the test did.
+The suite therefore leaves the disposable database as it found it, and `tools/run-e2e.mjs` resets it
+before the next run regardless.
 
 ## Commands
 
@@ -316,6 +441,10 @@ schedules nine `#test` tasks and not one `#build` or `#generate`. After `pnpm cl
 `packages/database/src/generated`, `packages/database/dist`, `packages/shared/dist`,
 `apps/api/dist`, and `apps/web/.next` are all still absent. A previously built tree proves nothing
 here; the clean tree is the test.
+
+**C3 was the change most likely to break that**, because it made `apps/web` depend on a package that
+builds. What kept it true is one alias, described in
+[the section below](#how-the-fast-suites-run-with-nothing-built).
 
 | Command         | Needs PostgreSQL | Runs                                                           |
 | --------------- | ---------------- | -------------------------------------------------------------- |
@@ -390,14 +519,14 @@ of the input hash. `test:e2e` names both application builds explicitly for the s
 That split is the whole point: the suites that exercise real processes and a real database build
 what they exercise, and the suite that runs on every save builds nothing.
 
-### How the fast API suite runs with nothing built
+### How the fast suites run with nothing built
 
-`apps/api` depends on two workspace packages that are compiled for production. If its fast suite
-loaded them from `dist`, `pnpm test` would have to run `prisma generate` and two `tsc` invocations
-before its first assertion — which is exactly the promise this document makes and the reason the
-dependency was removed.
+`apps/api` depends on two workspace packages that are compiled for production, and **from C3
+`apps/web` depends on one of them**. If either fast suite loaded them from `dist`, `pnpm test` would
+have to run `prisma generate` and two `tsc` invocations before its first assertion — which is exactly
+the promise this document makes and the reason the dependency was removed.
 
-So the fast suite reads their TypeScript instead. `apps/api/jest.config.mjs` maps the two package
+So both fast suites read the TypeScript instead. `apps/api/jest.config.mjs` maps the two package
 specifiers:
 
 ```js
@@ -408,7 +537,14 @@ moduleNameMapper: {
 ```
 
 and `apps/api/tsconfig.test.json` carries the matching `paths`, so ts-jest **type-checks** against
-the same sources it loads. Four properties of that arrangement are deliberate:
+the same sources it loads. `apps/web/vitest.config.mts` does the same thing for the one package it
+consumes, beside the `@/` alias it already restated:
+
+```ts
+'@devsync/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),
+```
+
+Four properties of that arrangement are deliberate:
 
 - **They are the real modules.** The same Zod schemas the API validates every request against, and
   the same `PersistenceError` class it throws. Nothing is copied, mocked, or re-declared.
@@ -419,10 +555,16 @@ the same sources it loads. Four properties of that arrangement are deliberate:
   generated Prisma Client — it holds the records, the operation interfaces, `Database`, and
   `PersistenceError`, and imports nothing from Prisma. A fast test that reached for `createDatabase`
   would fail to resolve, which is the right answer: opening a connection belongs to `pnpm test:db`.
-- **Production is untouched.** `pnpm build`, `node apps/api/dist/main.js`, and both container images
-  resolve `@devsync/shared` and `@devsync/database` through their `exports` maps to `dist/index.js`,
-  exactly as before. `jest.db.config.mjs` carries no mapping at all, because proving the compiled
-  packages work is the only thing that suite is for.
+- **Production is untouched.** `pnpm build`, `node apps/api/dist/main.js`, `next build`, `next start`,
+  and both container images resolve `@devsync/shared` and `@devsync/database` through their `exports`
+  maps to `dist/index.js`, exactly as before — the aliases exist only in the two test configurations.
+  `jest.db.config.mjs` carries no mapping at all, because proving the compiled packages work is the
+  only thing that suite is for.
+
+`apps/web`'s Vitest configuration also sets `NEXT_PUBLIC_API_URL` in `test.env`, so the component
+suites configure the value the application refuses to start without rather than inheriting whatever a
+developer's `.env` happens to say — which is what lets `pnpm test` pass on a machine with no `.env`
+at all.
 
 `test:coverage` declares `coverage/**` as its output and is cached like any other deterministic
 task. `test:e2e` sets `cache: false`: its result depends on live processes binding real ports
@@ -444,15 +586,37 @@ pnpm exec turbo run test --force --dry=json   # no task may end in #build or #ge
 
 ## How the end-to-end suite starts the services
 
-`tests/e2e/playwright.config.ts` declares two `webServer` entries, and Playwright starts both
-before the first test and shuts both down afterwards.
+`pnpm test:e2e` runs `tests/e2e/tools/run-e2e.mjs`, which does two things before Turborepo is
+invoked at all, and then hands over.
+
+- **It resets the disposable database** through `@devsync/database/test-database`, the same safety
+  gate the database suites use. It has to happen here rather than in a Playwright `globalSetup`,
+  because Playwright starts its `webServer` processes **before** a global setup runs — a reset there
+  would drop the schema out from under an API that had already connected to it.
+- **It sets `NEXT_PUBLIC_API_URL=http://127.0.0.1:4311`.** That value is embedded by `next build`, so
+  it has to be in the environment before Turborepo builds `apps/web`, not when Playwright starts.
+  Setting it there is also what makes it part of the `build` task's environment hash, so a build made
+  for port 3001 cannot be replayed from the cache for a suite running on 4311. It is a Node process
+  rather than a `VAR=value command` prefix because pnpm runs scripts through `cmd.exe` on Windows,
+  where that is not syntax.
+
+`playwright.config.ts` then declares two `webServer` entries, and Playwright starts both before the
+first test and shuts both down afterwards.
 
 ```text
 apps/web   pnpm exec next start --port 4310    ready when GET http://127.0.0.1:4310/ answers
 apps/api   node dist/main.js  (API_PORT=4311)  ready when GET http://127.0.0.1:4311/health answers
+           DATABASE_URL=<the disposable database>, WEB_ORIGIN=http://127.0.0.1:4310
 ```
 
-Four properties of that setup are load-bearing:
+**The config refuses to run when the web build points somewhere else.** It compares
+`NEXT_PUBLIC_API_URL` with the API base URL it is about to start and throws with an instruction to
+use `pnpm test:e2e` — so a build made for another port is a loud failure at the first line of the
+run rather than a suite quietly driving a client that calls a server nobody started. That is also
+what makes `pnpm --filter @devsync/e2e test:e2e` safe to leave documented: it fails immediately
+rather than misleading.
+
+Five properties of that setup are load-bearing:
 
 - **Production output, not development servers.** The `test:e2e` Turborepo task declares
   `@devsync/web#build` and `@devsync/api#build` as dependencies, which is what puts
@@ -464,14 +628,17 @@ Four properties of that setup are load-bearing:
   the API, the very endpoint under test — with an explicit timeout (120 s for the web build,
   60 s for the API). **Nothing in the suite waits on a fixed delay**: every assertion auto-waits,
   there is no `waitForTimeout`, and `retries` is `0`. The one timing value anywhere in it is the
-  50 ms between keystrokes in the real-editor test, which paces input like a person rather than
+  50 ms between keystrokes in the Monaco helper, which paces input like a person rather than
   waiting for anything.
 - **`reuseExistingServer` is off.** A server already listening on a test port is an error, not
   an accidental test subject. The suite can never pass by talking to something a developer
   started by hand.
-- **Configuration comes from the config file, not from a file on disk.** This repository has no
-  `.env` loading, so `API_PORT` is passed through the `webServer` environment and the web port
-  through a command-line argument.
+- **The API under test is configured explicitly, not inherited.** `API_PORT`, `DATABASE_URL`, and
+  `WEB_ORIGIN` are passed through the `webServer` environment and the web port through a command-line
+  argument. `apps/api` does load `.env`, and that is exactly why: inheriting it would point the API
+  under test at the development database and have it answer a browser on port 3000, neither of which
+  is what this suite is.
+- **One worker, in order.** See [Serial, and why](#serial-and-why) above.
 
 Paths are resolved from `__dirname`, so the suite behaves identically whether it is started by
 Turborepo, by pnpm, or by hand from any directory.
@@ -523,45 +690,33 @@ what is missing is a number, not the testing.
 the same fast Jest configuration, so it reads the two workspace packages from source exactly as
 `pnpm test` does.
 
-Numbers from the last measured run of `apps/web` and `apps/api`, taken before C1 added the API's
-configuration and lifecycle code and **not re-measured since C2 added its routes** — they describe a
-smaller application than the one that exists now, and are kept only because a stated stale figure is
-more useful than a deleted one:
+**No coverage figure is currently published here.** The last measured numbers described a repository
+before C1's configuration code, C2's routes, and C3's entire client existed, so they were deleted at
+C3 rather than left to be read as current. Re-measuring is a one-command exercise —
+`pnpm test:coverage` — and a number quoted in a document is stale the moment the next milestone
+lands, which is what the previous entry demonstrated.
 
-```text
-apps/web               79.54%  statements  (page.tsx, local-editor-workspace.tsx and
-                                            languages.ts 100%, code-editor.tsx 80.76%,
-                                            layout.tsx and the three worker entry points 0%)
-apps/api               68.75%  statements  (health.controller.ts and health.module.ts 100%,
-                                            app.module.ts 0%)
-```
-
-Both numbers are reported as measured, including the parts that look bad:
+What has not changed is which files a coverage report cannot speak for, and each is worth knowing
+before reading one:
 
 - `apps/web/src/app/layout.tsx` is at 0% because Vitest cannot import it at all — `next/font/google`
   only resolves inside the Next.js compiler. It is covered in substance by the Playwright title
   assertion, which no coverage tool attributes back to it.
-- `apps/web/src/editor/code-editor.tsx` is short of 100% by exactly the three worker factories, and
-  the three entry points in `src/editor/workers/` are at 0% for the same reason: jsdom has no web
-  workers, so the functions that construct them are never called and the modules they point at are
-  never loaded. They run in Chromium, under Playwright, where nothing attributes them back either.
-  The figure fell slightly at B2 because JSON's language service added a fourth branch to
-  `getWorker` and a third entry point, all of them in that same unmeasurable region.
-- **`apps/web/src/editor/local-editor-workspace.tsx` and `src/editor/languages.ts` are at 100%**,
-  which is what a component holding two values and a five-entry list should be. They are the least
-  interesting numbers here and the easiest to keep honest.
-- `apps/api/src/app.module.ts` is at 0% because the Jest test boots `HealthModule` directly. The
-  Playwright suite boots the real `AppModule`, again without being attributed.
+- `apps/web/src/editor/code-editor.tsx` is short of 100% by exactly the worker factories, and the
+  entry points in `src/editor/workers/` are at 0% for the same reason: jsdom has no web workers, so
+  the functions that construct them are never called and the modules they point at are never loaded.
+  They run in Chromium, under Playwright, where nothing attributes them back either.
+- `apps/api/src/app.module.ts` is at 0% because the Jest tests boot individual modules directly. The
+  PostgreSQL-backed suite and the Playwright suite boot the real `AppModule`, again without being
+  attributed.
 - `apps/api/src/main.ts` is excluded from measurement rather than reported at 0%. It calls
   `app.listen`, so importing it from an in-process test would bind a port as a side effect of
   measuring it. Playwright runs it for real instead.
 
-**No coverage thresholds are configured, deliberately.** Five source files and three one-line worker
-entry points are still too small a base for a percentage to mean anything, and a threshold on a
-foundation this size mostly invites
-tests written to satisfy the number. Thresholds should be introduced with the first milestone
-that adds substantive application logic — a real service, a real reducer, a real protocol
-handler — and set from what that code actually achieves rather than from a round number.
+**No coverage thresholds are configured, deliberately.** A threshold invites tests written to satisfy
+a number, and the useful version of it is set from what real application logic actually achieves.
+C3 is the first milestone with a body of client logic worth measuring; introducing a threshold is a
+decision for the phase closure, not something to bolt on with the code.
 
 ## The database layer — `packages/database` (Vitest, 57 tests)
 
@@ -587,8 +742,8 @@ proves the migration produces a database the code can actually work against.
 set, be a valid URL, be PostgreSQL, name `devsync_test`, and address a different database from
 `DATABASE_URL`. Any of those failing is a refusal with a message explaining which, and no message
 ever contains the connection string, because it carries a password. The gate lives in
-`tools/test-database.mjs` because the end-to-end suite prepares the same database and must not
-carry a second copy of the rules.
+`tools/test-database.mjs` because the API's integration suite and the end-to-end runner prepare the
+same database and must not carry a second copy of the rules.
 
 **"A different database" is decided on a canonical form, not on string equality** —
 `safety-gate.test.ts` is the 18 tests that hold it. `postgres:` and `postgresql:` are one scheme,
@@ -688,21 +843,15 @@ the fast suite above, and stopping PostgreSQL under a running API is C4's.
 
 ## Still planned
 
-### C3 — the browser
-
-Playwright, against the real web application, the real API, and a disposable database: create a
-project, add a file, edit it, reload, and find it unchanged. This is also where the repository's
-oldest testing gap closes — the suite finally exercises `apps/web` calling `apps/api`, which today
-it cannot, because that call does not exist.
-
 ### C4 — restarts
 
-The milestone that proves persistence rather than asserting it: a browser reload, an API restart, a
-PostgreSQL container restart, closing and reopening a project, the committed migration applying to
-a database that already holds rows without losing any, and a database that is temporarily
-unavailable producing a controlled `503` instead of a stack trace.
+The milestone that proves persistence against the failures C3 did not exercise: an API restart, a
+PostgreSQL container restart, the committed migration applying to a database that already holds rows
+without losing any, and a database that is temporarily unavailable producing a controlled `503`
+instead of a stack trace. **The browser reload, and closing and reopening a project, are C3's** and
+are covered above.
 
-### The task it runs under
+### The task the database suites run under
 
 `pnpm test:db` is a root script with a matching `turbo.json` task, added together the way every
 other test task was — a root script calling a task Turborepo does not know about silently does
@@ -738,16 +887,21 @@ to see that error does not go looking for one.
 ### How the end-to-end suite gets a database
 
 From C1 the API refuses to start without one, so `pnpm test:e2e` would otherwise fail at the
-`webServer` step. The `test:e2e` task therefore depends on `@devsync/database#migrate:test`, which
-applies the committed migrations to `devsync_test` through the same safety gate, and
-`playwright.config.ts` passes that database to the API it starts.
+`webServer` step. **C3 changed how that database is prepared**, because from C3 the browser writes to
+it: `tools/run-e2e.mjs` calls `prepareTestDatabase({ reset: true })` — the same helper and the same
+safety gate the database suites use — before Turborepo builds anything, so every run starts from an
+empty schema with the committed migration applied. `playwright.config.ts` then passes that database
+to the API it starts.
 
-The suite uses the disposable test database and never the development one, and it still destroys
-nothing: the browser tests exercise `apps/web`, which makes no request to `apps/api`, so the API
-they start writes nothing. `reuseExistingServer` stays `false` for both applications. PostgreSQL is
-the one process the suite does not start for itself — Compose runs it, which is a documented
-prerequisite rather than a hidden one, and a suite that started its own database could pass while
-the Compose file was wrong.
+That replaced the `@devsync/database#migrate:test` dependency the `test:e2e` task used to carry. The
+task is still defined so a developer can migrate the disposable database by hand, but nothing depends
+on it: a migration that did not also reset would leave the previous run's projects in the list this
+suite now reads.
+
+The suite uses the disposable test database and never the development one. `reuseExistingServer`
+stays `false` for both applications. PostgreSQL is the one process the suite does not start for
+itself — Compose runs it, which is a documented prerequisite rather than a hidden one, and a suite
+that started its own database could pass while the Compose file was wrong.
 
 ## How collaboration will be tested later
 
@@ -773,11 +927,9 @@ needs the collaboration transport to exist first.
 
 ## Known limitations
 
-- **No cross-application test exists**, because no such behaviour exists: `apps/web` never calls
-  `apps/api` today. The end-to-end suite proves each application serves correctly; it does not
-  prove they talk to each other, because they do not.
-- **No browser test touches persistence.** Every route is covered through Supertest, and none of it
-  is reached from Chromium, because nothing in the interface reaches it. That is C3's.
+- **Nothing proves the data survives a restart.** The browser suite proves a reload, which is a new
+  page against the same running processes. An API restart, a PostgreSQL restart, and the committed
+  migration applied over existing rows are **C4's**, and no document may describe them as proved.
 - **The `503` and `500` persistence paths are proved by injection, not by a real outage.** The
   mapping is exercised against a data layer told to fail; a database that genuinely goes away under
   a running API is C4's test, and doing it inside the integration run would take the rest of the run
@@ -785,10 +937,6 @@ needs the collaboration transport to exist first.
 - **The database suite needs a PostgreSQL somebody else started.** `docker compose up -d database`
   is a prerequisite rather than something the suite arranges, which is a deliberate trade: a suite
   that starts its own database could pass while the Compose file was wrong.
-- **Monaco's change callback is proved in jsdom, not in a browser.** `specs/web/local-editor.spec.ts`
-  proves a real keystroke reaches Monaco and survives a workspace rerender; it cannot prove the
-  Monaco → React half, for the reason set out in that test's section above. The direction is covered
-  by the component suites against a stand-in.
 - **Machine-speed edits lose characters.** The controlled value is rewritten into the model whenever
   it disagrees with it, so edits arriving faster than React commits are overwritten by a stale
   value. Human-paced typing and paste were both verified unaffected at Phase B closure, so no user
@@ -797,13 +945,13 @@ needs the collaboration transport to exist first.
 - **No test asserts how Monaco highlights a language.** The suites prove that the selected language
   reaches Monaco and that the content survives the change; tokenisation is Monaco's, and asserting
   it here would test Microsoft's code through DevSync's.
-- **Monaco's own editing behaviour is not re-tested.** Undo, selection, multi-cursor, suggestions,
-  search, and copy-paste are Microsoft's to cover. B3 asserts one line typed through one integration
-  boundary, which is the part DevSync owns.
-- **Monaco's own behaviour is not tested and should not be.** Tokenisation, the language service,
-  and the worker protocol are Microsoft's to cover; DevSync tests the boundary it owns.
-- **Concurrent editing, persistence, authentication, reconnection, and code execution are
-  untested**, because none of them are implemented.
+- **Monaco's own behaviour is not tested and should not be.** Undo, selection, multi-cursor,
+  suggestions, search, copy-paste, tokenisation, the language service, and the worker protocol are
+  Microsoft's to cover. The browser suite asserts one line typed through one integration boundary,
+  which is the part DevSync owns.
+- **Concurrent editing, authentication, reconnection, and code execution are untested**, because
+  none of them are implemented. Two browsers editing the same project is undefined behaviour, and
+  no test asserts anything about it.
 - **Chromium only.** Firefox and WebKit are not installed or run. One engine is enough to prove
   a page renders and an endpoint answers; cross-browser coverage earns its place once there is
   browser-specific behaviour to disagree about.
@@ -822,20 +970,26 @@ needs the collaboration transport to exist first.
 | Workspace                | Runner     | Real tests | Environment           | In `pnpm test`  |
 | ------------------------ | ---------- | ---------- | --------------------- | --------------- |
 | `@devsync/shared`        | Vitest     | 100        | node                  | yes             |
-| `@devsync/web`           | Vitest     | 36         | jsdom                 | yes             |
-| `@devsync/api`           | Jest       | 46         | node                  | yes             |
+| `@devsync/web`           | Vitest     | 151        | jsdom                 | yes             |
+| `@devsync/api`           | Jest       | 75         | node                  | yes             |
 | `@devsync/api`           | Jest       | 110        | node, real PostgreSQL | no — `test:db`  |
 | `@devsync/database`      | Vitest     | 57         | node, real PostgreSQL | no — `test:db`  |
-| `@devsync/e2e`           | Playwright | 8          | Chromium and HTTP     | no — `test:e2e` |
+| `@devsync/e2e`           | Playwright | 14         | Chromium and HTTP     | no — `test:e2e` |
 | `@devsync/collaboration` | none       | 0          | —                     | —               |
 | `@devsync/ui`            | none       | 0          | —                     | —               |
 | `@devsync/test-utils`    | none       | 0          | —                     | —               |
 | `@devsync/config`        | none       | 0          | —                     | —               |
 
-**Three hundred and fifty-seven real tests in total**, of which **182 run in `pnpm test`**, **167 in
-`pnpm test:db`** — 57 in the data layer, 110 in the API — and 8 in `pnpm test:e2e`. Of the 167, 149
+**Five hundred and seven real tests in total**, of which **326 run in `pnpm test`**, **167 in
+`pnpm test:db`** — 57 in the data layer, 110 in the API — and 14 in `pnpm test:e2e`. Of the 167, 149
 genuinely reach PostgreSQL; the other 18 are the safety gate, which connects to nothing and lives
 there because it is database tooling.
+
+`apps/web`'s 151 break down as 8 for the home page, 38 for the API client and its configuration, 26
+for the language metadata and the draft model, 16 for the project list, 52 for the workspace, and 11
+for the Monaco wrapper. `apps/api`'s 75 are 28 for configuration and lifecycle, 17 for the HTTP
+application and its CORS policy, 13 for the error boundary, 8 for the pipes, 8 for the mappers, and 1
+for health.
 
 The four workspaces without a runner print that they have no tests and exit successfully — as does
 `@devsync/database` under `pnpm test`, where it says its tests need PostgreSQL and names the command

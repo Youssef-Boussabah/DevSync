@@ -16,10 +16,11 @@ import type { LanguageId } from '@devsync/shared';
 
 const STARTER_LANGUAGE: LanguageId = 'typescript';
 
-// The sample `apps/web` opens with today. Its comment stops being true for a
-// project that persists; the client that says it is what C3 replaces, and this
-// content follows whatever that milestone decides a new project should say.
-const STARTER_CONTENT = `// This file lives in your browser's memory. Refreshing the page discards it.
+// C3 made this content reachable from a browser, which is what retired the line
+// it used to carry about living in browser memory. It says what is now true: the
+// file is stored, and Save is what stores it.
+const STARTER_CONTENT = `// Your first DevSync file. Edit it, press Save, and it will still be here
+// after a reload — it lives in the database, not in this tab.
 export function greet(name: string): string {
   return \`Hello, \${name}!\`;
 }

@@ -4,12 +4,13 @@ What runs on GitHub Actions, what each job proves, and how to reproduce any of i
 
 The workflow was introduced in **Phase A4 — CI foundation**. Phase B needed no new job, step, or
 secret; **C1 added one job and a PostgreSQL service to another**, because there is now a data layer
-to exercise and an API that will not start without a database. **C2 added no job**: the API's
-PostgreSQL-backed HTTP tests arrived inside `pnpm test:db`, which the `database` job already ran,
-and the `docker` job gained one read-only request. CI adds no capability to DevSync; it runs the
-checks that already existed, on someone else's machine, on every change. Every command in the
-workflow is one you can run yourself, which is the point — a red run should never require reading
-CI internals to reproduce.
+to exercise and an API that will not start without a database. C2 added no job. **C3 added no job
+either**: it added one workflow-level environment variable, because `apps/web` no longer builds
+without knowing where its API is, and two read-only verification steps to the `docker` job. There are
+still four jobs, and still no CI-only script. CI adds no capability to DevSync; it runs the checks
+that already existed, on someone else's machine, on every change. Every command in the workflow is
+one you can run yourself, which is the point — a red run should never require reading CI internals to
+reproduce.
 
 The single workflow lives in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
@@ -69,6 +70,12 @@ value in `.env.example`. Nothing has to be translated between a local run and a 
 the same reason there is no CI-only script. Neither job sets `DATABASE_URL`: nothing in CI should
 be able to reach a database that is not the disposable one it just started.
 
+**`WEB_ORIGIN` is not set by any job**, and that is deliberate rather than an omission. The API's
+PostgreSQL-backed suite sets it in `apps/api/tests/global-setup.mjs`, beside the database URL and for
+the same reason — a run's configuration should not depend on what a developer's `.env` happens to
+say — and the end-to-end suite passes it to the API process it starts. A runner has no `.env` at all,
+so anything a job did not state is genuinely unset.
+
 ### `quality`
 
 ```text
@@ -82,6 +89,13 @@ pnpm build
 
 Each is a **separate workflow step**, so a red run names the gate that failed in the job summary
 instead of making someone read a log to find out. Any non-zero exit fails the job immediately.
+
+**`pnpm build` needs `NEXT_PUBLIC_API_URL` from C3**, because `apps/web` refuses to build without
+knowing where its API is and a runner has no `.env`. It is set once at the workflow level, to the
+same development value `.env.example` carries. The `e2e` job does not use it: `pnpm test:e2e` sets
+the port that suite builds for, overriding whatever it inherits. **`pnpm test` still needs nothing** —
+`apps/web`'s Vitest configuration supplies the value itself, which is what keeps the fast command
+runnable on a machine with no environment at all.
 
 `format:check` and `lint` are used, never `format` or `lint:fix`. CI reports on the tree; it
 never rewrites it. A formatting violation is a failure to be fixed in a commit, not something
@@ -107,11 +121,15 @@ itself, to the validated test target, after the gate has run.
 ### `e2e`
 
 Starts the same PostgreSQL service container, installs dependencies, installs Chromium, then runs
-`pnpm test:e2e`. That Turborepo task builds both applications, applies the migrations to the test
-database, starts the applications on ports 4310 and 4311, waits on HTTP readiness checks, and runs
-the three Playwright specs. The database is there because **the API refuses to start without one**;
-the browser assertions themselves are unchanged. See [`testing.md`](testing.md) for what those
-specs assert.
+`pnpm test:e2e` — the same command a developer runs, unchanged by C3. That command resets the
+disposable database, builds both applications with `NEXT_PUBLIC_API_URL` pointing at port 4311,
+starts them on 4310 and 4311, waits on HTTP readiness checks, and runs the five Playwright specs
+serially.
+
+**C3 is what makes this job worth the runner time.** Before it, the browser tests proved that each
+application served correctly; now they create projects and files through the real interface, save
+them, reload, and read them back — the only place in CI where the whole path from a keystroke to a
+row and back is exercised. See [`testing.md`](testing.md) for what each spec asserts.
 
 ### `docker`
 
@@ -122,13 +140,18 @@ depended on a host toolchain would not be testing the images.
 ```text
 docker compose config --quiet          # the Compose file is valid
 docker compose build                   # every image builds from the repository root
-docker compose up --detach --wait      # PostgreSQL, the migration, then both applications
+docker compose up --detach --wait      # PostgreSQL, the migration, the API, then the web app
 <verify database>                      # the health status is `healthy`
 <verify migrate>                       # the one-shot service exited 0, with its log printed
 <verify web>                           # HTTP 200, and the page identifies DevSync
 <verify api>                           # the exact health payload
 <verify projects>                      # GET /projects is 200 and a JSON array
+<verify CORS>                          # the web origin is allowed and no other is
+<verify web image>                     # the API URL is embedded, and no database value is
 ```
+
+The ordering in the third line is C3's: `web` waits for a healthy `api`, which waits for a healthy
+database and a migration that exited 0.
 
 `--wait` blocks until every service reports healthy and exits non-zero if one does not, so the
 health checks already declared in `compose.yaml` are the gate. There is no fixed sleep anywhere.
@@ -164,6 +187,24 @@ to clean up. Creating a project here to exercise more of the API would mean eith
 the same step or letting the containers carry state between assertions, and neither buys anything
 the `database` job has not already proved against a real database.
 
+C3 added two more, on the same terms — both read-only, and neither needing a browser:
+
+```bash
+# the configured origin is allowed, exactly, and any other gets no header at all
+curl -s -D - -o /dev/null -H 'Origin: http://127.0.0.1:3000' http://127.0.0.1:3001/projects
+curl -s -D - -o /dev/null -H 'Origin: http://evil.example'   http://127.0.0.1:3001/projects
+
+# the browser half of the same configuration, read out of the running web container
+docker compose exec -T web sh -c "grep -rlF 'http://127.0.0.1:3001' /repo/apps/web/.next/static"
+! docker compose exec -T web sh -c "grep -rqE 'postgres(ql)?://|DATABASE_URL' /repo/apps/web/.next"
+```
+
+The first pair proves the running API read `WEB_ORIGIN` and enforces it — the fast Jest suite proves
+the same policy against an application it configures itself, which is a different claim. The second
+proves the API origin really was embedded at build time, and that **no database value reached the
+image**. A **browser** flow is deliberately not run here: it would mean installing Chromium in the
+Docker job, and the `e2e` job already drives one against the same code.
+
 On failure, a step guarded by `if: failure()` prints `docker compose ps --all` and
 `docker compose logs --no-color`. It sits **before** the cleanup step, so the containers still
 exist to be read from.
@@ -187,6 +228,8 @@ images are built, exercised, and discarded.
 env:
   NODE_VERSION: '24'
   COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+  TEST_DATABASE_URL: postgresql://devsync:devsync@127.0.0.1:5433/devsync_test
+  NEXT_PUBLIC_API_URL: http://127.0.0.1:3001
 ```
 
 Node 24 matches the `node:24.13.0-alpine` the production images pin and satisfies the
@@ -293,6 +336,8 @@ Every CI step maps to a command you already have. There is no CI-only script to 
 | Build images              | `docker compose build`                                                |
 | Start and wait for health | `docker compose up --detach --wait`                                   |
 | Verify the endpoints      | `curl http://127.0.0.1:3000/`, `…:3001/health`, and `…:3001/projects` |
+| Verify CORS               | `curl -D - -H 'Origin: http://127.0.0.1:3000' …:3001/projects`        |
+| Verify the web image      | `docker compose exec web sh -c "grep -rl … /repo/apps/web/.next"`     |
 | Clean up                  | `docker compose down --volumes --remove-orphans`                      |
 
 To reproduce a whole job in one go:
@@ -303,12 +348,12 @@ pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typeche
 
 ## Current limitations
 
-- **The C1 and C2 jobs have not yet been observed running on GitHub.** The workflow parses, and
+- **The C1, C2, and C3 jobs have not yet been observed running on GitHub.** The workflow parses, and
   every command in it has been run locally against the current commit — including `pnpm test:db`
-  covering both persistence suites, `pnpm test:e2e`, and the full Compose stack with its migration
-  and both HTTP verifications. What has not been proved is the runner-specific part: service
-  containers, their published ports, and the health options attached to them. The first run against
-  a real pull request is that proof.
+  covering both persistence suites, `pnpm test:e2e` covering the browser flow, and the full Compose
+  stack with its migration, its HTTP verifications, and C3's CORS and image checks. What has not been
+  proved is the runner-specific part: service containers, their published ports, and the health
+  options attached to them. The first run against a real pull request is that proof.
 - **No branch protection is configured**, so a failing run does not yet block a merge. That is a
   repository setting rather than a file, and it is not something this milestone can add.
 - **Playwright browsers are downloaded on every `e2e` run** — roughly 300 MB and a minute or so.

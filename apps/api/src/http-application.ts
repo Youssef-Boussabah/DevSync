@@ -10,7 +10,8 @@ import { validationFailed } from './common/api-error';
  *
  * Splitting these settings between `main.ts` and a test would mean the suite
  * exercising an application configured differently from the one that runs —
- * which is exactly how a body limit or an error shape ends up proved nowhere.
+ * which is exactly how a body limit, an error shape, or an allowed origin ends
+ * up proved nowhere.
  */
 
 /**
@@ -23,6 +24,12 @@ export const JSON_BODY_LIMIT_BYTES = 1_048_576;
 /** How that limit is described to a client that exceeded it. */
 export const JSON_BODY_LIMIT_DESCRIPTION = '1 MiB';
 
+/** The methods the C3 browser client uses, and the only ones a preflight is answered for. */
+export const CORS_METHODS = ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'] as const;
+
+/** The only request header DevSync's client sets: every body it sends is JSON. */
+export const CORS_ALLOWED_HEADERS = ['Content-Type'] as const;
+
 /**
  * Nest's own JSON parser is switched off so there is exactly one, with one limit.
  * Left on, its 100 kB parser would sit in front of the one below and the larger
@@ -30,7 +37,37 @@ export const JSON_BODY_LIMIT_DESCRIPTION = '1 MiB';
  */
 export const HTTP_APPLICATION_OPTIONS: NestApplicationOptions = { bodyParser: false };
 
-export function configureHttpApplication(app: NestExpressApplication): void {
+export interface HttpApplicationOptions {
+  /**
+   * The exact origin `apps/web` is served from. Passed in rather than read here,
+   * so this function keeps knowing nothing about the environment and a test can
+   * state the origin it is asserting against.
+   */
+  webOrigin: string;
+}
+
+export function configureHttpApplication(
+  app: NestExpressApplication,
+  { webOrigin }: HttpApplicationOptions,
+): void {
+  // First, so a preflight is answered before anything else looks at the request.
+  //
+  // The origin is given as a one-element list rather than a string: that is what
+  // makes the underlying middleware compare the request's `Origin` against it and
+  // send `Access-Control-Allow-Origin` only on a match, instead of echoing
+  // whatever arrived. There is no wildcard and no pattern — one origin, named in
+  // configuration.
+  //
+  // `credentials` is off, and stays off: DevSync sends no cookie and no
+  // `Authorization` header, so allowing them would widen what a page on another
+  // origin could attempt without anything in the product asking for it.
+  app.enableCors({
+    origin: [webOrigin],
+    methods: [...CORS_METHODS],
+    allowedHeaders: [...CORS_ALLOWED_HEADERS],
+    credentials: false,
+  });
+
   app.useBodyParser('json', { limit: JSON_BODY_LIMIT_BYTES });
 
   // Immediately after the parser, so it is the next error handler Express reaches

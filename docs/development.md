@@ -85,7 +85,7 @@ dependency order, and caches what is safe to cache.
 | `pnpm test`             | Every in-process source suite — Vitest and Jest. Builds nothing, starts nothing |
 | `pnpm test:unit`        | The Vitest layer only                                                           |
 | `pnpm test:db`          | The data layer then the API's routes, both against a running PostgreSQL         |
-| `pnpm test:e2e`         | Playwright, against freshly built applications                                  |
+| `pnpm test:e2e`         | Playwright: resets the test database, then builds and drives both applications  |
 | `pnpm test:e2e:install` | Downloads Chromium. Once per machine                                            |
 | `pnpm test:all`         | `test`, then `test:db`, then `test:e2e`, in sequence. Needs PostgreSQL          |
 | `pnpm test:coverage`    | Coverage for `apps/web` and `apps/api`                                          |
@@ -162,9 +162,9 @@ curl http://localhost:3001/health
 # {"status":"ok","service":"devsync-api"}
 ```
 
-From C2 it also serves projects and the files inside them. Nothing in the browser calls these yet —
-`apps/web` makes no request to `apps/api` until C3 — so an HTTP client is the only way to reach
-them:
+From C2 it also serves projects and the files inside them, and **from C3 the browser is what calls
+them**: open http://127.0.0.1:3000, create a project, edit a file, and press Save. An HTTP client
+still works too:
 
 ```bash
 curl -X POST http://localhost:3001/projects \
@@ -175,31 +175,39 @@ curl http://localhost:3001/projects
 # 200, most recently updated first
 ```
 
+**Open DevSync at `http://127.0.0.1:3000`, not `http://localhost:3000`.** To a browser those are two
+different origins, and the API allows exactly the one in `WEB_ORIGIN`. Loading the other one leaves
+every request without an allow-origin header and the project list stuck on an error. If you prefer
+`localhost`, change `WEB_ORIGIN` **and** `NEXT_PUBLIC_API_URL` in your `.env` to match and rebuild —
+the API URL is embedded at build time.
+
 Every route is listed in [`architecture.md`](architecture.md#appsapi--implemented). **Every request
-is anonymous**, so the API is safe only on a machine you control; Phase H is what changes that.
+is anonymous**, so the API is safe only on a machine you control; Phase H is what changes that. CORS
+does not change it: it constrains browsers, not clients in general.
 
 ## Testing
 
-Six layers, three runners, three hundred and fifty-seven real tests — Vitest over the schemas in
+Six layers, three runners, five hundred and seven real tests — Vitest over the schemas in
 `packages/shared`, Vitest in `apps/web`, Jest in `apps/api` twice over (fast, and against a real
 database), Vitest against a real PostgreSQL in `packages/database`, and Playwright in `tests/e2e`.
 
 ```bash
-pnpm test        # fast: in-process source only, no builds, no browser, no database  (182)
+pnpm test        # fast: in-process source only, no builds, no browser, no database  (326)
 pnpm test:db     # the data layer, then the API's HTTP routes, both against PostgreSQL  (167)
-pnpm test:e2e    # builds both applications, starts them, drives Chromium  (8)
+pnpm test:e2e    # resets the test database, builds both apps, starts them, drives Chromium  (14)
 ```
 
 **`pnpm test` builds nothing at all** — no workspace build, no Prisma generation — so
 `pnpm clean && pnpm test` passes with every `dist/`, `.next/`, and generated client still absent
-afterwards. The fast API suite reads `@devsync/shared` and `@devsync/database` from their TypeScript
-sources through `apps/api/jest.config.mjs`, while `pnpm build`, `node dist/main.js`, and Docker all
-keep resolving the compiled `dist` output. [`testing.md`](testing.md#how-the-fast-api-suite-runs-with-nothing-built)
-is the full account.
+afterwards. The fast suites read `@devsync/shared` and `@devsync/database` from their TypeScript
+sources, through `apps/api/jest.config.mjs` and `apps/web/vitest.config.mts`, while `pnpm build`,
+`node dist/main.js`, `next build`, and Docker all keep resolving the compiled `dist` output.
+[`testing.md`](testing.md#how-the-fast-suites-run-with-nothing-built) is the full account.
 
 `pnpm test:db` runs its two suites **in sequence**, not in parallel: they reset and rewrite the same
 schema in the same disposable database. It and `pnpm test:e2e` do build their real runtime
-dependencies, which is the point of them.
+dependencies, which is the point of them. `pnpm test:e2e` also **resets** the disposable database
+before it builds anything, because from C3 the browser tests write to it.
 
 `pnpm test` is the inner loop and must stay fast, which is why nothing in it builds, launches a
 browser, or connects to anything. The other two need `docker compose up -d database` first. A workspace with no implementation prints that it has no tests and exits cleanly; that
@@ -275,11 +283,27 @@ cp .env.example .env               # the values Compose runs with
 API_PORT=4000 pnpm --filter @devsync/api dev   # the shell still overrides
 ```
 
-`.env.example` is the documented inventory: `API_PORT` (optional, defaults to 3001),
-`DATABASE_URL` (**required** — the API refuses to start without it and never falls back to a
-default), and `TEST_DATABASE_URL` (read only by the database and end-to-end tooling; an unset one
-affects nothing else). The web application reads `PORT` and `HOSTNAME` only in its container, where
-`compose.yaml` sets them.
+`.env.example` is the documented inventory:
+
+| Variable              | Required | Read by                                   |
+| --------------------- | -------- | ----------------------------------------- |
+| `API_PORT`            | no       | `apps/api` — defaults to 3001             |
+| `DATABASE_URL`        | **yes**  | `apps/api`, passed to `@devsync/database` |
+| `WEB_ORIGIN`          | **yes**  | `apps/api` — the one origin CORS allows   |
+| `NEXT_PUBLIC_API_URL` | **yes**  | `apps/web`, **while it builds**           |
+| `TEST_DATABASE_URL`   | no       | `pnpm test:db` and `pnpm test:e2e` only   |
+
+None of the three required values has a default: a service that guessed its database, its allowed
+origin, or its API would fail in a way that is much harder to diagnose than a refusal at startup.
+
+**`NEXT_PUBLIC_API_URL` is read while `apps/web` compiles, not while it runs**, and `NEXT_PUBLIC_`
+means public — whatever is in it is visible to every visitor, so no server-only value may ever be
+given such a name. Changing it means rebuilding; Turborepo knows, because the variable is part of the
+`build` task's environment hash. Next.js reads `.env` from the application's own directory rather
+than the repository root, so `apps/web/next.config.ts` loads the root file explicitly.
+
+The web application reads `PORT` and `HOSTNAME` only in its container, where `compose.yaml` sets
+them.
 
 `.env` is git-ignored, and `.dockerignore` keeps every `.env*` file out of both build contexts.
 **This repository contains no secrets**: the PostgreSQL credentials in `.env.example` and
@@ -311,7 +335,7 @@ it. It reads the schema and never touches a database.
 `pnpm test:db` drops the test schema before it runs, so it refuses to start against any database
 that is not `devsync_test` — and against one that turns out to be the same database as
 `DATABASE_URL`. Those refusals are the point rather than an inconvenience. The API's own
-database-backed suite uses that same gate, through
+database-backed suite and the end-to-end runner both use that same gate, through
 `@devsync/database/test-database`, rather than carrying a second copy of the rules.
 
 The reasoning behind all of it is in [`architecture.md`](architecture.md#phase-c--the-persistence-architecture),

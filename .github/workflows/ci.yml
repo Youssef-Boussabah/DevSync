@@ -39,6 +39,10 @@ env:
   # character the one in `.env.example` and nothing has to be translated between
   # a local run and a CI run.
   TEST_DATABASE_URL: postgresql://devsync:devsync@127.0.0.1:5433/devsync_test
+  # Runners have no `.env`, and `apps/web` refuses to build without knowing where
+  # its API is. This is the development value from `.env.example`; the `e2e` job
+  # does not use it, because `pnpm test:e2e` sets the port that suite builds for.
+  NEXT_PUBLIC_API_URL: http://127.0.0.1:3001
 
 # The PostgreSQL image is deliberately NOT a variable here. A service container's
 # `image:` cannot read the `env` context, so a variable would have to be repeated
@@ -249,6 +253,32 @@ jobs:
           cat /tmp/projects.json
           [ "$status" = "200" ]
           grep -q '^\[' /tmp/projects.json
+
+      # C3's cross-origin boundary, proved through the real stack without a
+      # browser: the configured origin is allowed and any other gets no
+      # allow-origin header to work with. Read-only, like the step above.
+      - name: Verify CORS allows the web origin and no other
+        run: |
+          allowed="$(curl --silent --show-error --max-time 10 --dump-header - --output /dev/null \
+            -H 'Origin: http://127.0.0.1:3000' http://127.0.0.1:3001/projects \
+            | tr -d '\r' | grep -i '^access-control-allow-origin:' || true)"
+          echo "allowed: $allowed"
+          [ "$allowed" = "access-control-allow-origin: http://127.0.0.1:3000" ]
+
+          refused="$(curl --silent --show-error --max-time 10 --dump-header - --output /dev/null \
+            -H 'Origin: http://evil.example' http://127.0.0.1:3001/projects \
+            | tr -d '\r' | grep -ci '^access-control-allow-origin:' || true)"
+          echo "allow-origin headers for another origin: $refused"
+          [ "$refused" = "0" ]
+
+      # The browser half of the same configuration: the API origin is embedded in
+      # what the web image serves, and nothing about the database is.
+      - name: Verify the web image carries the API URL and no database configuration
+        run: |
+          docker compose exec -T web sh -c \
+            "grep -rlF 'http://127.0.0.1:3001' /repo/apps/web/.next/static >/dev/null"
+          ! docker compose exec -T web sh -c \
+            "grep -rqE 'postgres(ql)?://|DATABASE_URL' /repo/apps/web/.next"
 
       # Before the cleanup step below, so the containers still exist to be read from.
       - name: Show container status and logs

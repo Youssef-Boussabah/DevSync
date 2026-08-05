@@ -8,6 +8,9 @@
 #
 # `docker compose down` keeps your projects. Only `down --volumes` deletes the
 # `postgres_data` volume, and with it every project and file in it.
+#
+# **Open DevSync at http://127.0.0.1:3000**, not at `localhost:3000`. The API
+# allows exactly one browser origin and those two are different origins.
 
 name: devsync
 
@@ -80,6 +83,11 @@ services:
       # value that is not stated here is not configured at all.
       API_PORT: '3001'
       DATABASE_URL: postgresql://devsync:devsync@database:5432/devsync
+      # The one origin the API answers cross-origin browser requests for, and the
+      # address to open DevSync at. It is matched exactly: to a browser
+      # `http://localhost:3000` is a different origin from the one below, and a
+      # page loaded at that address gets no allow-origin header back.
+      WEB_ORIGIN: http://127.0.0.1:3000
     depends_on:
       database:
         condition: service_healthy
@@ -102,6 +110,16 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        # A build argument, not an environment variable: `next build` embeds this
+        # into the JavaScript it emits, so it is fixed when the image is built and
+        # changing it means rebuilding.
+        #
+        # The **host-published** address, because the code that uses it runs in the
+        # user's browser. `http://api:3001` would resolve inside the Compose
+        # network and nowhere else, and every request would fail with a name the
+        # browser cannot look up.
+        NEXT_PUBLIC_API_URL: http://127.0.0.1:3001
     init: true
     ports:
       - '3000:3000'
@@ -111,6 +129,13 @@ services:
       # every interface inside the container rather than on loopback only.
       PORT: '3000'
       HOSTNAME: 0.0.0.0
+    depends_on:
+      # C3's edge, and the first runtime dependency `web` has ever had on `api`.
+      # The browser — not this container — is what calls the API, so this does not
+      # make the page fail without it; what it does is stop Compose reporting the
+      # stack as up while the only thing the page can do is show an error.
+      api:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -121,9 +146,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-# No `depends_on` from `web` to `api`, deliberately. `apps/web` still makes no
-# request to `apps/api`, so declaring one would describe a dependency that does
-# not exist. That edge arrives in C3, with the first call.
 
 volumes:
   # Named, so `docker compose down` leaves the data behind and only

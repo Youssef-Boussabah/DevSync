@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
@@ -19,6 +20,7 @@ import type {
   ProjectFileSummaryResource,
 } from '@devsync/shared';
 import { AppModule } from '../../src/app.module';
+import type { ApiConfiguration } from '../../src/config/api-configuration';
 import { DATABASE } from '../../src/database/database.token';
 import { HTTP_APPLICATION_OPTIONS, configureHttpApplication } from '../../src/http-application';
 
@@ -55,7 +57,15 @@ export function useApi(): Api {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
 
     app = moduleRef.createNestApplication<NestExpressApplication>(HTTP_APPLICATION_OPTIONS);
-    configureHttpApplication(app);
+
+    // The same origin `tests/global-setup.mjs` put in the environment, read back
+    // through the validated configuration rather than restated — so this suite
+    // exercises the value the application actually accepted.
+    configureHttpApplication(app, {
+      webOrigin: moduleRef
+        .get(ConfigService<ApiConfiguration, true>)
+        .get('webOrigin', { infer: true }),
+    });
 
     // `init` runs the lifecycle hooks, which is what opens the connection. No
     // `listen`: Supertest binds an ephemeral socket per request, so the suite

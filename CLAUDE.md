@@ -101,17 +101,27 @@ followed by `pnpm test` has to pass with `packages/*/dist`, `packages/database/s
 `apps/api/dist` still absent afterwards. `test`, `test:unit`, and `test:coverage` therefore declare
 **no `dependsOn`** in `turbo.json`; do not add `^build` back to any of them.
 
-What makes that possible is `apps/api/jest.config.mjs`: it maps `@devsync/shared` to
-`packages/shared/src/index.ts` and `@devsync/database` to `packages/database/src/contracts.ts`, with
-`tsconfig.test.json` carrying the matching `paths` so ts-jest type-checks against the same sources.
-Those are the real modules, not copies. **Production is unaffected** — `pnpm build`,
-`node dist/main.js`, and Docker all resolve both packages through their `exports` maps to `dist`.
-`jest.db.config.mjs` deliberately carries no mapping, because that suite must load the compiled
-packages.
+What makes that possible is a source-level alias in each workspace that consumes a package which
+builds. `apps/api/jest.config.mjs` maps `@devsync/shared` to `packages/shared/src/index.ts` and
+`@devsync/database` to `packages/database/src/contracts.ts`, with `tsconfig.test.json` carrying the
+matching `paths` so ts-jest type-checks against the same sources; `apps/web/vitest.config.mts` maps
+`@devsync/shared` to that same `src/index.ts`, which is what kept the fast command build-free when
+C3 made the web application the package's second consumer. Those are the real modules, not copies.
+**Production is unaffected** — `pnpm build`, `node dist/main.js`, `next build`, and Docker all
+resolve the packages through their `exports` maps to `dist`. `jest.db.config.mjs` deliberately
+carries no mapping, because that suite must load the compiled packages.
 
 Browser runs live behind `pnpm test:e2e`, the browser download behind `pnpm test:e2e:install`, and
 database runs behind `pnpm test:db` — never inside an ordinary test command. Those three may build
 their real runtime dependencies; the fast command may not.
+
+`pnpm test:e2e` runs `tests/e2e/tools/run-e2e.mjs`, which does two things Turborepo and Playwright
+cannot: it resets the disposable database through `@devsync/database/test-database` **before** the
+applications are built or started, and it puts `NEXT_PUBLIC_API_URL=http://127.0.0.1:4311` in the
+environment so the web build embeds the API this suite actually starts. `playwright.config.ts`
+refuses to run when the two disagree. Do not move either into a Playwright `globalSetup`: Playwright
+starts its `webServer` processes before a global setup runs, so a reset there would drop the schema
+under an API that had already connected.
 
 `pnpm test:db` runs the `packages/database` suite and then the `apps/api` suite, **sequentially**,
 because both reset the same schema. Keep that ordering explicit in the root script rather than
@@ -164,8 +174,12 @@ alongside PostgreSQL.
   `...` suffix, which would drag `@devsync/config` and TypeScript in, and it passes
   **`--no-optional`**, without which `@prisma/client`'s optional peers put the Prisma CLI and
   `tsc` back in the pnpm store. Keep that flag on the `prod-deps` stage and off the `migrate` one.
-- Do not add a cache, queue, or database UI until something uses one, and do not add a
-  `depends_on` edge between `web` and `api` until `web` actually calls `api`.
+- Do not add a cache, queue, or database UI until something uses one. The `web` → `api`
+  `depends_on` edge exists from C3, because the browser the `web` image serves now calls `api`.
+- **The browser API URL is a build argument, not a runtime variable.** `next build` embeds
+  `NEXT_PUBLIC_API_URL`, so Compose passes it under `build.args` and it must be an address the
+  **user's browser** can resolve — `http://127.0.0.1:3001`, never the Compose service name
+  `http://api:3001`, which resolves only inside the Compose network.
 - Never run Playwright, install browsers, or add test tooling inside an application image.
 - `pnpm` commands must keep working outside Docker; Docker is an additional way to run
   DevSync, not the way.
@@ -200,9 +214,8 @@ One workflow, `.github/workflows/ci.yml`, with four independent jobs: `quality`,
 ## Documentation
 
 `README.md` describes what exists, not what is planned. Do not describe collaboration, accounts,
-version history, or code execution as working until they are, and do not describe persistence as
-something a **user** can reach until `apps/web` calls `apps/api`.
-Update documentation in the same change that makes it inaccurate.
+version history, or code execution as working until they are, and do not describe restart survival
+as proved until C4 proves it. Update documentation in the same change that makes it inaccurate.
 
 Seven documents, each owning one subject. Link to them rather than restating their content, so
 there is exactly one place to correct.
@@ -254,21 +267,24 @@ here is installed, and none may be installed ahead of the milestone that calls f
 
 ## Current boundary
 
-**Phase A and Phase B are complete. Phase C — database-backed projects — is at C2: C0, C1, and C2
-are complete, and C3 is next.** Phase A's foundation is in place: monorepo scaffold, centralised
+**Phase A and Phase B are complete. Phase C — database-backed projects — is at C3: C0, C1, C2, and
+C3 are complete, and C4 is next.** Phase A's foundation is in place: monorepo scaffold, centralised
 TypeScript and quality configuration, the testing layers, two production Docker images, GitHub
-Actions CI, and the documentation above. Phase B added the local editor: `apps/web` renders one
-Monaco editor over one file whose contents and language a client workspace component holds in React
-state, and Playwright types into the real editor in Chromium against the production build.
+Actions CI, and the documentation above. Phase B added the local editor.
 
-**C1 built the storage half of Phase C, and C2 put an HTTP surface on it.** PostgreSQL 18 and a
-one-shot `migrate` service are in Compose; Prisma 7, the schema, one committed migration, and the
-data layer are in `@devsync/database`; `apps/api` validates `DATABASE_URL`, opens a connection
-during startup, and serves five project routes and five nested project-file routes over it, with
-the contracts in `@devsync/shared`. **`apps/web` still makes no request to `apps/api`** — that is
-C3, and until then nothing a user can click saves or loads anything.
+**C1 built the storage half of Phase C, C2 put an HTTP surface on it, and C3 connected the
+browser.** PostgreSQL 18 and a one-shot `migrate` service are in Compose; Prisma 7, the schema, one
+committed migration, and the data layer are in `@devsync/database`; `apps/api` validates
+`DATABASE_URL` and `WEB_ORIGIN`, opens a connection during startup, and serves five project routes
+and five nested project-file routes over it, with the contracts in `@devsync/shared`.
 
-Seven Phase C rules are durable enough to state here; the reasoning is in `docs/`:
+**`apps/web` now calls `apps/api`**, which is the first web-to-API runtime dependency the repository
+has ever had. A person can create a project, open it, edit a file in Monaco, press Save, reload, and
+find their work unchanged. Phase B's `LocalEditorWorkspace` is gone: the home page is a project
+list, `/projects/[projectId]` is the workspace, and `apps/web` is the second consumer of
+`@devsync/shared`.
+
+Eight Phase C rules are durable enough to state here; the reasoning is in `docs/`:
 
 - **Phase C is single-user.** No users, owners, memberships, roles, authorization, slugs,
   visibility, archival, soft deletion, folders, or paths — and no placeholder column or contract for
@@ -287,9 +303,14 @@ Seven Phase C rules are durable enough to state here; the reasoning is in `docs/
   build to `dist/` rather than being consumed as source.
 - **Runtime contracts belong to `@devsync/shared`** — request and response schemas, the supported
   language identifiers and their validator, and the one error contract, all Zod 4. **Zod stays
-  inside that package**: callers use `parseContract`, and `apps/api` declares no Zod dependency.
-  Nothing server-only may go in — no environment loading, no database, no NestJS, no React — because
-  `apps/web` bundles it from C3.
+  inside that package**: callers use `parseContract`, and neither application declares a Zod
+  dependency. Nothing server-only may go in — no environment loading, no database, no NestJS, no
+  React — because `apps/web` bundles it into the browser from C3.
+- **The browser reaches the API directly, over one configured origin.** `NEXT_PUBLIC_API_URL` is
+  validated once in `apps/web/src/api/api-url.ts` and embedded at build time; `WEB_ORIGIN` is
+  validated in `apps/api`'s configuration and is the only origin CORS allows — no wildcard, no
+  credentials, no reflected origin. There is no Next.js route handler or proxy in front of the API,
+  and no `NEXT_PUBLIC_` name may ever carry a database URL.
 - **The API answers one error shape, with seven stable codes.** No response may contain SQL, a
   Prisma code, a table name, a connection string, or a stack. Validation failures, malformed
   identifiers, unreadable bodies, and oversized bodies are all `400`; the JSON limit is 1 MiB.
@@ -300,21 +321,23 @@ Seven Phase C rules are durable enough to state here; the reasoning is in `docs/
   `prisma migrate deploy` applies them everywhere else, and a mistake is corrected by a new
   migration. Generated Prisma Client stays untracked and reproducible.
 
-**That workspace is still the only product functionality**, and C2 did not touch it. Its content and
-its language live in browser
-memory and are never read, written, or sent anywhere; remounting or reloading starts again from the
-sample, as TypeScript. The five languages in `apps/web/src/editor/languages.ts` — TypeScript,
-JavaScript, Python, JSON, Markdown — are five readings of the one buffer: the file name is derived
-from the language, changing the language leaves the content untouched, and nothing is detected,
-generated, or translated. There is no second file, no file tree, no tabs, no save action or
-saved/unsaved state, no persistence of any kind — not `localStorage`, not `sessionStorage`, not
-IndexedDB — and no API call.
+**What the product does, and what it still does not.** Two routes: `/` lists projects and creates,
+renames, opens, and deletes them; `/projects/[projectId]` is one project, its files, and one open
+file in Monaco. A file's name, language, and content are three independent stored properties, saved
+by an explicit Save button that sends only what changed. The four save states — saved, unsaved
+changes, saving, failed — are visible, and a draft is never discarded without a deliberate choice.
 
-**The authoritative language identifiers are `@devsync/shared`'s from C2**, and `apps/api` validates
-against them. `apps/web` does not import that package yet, so its list repeats the same five strings
-for now. Leave the duplication alone: C3 makes the client the package's second consumer and removes
-it. The labels and the derived display names stay browser-owned either way — they are presentation,
-and the shared package carries none.
+**There is still no autosave and no browser storage** — not `localStorage`, not `sessionStorage`,
+not IndexedDB, not a service-worker cache. Unsaved content is not persisted, and a browser that
+never pressed Save loses it. There are no tabs, no file tree, no folders, no search, and no
+pagination; there is no collaboration, no presence, and no WebSocket, so a second browser sees a
+change only after it reloads.
+
+**The language identifiers are `@devsync/shared`'s and there is now exactly one copy of them.**
+`apps/web/src/editor/languages.ts` builds its options from `SUPPORTED_LANGUAGE_IDS` and validates a
+selection with `languageIdSchema`; what it adds is the label a user reads. **The derived file name
+is gone** — a file has a stored name, renaming it does not change its language, and changing its
+language does not rename it.
 
 Two Monaco integration facts are worth knowing before changing the editor:
 
@@ -327,12 +350,15 @@ Two Monaco integration facts are worth knowing before changing the editor:
   paste are unaffected. Phase E applies remote CRDT operations programmatically and is where the
   model-ownership design has to be reconsidered.
 
-The starter content `apps/api/src/projects/starter-file.ts` writes into a new project is a copy of
-that sample, and its comment stops being true the moment a project persists. **Do not fix that in
-`apps/web`**: C3 replaces the local workspace and is where both copies are resolved.
+`apps/api/src/projects/starter-file.ts` is the one place that decides what a new project contains.
+C3 rewrote its content, because the file it creates is now stored rather than held in a tab.
 
-Do not implement later milestones early. Specifically, do not add an API client in `apps/web`, CORS,
-authentication, WebSockets, a CRDT library, code execution, Kubernetes, cloud deployment, release
-automation, or a dependency bot until the milestone that calls for it. If a task seems to require
-one of these, say so and stop rather than building ahead.
+**C4 owns restart validation** — an API restart, a PostgreSQL restart, the committed migration
+applied over existing rows, and a database that goes away under a running API. C3 proves a browser
+reload and nothing stronger, and no document may claim otherwise.
+
+Do not implement later milestones early. Specifically, do not add authentication, WebSockets, a CRDT
+library, code execution, Kubernetes, cloud deployment, release automation, or a dependency bot until
+the milestone that calls for it. If a task seems to require one of these, say so and stop rather
+than building ahead.
 [`docs/roadmap.md`](docs/roadmap.md) is the sequence and the boundary each milestone must meet.

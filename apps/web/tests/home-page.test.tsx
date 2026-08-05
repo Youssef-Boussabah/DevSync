@@ -9,11 +9,11 @@ import Home from '@/app/page';
 // only the Next.js compiler resolves — so the metadata it declares is asserted by
 // the Playwright suite against the real document instead.
 //
-// The workspace is stubbed here rather than mocked in detail: this file is about
-// what the page says and what it places on the page, and the workspace and the
-// editor wrapper each have their own file.
-vi.mock('@/editor/local-editor-workspace', () => ({
-  LocalEditorWorkspace: () => <div data-testid="local-editor-workspace" />,
+// The project list is stubbed here rather than mocked in detail: this file is
+// about what the page says and what it places on the page, and the list has its
+// own file.
+vi.mock('@/projects/project-list-view', () => ({
+  ProjectListView: () => <div data-testid="project-list-view" />,
 }));
 
 describe('home page', () => {
@@ -37,39 +37,40 @@ describe('home page', () => {
     // Matched by phase rather than by milestone. The page names the phase it is
     // at, not the milestone within it, so that finishing a milestone does not
     // require editing user-facing copy that was never about the number.
-    expect(screen.getByText(/Phase B\b/)).toBeInTheDocument();
+    expect(screen.getByText(/Phase C\b/)).toBeInTheDocument();
   });
 
-  it('gives the workspace a place on the page', () => {
+  it('gives the project list a place on the page', () => {
     render(<Home />);
 
-    expect(screen.getByTestId('local-editor-workspace')).toBeInTheDocument();
+    expect(screen.getByTestId('project-list-view')).toBeInTheDocument();
   });
 
-  it('says that the file is temporary and that a refresh discards the changes', () => {
+  it('says that saved work survives a reload, which is what C3 made true', () => {
     render(<Home />);
 
-    expect(screen.getByText(/one temporary file/i)).toBeInTheDocument();
-    expect(screen.getByText(/refreshing the page discards your changes/i)).toBeInTheDocument();
+    expect(screen.getByText(/still there after a reload/i)).toBeInTheDocument();
   });
 
-  it('says that a refresh also returns the file to TypeScript', () => {
+  it('says that nothing is saved until Save, and that there is no autosave', () => {
     render(<Home />);
 
-    expect(screen.getByText(/starts again from TypeScript/i)).toBeInTheDocument();
+    expect(screen.getByText(/there is no autosave/i)).toBeInTheDocument();
+    expect(screen.getByText(/saved when you press Save/i)).toBeInTheDocument();
   });
 
-  it('says that choosing a language re-reads the one file rather than opening another', () => {
-    render(<Home />);
-
-    expect(screen.getByText(/does not open a different file/i)).toBeInTheDocument();
-  });
-
-  it('does not claim that collaboration, persistence, or execution work yet', () => {
+  it('does not claim collaboration, presence, or accounts exist', () => {
     render(<Home />);
 
     expect(
-      screen.getByText(/collaboration, persistence, and code execution are not implemented yet/i),
+      screen.getByText(/no collaboration, no presence, and no version history/i),
     ).toBeInTheDocument();
+    expect(screen.getByText(/no accounts yet/i)).toBeInTheDocument();
+  });
+
+  it('no longer claims a refresh discards what was typed', () => {
+    render(<Home />);
+
+    expect(screen.queryByText(/discards your changes/i)).not.toBeInTheDocument();
   });
 });
