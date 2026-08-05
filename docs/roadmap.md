@@ -2,13 +2,16 @@
 
 The milestone sequence DevSync is being built in, and the current position within it.
 
-**Phases A and B are complete, and Phase C is under way: C0, C1, C2, and C3 are complete, and C4 is
-next.** C0 settled how persistence would be shaped; C1 built the storage half; C2 put an HTTP
-surface on it; **C3 connected the browser to it**. PostgreSQL, Prisma, the schema, the committed
-migration, the data layer, ten project and file routes, the contracts in `@devsync/shared`, and a
-web application that creates, opens, edits, saves, and deletes projects and files through them all
-exist. Everything from C4 onward is a plan. A phase is described here so that the order and the
-boundaries are decided in advance, not so that it can be mistaken for progress.
+**Phases A and B are complete, and Phase C is under way: C0, C1, C2, C3, and C4 are complete, and C5
+is next.** C0 settled how persistence would be shaped; C1 built the storage half; C2 put an HTTP
+surface on it; C3 connected the browser to it; **C4 turned restart survival into an automated,
+repeatable proof through the public API**. PostgreSQL,
+Prisma, the schema, the committed migration, the data layer, ten project and file routes, the
+contracts in `@devsync/shared`, a web application that creates, opens, edits, saves, and deletes
+projects and files through them, and an automated Docker-level validation of restart, outage,
+recovery, and migration redeployment all exist. Everything from Phase D onward is a plan. A phase is
+described here so that the order and the boundaries are decided in advance, not so that it can be
+mistaken for progress.
 
 No dates or durations appear in this document, deliberately. A phase is done when its completion
 boundary is met, and estimating that in advance would produce a number that gets quoted long
@@ -20,7 +23,7 @@ after it stopped being true.
 | ----- | ------------------------- | --------------- |
 | **A** | Project foundation        | **Complete**    |
 | **B** | Local editor              | **Complete**    |
-| **C** | Database-backed projects  | **C3 complete** |
+| **C** | Database-backed projects  | **C4 complete** |
 | D     | Rooms and presence        | Not started     |
 | E     | Single-file collaboration | Not started     |
 | F     | Multi-file collaboration  | Not started     |
@@ -35,8 +38,10 @@ after it stopped being true.
 
 **The product is a persistent single-user workspace.** Phase B's Monaco editor is still the editing
 surface, and C3 put a database-backed project and file model around it: a project list, a project
-workspace, an explicit save, and work that survives a reload. Nothing else in the table above is
-built — no accounts, no collaboration, no presence, no history, and no execution.
+workspace, an explicit save, and work that survives a reload. **C4 added no product behaviour and
+proved what was already there**: the work also survives an API restart, a PostgreSQL restart, and a
+redeployment of the committed migration. Nothing else in the table above is built — no accounts, no
+collaboration, no presence, no history, and no execution.
 
 ---
 
@@ -156,13 +161,14 @@ before any collaboration exists.
 | C1        | PostgreSQL and Prisma data layer                   | **Delivered** |
 | C2        | Project and file API                               | **Delivered** |
 | C3        | Persistent web workspace                           | **Delivered** |
-| C4        | Persistence and restart validation                 | **Next**      |
-| C5        | Phase closure                                      | Not started   |
+| C4        | Persistence and restart validation                 | **Delivered** |
+| C5        | Phase closure                                      | **Next**      |
 
 **What the phase has to add up to.** By C5, one person can create a project, list their projects,
 open one, rename it, and delete it; create files in it, list and open them, edit a file's contents,
 rename it, change the language it is read as, and delete it; reload the browser and find all of it
-unchanged; and restart both the API and PostgreSQL and still find it unchanged.
+unchanged; and restart both the API and PostgreSQL and still find it unchanged. **All of that now
+holds** — C3 delivered the browser half and C4 proved the restart half.
 
 **Excluded from the whole phase**, and not to be prepared for with a spare column or a placeholder
 contract: users, owners, authentication, memberships, invitations, roles, authorization, slugs,
@@ -224,6 +230,15 @@ its ts-jest suite cannot load an ES module; and Compose publishes PostgreSQL on 
 written through the package survives a disconnect and reconnect, an API restart, and a PostgreSQL
 restart; the committed migration applies to an empty database; and the integration suite refuses to
 run against a database it has not been told is disposable. **Met.**
+
+**What that restart evidence was, and what it was not.** C1's boundary is about the data layer's
+connection lifecycle, and that is the layer it was met at: `packages/database`'s automated lifecycle
+suite keeps a record across a client disconnect and reconnect, classifies a query against an
+unreachable database as unavailable, and lets no raw driver error out of the package — and the API
+and PostgreSQL restarts were checked by hand, against the development stack, by a developer watching
+the result. That evidence is real and it still stands. What it is not is repeatable: nothing recorded
+a fixture, nothing compared it field by field, and nothing ran in CI. **C4 is the layer above it** —
+an automated Docker-level run through the public HTTP routes, described in its own section below.
 
 **Excluded at C1 closure.** When C1 finished there was no project or file HTTP route, controller, or
 DTO, `@devsync/shared` exported nothing, and the API held a connection that nothing it served read
@@ -305,24 +320,66 @@ the page, and finds their work exactly as they left it. **Met**, and held by 14 
 against a real web build, a real API, and a disposable PostgreSQL, plus 151 component and client
 tests in `apps/web` and 17 CORS tests in the API's fast suite.
 
-**Excluded, and still absent.** No collaboration and no presence — a second browser sees the same
-data only by reloading, and two people editing the same file at once is undefined behaviour until
-Phase E. No tabs, no file tree, no autosave, no browser storage, no pagination, and no search. And
-**no proof that the data survives a restart**: C3 proves a browser reload, and the API restart, the
-PostgreSQL restart, and the migration over existing rows are C4's.
+**Excluded, and still absent at C3's close.** No collaboration and no presence — a second browser
+sees the same data only by reloading, and two people editing the same file at once is undefined
+behaviour until Phase E. No tabs, no file tree, no autosave, no browser storage, no pagination, and
+no search. And, at the time C3 closed, **no automated full-stack restart proof** — none through the
+public API, in the production Compose topology, comparing a recorded fixture. C1 had already met its
+own, narrower boundary at the data-access layer, and had it by hand for the containers; what C3
+itself proves is a browser reload. The repeatable API restart, PostgreSQL outage and recovery, and
+migration over existing rows were C4's, and the section below records that they now hold.
 
-### C4 — persistence and restart validation
+### C4 — persistence and restart validation ✅ Delivered
 
-**Deliverables.** Proof, rather than assertion, that the data survives everything C3 did not test:
-an API restart, a PostgreSQL container restart, applying the committed migration to an existing
-database without losing rows, and a database that is temporarily unavailable producing a controlled
-failure instead of a stack trace. The browser reload and reopening a project are C3's, and are
-covered by its Playwright suite.
+**Delivered.** One command, `pnpm test:restart`, and a workspace behind it — `tests/restart`
+(`@devsync/restart`). It brings the real production images up in a Compose project of its own,
+creates a project and two files **through the public HTTP routes**, records every field of every
+resource, and then puts that fixture through four failures, comparing it exactly after each:
 
-**Completion boundary.** Every one of those is covered by a test or a documented, reproducible
-procedure, and none of them loses a record.
+- **An API restart.** The container is stopped, confirmed stopped, and started again; the container's
+  PID is asserted to have changed, so the scenario cannot pass against a process that never went away.
+- **A PostgreSQL outage, with the API left running.** `GET /projects/:projectId` answers
+  `503 DATABASE_UNAVAILABLE` within a bounded timeout, twice, with a body carrying exactly
+  `statusCode`, `code`, and `message` — no stack, no SQL, no ORM name, no driver error code, no table
+  name, no connection string. `GET /health` still answers, and the API's PID is unchanged.
+- **PostgreSQL coming back, without restarting the API.** The persistence route is polled until it
+  succeeds, and the PID is asserted to be the same one throughout: what recovers is the same process
+  and the same connection pool.
+- **The committed migration, redeployed over populated rows** through `docker compose run --rm
+migrate` — the real one-shot service, against the same volume. It exits 0 and the fixture is
+  identical afterwards, timestamps included.
+
+**What this adds to C1, which had a restart boundary of its own.** C1 proved the data layer's
+connection lifecycle — a record kept across a client disconnect and reconnect, an unreachable
+database classified rather than leaked — with an automated suite, and it confirmed the container
+restarts by hand. C4 raises every part of that by a level and makes it repeatable. It goes through
+the **public HTTP routes** rather than the package's API, in the **production Compose topology**
+rather than against a host PostgreSQL, restarting **real containers** rather than reconnecting a
+client. It records a fixture and compares **every field of every resource** after each failure
+instead of asserting that a lookup still finds something. It adds two cases C1 never had — the
+controlled outage contract, and the committed migration redeployed over populated rows — and it runs
+in CI, so the property is checked on every change rather than the day somebody looked. Neither
+supersedes the other: C1's suite still runs under `pnpm test:db`, and it is what catches a
+regression inside `@devsync/database` that a container-level run would only see as a failed request.
+
+**No production code needed correcting.** The scenarios were run against the C3 implementation as it
+stood, and every one of them already held. C4 is validation infrastructure and documentation; the
+only non-documentation change outside `tests/restart` is that `compose.yaml`'s three published host
+ports became variables with their existing values as defaults, so a second copy of the stack can run
+beside a developer's own.
+
+**Isolation is enforced in code.** Everything happens in the `devsync-c4-validation` Compose project,
+on ports 4321, 5434, and 4320, with its own network and its own disposable volume. The runner refuses
+to issue a Compose command against any other project, refuses to delete a volume Docker does not
+label as this project's, and proves afterwards that the `devsync` project's volumes are exactly as it
+found them. Every wait is a named condition with a deadline; there is no fixed sleep anywhere in it.
+
+**Completion boundary.** Every one of the four cases is covered by an automated, repeatable run, and
+none of them loses a record. **Met**, and held by that run plus 58 Vitest tests over the harness's own
+guards, redaction, bounded waiting, and comparison.
 
 **Excluded.** No backup and restore tooling, no load testing, and no failover — those are Phase M.
+C4 adds no retry, no circuit breaker, no queue, no schema change, and no second migration.
 
 ### C5 — phase closure
 

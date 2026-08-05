@@ -1,0 +1,24 @@
+{
+  "extends": "@devsync/config/tsconfig.package.json",
+
+  // The harness itself is plain JavaScript — it is a command with no compile step
+  // in front of it — so `pnpm typecheck` only covers it if the compiler is told to
+  // read `.mjs`. Without these two options `lib/*.mjs` and `tools/*.mjs` would be
+  // resolved for their declarations and never checked, which would leave the file
+  // that actually drives Docker outside the repository's type checking.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true
+  },
+
+  // `lib/support.mjs` is named here rather than left to the `lib` wildcard below.
+  // A wildcard drops a `.mjs` whose `.d.mts` sits beside it — the declaration wins
+  // on extension priority — so the one file in this harness that has hand-written
+  // declarations would be the one file the compiler never read. `files` entries are
+  // literal and are not subject to that rule, so both end up in the program: the
+  // declarations describe the module to its importers, and the implementation is
+  // checked against them.
+  "files": ["lib/support.mjs"],
+
+  "include": ["lib", "tests", "tools", "vitest.config.mts"]
+}

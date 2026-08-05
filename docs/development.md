@@ -8,14 +8,15 @@ subjects in full; this one links to them rather than restating them.
 
 ## Prerequisites
 
-| Requirement           | Why                                                                                                 |
-| --------------------- | --------------------------------------------------------------------------------------------------- |
-| **Node.js 20.9+**     | The `engines` floor. Developed and validated against Node 24                                        |
-| **pnpm 11**           | The only supported package manager                                                                  |
-| **Docker Engine 25+** | PostgreSQL runs in a container, so `pnpm test:db`, `pnpm test:e2e`, and running the API all need it |
+| Requirement           | Why                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Node.js 20.9+**     | The `engines` floor. Developed and validated against Node 24                                                             |
+| **pnpm 11**           | The only supported package manager                                                                                       |
+| **Docker Engine 25+** | PostgreSQL runs in a container, so `pnpm test:db`, `pnpm test:e2e`, `pnpm test:restart`, and running the API all need it |
 
 **Docker stopped being optional at C1.** The API will not start without a database, and the
-repository's PostgreSQL is a Compose service. You do not need Docker for `pnpm test`,
+repository's PostgreSQL is a Compose service. From C4, `pnpm test:restart` needs the daemon itself:
+it builds images and starts and stops containers. You do not need Docker for `pnpm test`,
 `pnpm lint`, `pnpm typecheck`, or `pnpm build` — those neither start a service nor connect to
 one.
 
@@ -79,14 +80,15 @@ dependency order, and caches what is safe to cache.
 | ----------------------- | ------------------------------------------------------------------------------- |
 | `pnpm dev`              | Starts both development servers — web on 3000, API on 3001                      |
 | `pnpm build`            | Builds the four workspaces that have a build step                               |
-| `pnpm lint`             | Lints all nine workspaces. Read-only                                            |
+| `pnpm lint`             | Lints all ten workspaces. Read-only                                             |
 | `pnpm lint:fix`         | The same rules, applying every auto-fixable one                                 |
-| `pnpm typecheck`        | Type-checks all nine workspaces                                                 |
+| `pnpm typecheck`        | Type-checks all ten workspaces                                                  |
 | `pnpm test`             | Every in-process source suite — Vitest and Jest. Builds nothing, starts nothing |
-| `pnpm test:unit`        | The Vitest layer only                                                           |
+| `pnpm test:unit`        | The Vitest layer only — 309 of the 384                                          |
 | `pnpm test:db`          | The data layer then the API's routes, both against a running PostgreSQL         |
 | `pnpm test:e2e`         | Playwright: resets the test database, then builds and drives both applications  |
 | `pnpm test:e2e:install` | Downloads Chromium. Once per machine                                            |
+| `pnpm test:restart`     | C4's restart, outage, recovery, and migration scenarios. **Needs Docker**       |
 | `pnpm test:all`         | `test`, then `test:db`, then `test:e2e`, in sequence. Needs PostgreSQL          |
 | `pnpm test:coverage`    | Coverage for `apps/web` and `apps/api`                                          |
 | `pnpm format`           | Formats the repository with Prettier                                            |
@@ -115,9 +117,9 @@ pnpm --filter @devsync/api test:watch   # Jest, watching
 pnpm --filter @devsync/api lint
 ```
 
-The nine names are `@devsync/web`, `@devsync/api`, `@devsync/config`, `@devsync/shared`,
-`@devsync/collaboration`, `@devsync/database`, `@devsync/ui`, `@devsync/test-utils`, and
-`@devsync/e2e`.
+The ten names are `@devsync/web`, `@devsync/api`, `@devsync/config`, `@devsync/shared`,
+`@devsync/collaboration`, `@devsync/database`, `@devsync/ui`, `@devsync/test-utils`,
+`@devsync/e2e`, and `@devsync/restart`.
 
 Two filter suffixes are worth knowing, because the Docker images depend on the difference:
 
@@ -144,7 +146,9 @@ weight in an image, a line in a lockfile, and a thing to keep patched.
 | `3001` | `apps/api`                  | `pnpm dev`, Docker                      |
 | `4310` | `apps/web` under Playwright | `pnpm test:e2e`                         |
 | `4311` | `apps/api` under Playwright | `pnpm test:e2e`                         |
+| `4321` | `apps/api` in the C4 stack  | `pnpm test:restart`                     |
 | `5433` | PostgreSQL                  | Always, whenever the database is needed |
+| `5434` | PostgreSQL in the C4 stack  | `pnpm test:restart`                     |
 
 Docker uses the same application pair as local development, so `docker compose up` and `pnpm dev`
 cannot run at once — whichever starts second fails to bind. The end-to-end ports are separate
@@ -154,6 +158,12 @@ the other.
 **PostgreSQL is on 5433, not 5432**, so that it cannot collide with a PostgreSQL you already have
 installed — and so `docker compose up -d database` and `pnpm dev` work together, which is the
 ordinary development arrangement.
+
+**`pnpm test:restart` publishes nothing on the pairs above.** It brings a second copy of the stack up
+in its own Compose project, `devsync-c4-validation`, on 4321 and 5434, so it can run while your own
+stack is up. Those two numbers come from `WEB_HOST_PORT`, `API_HOST_PORT`, and `POSTGRES_HOST_PORT`
+in `compose.yaml`, which default to 3000, 3001, and 5433 — copying `.env.example` leaves every one of
+them at its default and changes nothing.
 
 Check the API is up:
 
@@ -187,14 +197,17 @@ does not change it: it constrains browsers, not clients in general.
 
 ## Testing
 
-Six layers, three runners, five hundred and seven real tests — Vitest over the schemas in
-`packages/shared`, Vitest in `apps/web`, Jest in `apps/api` twice over (fast, and against a real
-database), Vitest against a real PostgreSQL in `packages/database`, and Playwright in `tests/e2e`.
+Seven layers, five hundred and sixty-five real tests, plus six restart scenarios — Vitest over the
+schemas in `packages/shared`, Vitest in `apps/web`, Jest in `apps/api` twice over (fast, and against
+a real database), Vitest against a real PostgreSQL in `packages/database`, Vitest over the restart
+harness's helpers in `tests/restart`, Playwright in `tests/e2e`, and the Docker-level restart
+validation that `tests/restart` also holds.
 
 ```bash
-pnpm test        # fast: in-process source only, no builds, no browser, no database  (326)
-pnpm test:db     # the data layer, then the API's HTTP routes, both against PostgreSQL  (167)
-pnpm test:e2e    # resets the test database, builds both apps, starts them, drives Chromium  (14)
+pnpm test         # fast: in-process source only, no builds, no browser, no database  (384)
+pnpm test:db      # the data layer, then the API's HTTP routes, both against PostgreSQL  (167)
+pnpm test:e2e     # resets the test database, builds both apps, starts them, drives Chromium  (14)
+pnpm test:restart # C4: real containers — restart, outage, recovery, migration redeploy  (6 scenarios)
 ```
 
 **`pnpm test` builds nothing at all** — no workspace build, no Prisma generation — so
@@ -210,8 +223,17 @@ dependencies, which is the point of them. `pnpm test:e2e` also **resets** the di
 before it builds anything, because from C3 the browser tests write to it.
 
 `pnpm test` is the inner loop and must stay fast, which is why nothing in it builds, launches a
-browser, or connects to anything. The other two need `docker compose up -d database` first. A workspace with no implementation prints that it has no tests and exits cleanly; that
-is correct, and it stays that way until there is real behaviour to cover.
+browser, or connects to anything. The next two need `docker compose up -d database` first. A
+workspace with no implementation prints that it has no tests and exits cleanly; that is correct, and
+it stays that way until there is real behaviour to cover.
+
+**`pnpm test:restart` is separate from `pnpm test:all`, on purpose.** `test:all` is the host ladder —
+`test`, then `test:db`, then `test:e2e` — and every command in it runs on a machine with a PostgreSQL
+somebody started. `test:restart` is the only command that requires a **Docker daemon**: it builds the
+API and migration images, brings a Compose project of its own up on ports 4321 and 5434, stops
+containers, and removes the project and its volume afterwards. It never touches the `devsync` project
+or `devsync_postgres_data`, and it refuses, in code, to issue a Compose command against any project
+but its own. CI runs it in the `docker` job, so the split skips nothing.
 
 [`testing.md`](testing.md) is the full account: what each layer proves, why the API stays on
 Jest, how the end-to-end suite starts its servers, where artifacts go, and what is deliberately
@@ -242,12 +264,12 @@ every pull request, on pushes to `main`, and on demand.
 typing the failing step's command locally. CI only ever reports: it runs `format:check` and
 `lint`, never `format` or `lint:fix`, and it never commits, pushes, or tags.
 
-| CI job     | Reproduce locally with                                                   |
-| ---------- | ------------------------------------------------------------------------ |
-| `quality`  | The one-liner in [Root commands](#root-commands)                         |
-| `database` | `docker compose up -d database` then `pnpm test:db`                      |
-| `e2e`      | `pnpm test:e2e:install` then `pnpm test:e2e`                             |
-| `docker`   | `docker compose build`, `docker compose up --detach --wait`, then `curl` |
+| CI job     | Reproduce locally with                                                                             |
+| ---------- | -------------------------------------------------------------------------------------------------- |
+| `quality`  | The one-liner in [Root commands](#root-commands)                                                   |
+| `database` | `docker compose up -d database` then `pnpm test:db`                                                |
+| `e2e`      | `pnpm test:e2e:install` then `pnpm test:e2e`                                                       |
+| `docker`   | `docker compose build`, `docker compose up --detach --wait`, then `curl`, then `pnpm test:restart` |
 
 [`ci.md`](ci.md) has the per-step mapping, the caching behaviour, and the failure artifacts.
 
@@ -292,9 +314,20 @@ API_PORT=4000 pnpm --filter @devsync/api dev   # the shell still overrides
 | `WEB_ORIGIN`          | **yes**  | `apps/api` — the one origin CORS allows   |
 | `NEXT_PUBLIC_API_URL` | **yes**  | `apps/web`, **while it builds**           |
 | `TEST_DATABASE_URL`   | no       | `pnpm test:db` and `pnpm test:e2e` only   |
+| `WEB_HOST_PORT`       | no       | `compose.yaml` only — defaults to 3000    |
+| `API_HOST_PORT`       | no       | `compose.yaml` only — defaults to 3001    |
+| `POSTGRES_HOST_PORT`  | no       | `compose.yaml` only — defaults to 5433    |
 
 None of the three required values has a default: a service that guessed its database, its allowed
 origin, or its API would fail in a way that is much harder to diagnose than a refusal at startup.
+
+**The three host ports are read by Compose and by no application.** They are commented out in
+`.env.example` because their values there are the defaults, so copying the file changes nothing. They
+exist so `pnpm test:restart` can publish a second copy of the stack on other ports; set one yourself
+only if something on your machine already owns the default. Compose derives `WEB_ORIGIN` and the
+`NEXT_PUBLIC_API_URL` build argument from them, so the two halves of the browser boundary cannot
+drift apart — but changing `API_HOST_PORT` still means rebuilding the web image, because that value
+is embedded at build time.
 
 **`NEXT_PUBLIC_API_URL` is read while `apps/web` compiles, not while it runs**, and `NEXT_PUBLIC_`
 means public — whatever is in it is visible to every visitor, so no server-only value may ever be

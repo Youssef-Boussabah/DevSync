@@ -5,16 +5,24 @@ describes an intention rather than a system. Where a document does describe dire
 architecture DevSync is being built towards, or the milestones ahead — it says so explicitly and
 keeps it separate from what exists.
 
-**Phases A and B are complete. Phase C is at C3: C0, C1, C2, and C3 are done, and C4 is next.** C0
-decided how persistence would be built; C1 built the storage half — PostgreSQL, Prisma, the schema,
+**Phases A and B are complete. Phase C is at C4: C0, C1, C2, C3, and C4 are done, and C5 is next.**
+C0 decided how persistence would be built; C1 built the storage half — PostgreSQL, Prisma, the schema,
 one committed migration, the data layer, and an API that connects during startup; C2 put ten
 project and file routes over it, with the request and response contracts in `@devsync/shared`; C3
-connected the browser to those routes.
+connected the browser to those routes; **C4 proved the data outlives the processes holding it**.
 
 **A person can now reach it.** The home page lists projects, `/projects/[projectId]` opens one in
 Monaco, and pressing Save writes to PostgreSQL — a reload finds the work unchanged. There is no
-autosave, no browser storage, no account, and no collaboration; **restart survival is C4's to
-prove**, not something C3 demonstrated.
+autosave, no browser storage, no account, and no collaboration.
+
+**Restart survival is now proved automatically rather than checked by hand.** C1 covered the data
+layer's connection lifecycle in an automated suite and confirmed the container restarts manually;
+C4 made the whole stack repeatable. `pnpm test:restart` brings the production
+images up in a Compose project of its own, creates a project and two files through the API, and then
+restarts the API, stops PostgreSQL underneath it, brings it back **without** restarting the API, and
+redeploys the committed migration over the populated volume — comparing every field of the fixture
+after each. A request during the outage answers `503 DATABASE_UNAVAILABLE` and carries nothing about
+the machinery behind it. There is still no backup, no restore, no replication, and no failover.
 
 ## Start here
 

@@ -22,26 +22,31 @@ labelled selector beside the file name, with the content passed through untouche
 changes. B3 added the browser test that types into the real editor, and B4 reconciled the
 documentation and closed the phase. That is the only product functionality in the repository.
 
-**Phase C — database-backed projects: C0, C1, C2, and C3 are complete, and C4 is next.** C0 settled
-the data model, the HTTP resources, the error boundary, and the package ownership. **C1 built the
-storage half of it**: PostgreSQL 18 in Compose with a named volume and a one-shot migration service,
-Prisma 7 and the schema in `@devsync/database`, one committed migration, a data layer with 57 tests,
-and an API that loads its configuration and opens a connection during startup. **C2 put an HTTP
-surface on it**: ten routes over projects and the files inside them, request validation against Zod
-schemas published from `@devsync/shared`, one error shape from every route, and 110 integration
+**Phase C — database-backed projects: C0, C1, C2, C3, and C4 are complete, and C5 is next.** C0
+settled the data model, the HTTP resources, the error boundary, and the package ownership. **C1 built
+the storage half of it**: PostgreSQL 18 in Compose with a named volume and a one-shot migration
+service, Prisma 7 and the schema in `@devsync/database`, one committed migration, a data layer with
+57 tests, and an API that loads its configuration and opens a connection during startup. **C2 put an
+HTTP surface on it**: ten routes over projects and the files inside them, request validation against
+Zod schemas published from `@devsync/shared`, one error shape from every route, and 110 integration
 tests against a real Nest application and a real database. **C3 connected the browser**: the first
 call `apps/web` has ever made to `apps/api`, a project list, a project workspace, an explicit save,
-and 14 Playwright tests that create, edit, save, reload, and delete through a real browser.
+and 14 Playwright tests that create, edit, save, reload, and delete through a real browser. **C4
+proved the data outlives the processes holding it**, automatically and through the public API rather
+than at C1's data-access edge: one command that brings the production images up in a Compose project
+of its own, restarts the API, stops PostgreSQL underneath it, brings it back without restarting the
+API, and redeploys the committed migration over populated rows — comparing every field of a fixture
+after each.
 
 **A person can now use it.** Open the application, create a project, edit its `main.ts`, press Save,
-reload — the work is still there, because it is in PostgreSQL. The ladder is in
-[`docs/roadmap.md`](docs/roadmap.md); the design is in
+reload — the work is still there, because it is in PostgreSQL. Restart the containers and it is still
+there. The ladder is in [`docs/roadmap.md`](docs/roadmap.md); the design is in
 [`docs/architecture.md`](docs/architecture.md).
 
 What exists today:
 
 - A pnpm + Turborepo workspace with root-level `dev`, `build`, `lint`, `lint:fix`, `typecheck`,
-  `test`, `test:unit`, `test:db`, `test:e2e`, `test:all`, `test:coverage`, `format`,
+  `test`, `test:unit`, `test:db`, `test:e2e`, `test:restart`, `test:all`, `test:coverage`, `format`,
   `format:check`, and `clean` commands.
 - `apps/web` — a Next.js application with two routes: a project list, and a project workspace that
   opens one file at a time in Monaco with an explicit Save.
@@ -57,7 +62,10 @@ What exists today:
   `@devsync/database`, and `@devsync/shared`.
 - `tests/e2e` — a Playwright workspace that resets a disposable database, builds both applications,
   starts them on dedicated ports, and drives the whole persistence flow in Chromium.
-- Five hundred and seven real tests across six layers. See
+- `tests/restart` — the C4 validation: it brings the production images up in a Compose project of its
+  own, restarts containers, takes the database away from a running API, and redeploys the committed
+  migration over existing rows, comparing every field of a fixture after each.
+- Five hundred and sixty-five real tests across seven layers, plus six restart scenarios. See
   [`docs/testing.md`](docs/testing.md).
 - A production Docker image for each application, a migration image, and a root `compose.yaml`
   running those alongside PostgreSQL. See [`docs/docker.md`](docs/docker.md).
@@ -80,8 +88,13 @@ on a machine you control, and nothing in Phase C may be deployed where an untrus
 it. The CORS configuration C3 added constrains browsers; it is not access control. There is still no
 cache, queue, or message broker.
 
-**Restart survival is not yet proved.** C3 proves a browser reload. Restarting the API or PostgreSQL,
-and applying the committed migration over existing rows, are C4's to demonstrate.
+**Restart survival is proved, and nothing beyond it is.** `pnpm test:restart` shows that a saved
+project and its files come back unchanged after the API container restarts, after PostgreSQL
+restarts, and after the committed migration is redeployed over them — and that a request made while
+the database is away answers `503 DATABASE_UNAVAILABLE` rather than crashing, hanging, or leaking a
+stack trace, with the same API process recovering on its own afterwards. **There is no backup, no
+restore, no replication, no failover, no high availability, and no automatic retry**, and this is
+still not deployable anywhere an untrusted client can reach it.
 
 ## Documentation
 
@@ -91,7 +104,7 @@ and applying the committed migration over existing rows, are C4's to demonstrate
 | [Development](docs/development.md)   | Prerequisites, commands, ports, and daily workflow      |
 | [Roadmap](docs/roadmap.md)           | The milestone sequence, Phase A through Phase N         |
 | [Decisions](docs/decisions.md)       | Choices already made, and what would justify revisiting |
-| [Testing](docs/testing.md)           | The six testing layers and what each proves             |
+| [Testing](docs/testing.md)           | The seven testing layers and what each proves           |
 | [Docker](docs/docker.md)             | Images, Compose, and container limitations              |
 | [Continuous integration](docs/ci.md) | The GitHub Actions workflow and its jobs                |
 
@@ -134,7 +147,8 @@ devsync/
 ├── docker/
 │   └── postgres/initdb/      Creates the disposable test database, once
 ├── tests/
-│   └── e2e/                  Playwright browser and full-stack smoke tests
+│   ├── e2e/                  Playwright browser and full-stack smoke tests
+│   └── restart/              C4 restart, outage, and migration-redeploy validation
 ├── docs/                     Project documentation
 ├── compose.yaml              Docker Compose: web, api, PostgreSQL, migrations
 ├── turbo.json                Turborepo task graph
@@ -160,8 +174,9 @@ agreeing where it should live.
 
 - **Node.js 20.9 or newer.** Developed against Node 24.
 - **pnpm 11.** Other package managers are not supported; `npm` and `yarn` must not be used.
-- **Docker Engine 25 or newer with the Compose plugin — optional.** Only needed to run the
-  applications in containers; nothing else in this repository requires it.
+- **Docker Engine 25 or newer with the Compose plugin.** PostgreSQL runs in a container, so
+  `pnpm test:db`, `pnpm test:e2e`, `pnpm test:restart`, and running the API all need it. `pnpm test`,
+  `pnpm lint`, `pnpm typecheck`, and `pnpm build` do not.
 
 pnpm is pinned by the `packageManager` field. The simplest way to get the matching version is
 Corepack, which ships with Node:
@@ -193,13 +208,14 @@ Run these from the repository root; Turborepo fans each one out across the works
 | ----------------------- | ------------------------------------------------------------------ |
 | `pnpm dev`              | Starts the web and API development servers                         |
 | `pnpm build`            | Builds every workspace that has a build step                       |
-| `pnpm lint`             | Lints all nine workspaces; never writes                            |
+| `pnpm lint`             | Lints all ten workspaces; never writes                             |
 | `pnpm lint:fix`         | The same rules, applying every auto-fixable one                    |
-| `pnpm typecheck`        | Type-checks all nine workspaces                                    |
+| `pnpm typecheck`        | Type-checks all ten workspaces                                     |
 | `pnpm test`             | Every in-process source suite. **Builds nothing, starts nothing**  |
-| `pnpm test:unit`        | The Vitest layer only                                              |
+| `pnpm test:unit`        | The Vitest layer only — 309 of the 384                             |
 | `pnpm test:db`          | The data layer, then the API's routes. Needs disposable PostgreSQL |
 | `pnpm test:e2e`         | Playwright, against freshly built applications. Needs it too       |
+| `pnpm test:restart`     | C4's restart and outage scenarios, in containers. **Needs Docker** |
 | `pnpm test:all`         | All three groups, in sequence. Needs PostgreSQL                    |
 | `pnpm test:coverage`    | Coverage for `apps/web` and `apps/api`                             |
 | `pnpm test:e2e:install` | Downloads Chromium for Playwright; run once per machine            |
@@ -237,7 +253,7 @@ curl -X POST http://localhost:3001/projects \
 
 ## Testing
 
-Six layers, three runners, five hundred and seven real tests:
+Seven layers, five hundred and sixty-five real tests, plus six restart scenarios:
 
 - **Vitest** covers `packages/shared` — one hundred tests over the schemas both applications agree
   on: trimming, length boundaries, defaults, strictness, the language list, the identifier and
@@ -260,16 +276,26 @@ Six layers, three runners, five hundred and seven real tests:
   real disposable PostgreSQL. They create a project, type into the real Monaco editor, save, reload,
   and find the work unchanged; add, rename, retype, and delete files; rename and delete projects; and
   check that a duplicate file name is refused with a message beside the field.
+- **A Node runner** covers restarts — six scenarios against the production images under Docker
+  Compose, in a project of its own. It creates a project and two files through the public HTTP
+  routes, then restarts the API, stops PostgreSQL underneath it, brings PostgreSQL back **without**
+  restarting the API, and redeploys the committed migration over the populated volume — comparing
+  every field of the fixture after each, and asserting that the outage answers `503
+DATABASE_UNAVAILABLE` with nothing about the machinery behind it. This is the layer above the data
+  layer's own connection-lifecycle tests: those stop the client, this stops the server. **Vitest**
+  covers that harness's own guards, redaction, bounded waiting, and comparison, in fifty-eight tests
+  that reach nothing.
 
 Workspaces with no implementation print that they have no tests and exit successfully, rather
 than pretending to run a suite.
 
 ```bash
-pnpm test               # 326, fast: Vitest and Jest over source. Builds nothing, starts nothing
+pnpm test               # 384, fast: Vitest and Jest over source. Builds nothing, starts nothing
 docker compose up -d database
 pnpm test:db            # 167, the data layer then the API's routes, against real PostgreSQL
 pnpm test:e2e:install   # once per machine — downloads Chromium
 pnpm test:e2e           # 14, resets the test database, builds both apps, then drives a browser
+pnpm test:restart       # 6 scenarios, in containers. Needs Docker; touches no development data
 ```
 
 `pnpm test` runs only in-process source-level suites: no workspace build, no Prisma generation, no
@@ -279,6 +305,12 @@ still absent.
 `pnpm test:db` runs its two suites in sequence, because they reset the same schema. Both drop that
 schema before they run, so both refuse to start against any database they cannot prove is
 disposable.
+
+`pnpm test:restart` is separate from `pnpm test:all` because it is the one command that needs a
+Docker daemon rather than a running PostgreSQL. It works in its own Compose project,
+`devsync-c4-validation`, on ports 4321 and 5434, removes that project and its volume afterwards, and
+refuses in code to issue a Compose command against anything else — your containers and your
+`devsync_postgres_data` volume are never touched.
 
 [`docs/testing.md`](docs/testing.md) explains what each layer proves, why the API stays on Jest,
 where test artifacts go, and what is deliberately not tested yet.
@@ -320,7 +352,13 @@ not collide with a PostgreSQL you may already have installed — which also mean
 `docker compose up -d database` and `pnpm dev` work together, the ordinary arrangement for
 development.
 
-`docker compose down` keeps your projects; **`docker compose down --volumes` deletes them.**
+`docker compose down` keeps your projects; **`docker compose down --volumes` deletes them.** C4
+proves the first half of that rather than asserting it: `pnpm test:restart` restarts both containers,
+redeploys the migration over the rows, and finds every field of its fixture unchanged.
+
+The three published ports are `WEB_HOST_PORT`, `API_HOST_PORT`, and `POSTGRES_HOST_PORT`, defaulting
+to the values above. Nothing needs to set them; the restart validation does, so that its stack and
+yours can run at once.
 
 [`docs/docker.md`](docs/docker.md) covers the image structure, environment variables, clean
 rebuilds, and the current limitations.
@@ -330,12 +368,12 @@ rebuilds, and the current limitations.
 One GitHub Actions workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), runs on
 every pull request, on pushes to `main`, and on demand. Four independent jobs:
 
-| Job        | What it proves                                                              |
-| ---------- | --------------------------------------------------------------------------- |
-| `quality`  | Formatting, lint, types, in-process tests, and every build                  |
-| `database` | The data layer **and** the API's routes against a real PostgreSQL           |
-| `e2e`      | Both applications start from a real build and answer in Chromium            |
-| `docker`   | Every image builds, the migration exits 0, and each service becomes healthy |
+| Job        | What it proves                                                         |
+| ---------- | ---------------------------------------------------------------------- |
+| `quality`  | Formatting, lint, types, in-process tests, and every build             |
+| `database` | The data layer **and** the API's routes against a real PostgreSQL      |
+| `e2e`      | Both applications start from a real build and answer in Chromium       |
+| `docker`   | Every image builds and becomes healthy, and the data survives restarts |
 
 CI runs the same commands you run locally — there is no CI-only script — and it only ever
 reports: `format:check` and `lint`, never `format` or `lint:fix`. The workflow holds
@@ -355,23 +393,25 @@ failure artifacts, and the current limitations.
 Every workspace participates in both linting and type-checking. Nothing is silently skipped,
 and no generated output is linted.
 
-| Workspace                | lint | typecheck | test                            | build    |
-| ------------------------ | ---- | --------- | ------------------------------- | -------- |
-| `@devsync/web`           | yes  | yes       | 151 Vitest tests                | `next`   |
-| `@devsync/api`           | yes  | yes       | 75 Jest, plus 110 via `test:db` | `nest`   |
-| `@devsync/database`      | yes  | yes       | 57, via `pnpm test:db`          | `tsc`    |
-| `@devsync/shared`        | yes  | yes       | 100 Vitest tests                | `tsc`    |
-| `@devsync/e2e`           | yes  | yes       | 14, via `pnpm test:e2e`         | no build |
-| `@devsync/collaboration` | yes  | yes       | none yet                        | no build |
-| `@devsync/ui`            | yes  | yes       | none yet                        | no build |
-| `@devsync/test-utils`    | yes  | yes       | none yet                        | no build |
-| `@devsync/config`        | yes  | yes       | nothing to test                 | no build |
+| Workspace                | lint | typecheck | test                                                | build    |
+| ------------------------ | ---- | --------- | --------------------------------------------------- | -------- |
+| `@devsync/web`           | yes  | yes       | 151 Vitest tests                                    | `next`   |
+| `@devsync/api`           | yes  | yes       | 75 Jest, plus 110 via `test:db`                     | `nest`   |
+| `@devsync/database`      | yes  | yes       | 57, via `pnpm test:db`                              | `tsc`    |
+| `@devsync/shared`        | yes  | yes       | 100 Vitest tests                                    | `tsc`    |
+| `@devsync/e2e`           | yes  | yes       | 14, via `pnpm test:e2e`                             | no build |
+| `@devsync/restart`       | yes  | yes       | 58 Vitest, plus 6 scenarios via `pnpm test:restart` | no build |
+| `@devsync/collaboration` | yes  | yes       | none yet                                            | no build |
+| `@devsync/ui`            | yes  | yes       | none yet                                            | no build |
+| `@devsync/test-utils`    | yes  | yes       | none yet                                            | no build |
+| `@devsync/config`        | yes  | yes       | nothing to test                                     | no build |
 
 The reserved `packages/*` libraries are consumed as TypeScript source through their `exports` map,
 so they are type-checked in place and never emit — the application that imports them compiles them.
 **`@devsync/database` and `@devsync/shared` are the exceptions**: both run inside the API's
 container, where there is no compiler, so both build to `dist/` and `apps/api` depends on those
-builds. `@devsync/config` ships `.mjs`, which is why its type-check runs with `checkJs`.
+builds. `@devsync/config` ships `.mjs` and `@devsync/restart` is a `.mjs` harness, which is why both
+type-check with `checkJs`.
 
 **TypeScript.** `@devsync/config` owns a strict base and three configurations layered on top
 of it, one per kind of workspace. See
@@ -417,6 +457,13 @@ cp .env.example .env
 | `WEB_ORIGIN`          | **yes**  | `apps/api` — the one origin CORS allows   |
 | `NEXT_PUBLIC_API_URL` | **yes**  | `apps/web`, **while it builds**           |
 | `TEST_DATABASE_URL`   | no       | `pnpm test:db` and `pnpm test:e2e` only   |
+| `WEB_HOST_PORT`       | no       | `compose.yaml` only — defaults to 3000    |
+| `API_HOST_PORT`       | no       | `compose.yaml` only — defaults to 3001    |
+| `POSTGRES_HOST_PORT`  | no       | `compose.yaml` only — defaults to 5433    |
+
+The last three move the **published** side of the Compose ports and nothing else; no container ever
+sees one, each defaults to the value it has always had, and `.env.example` carries them commented
+out. They exist so `pnpm test:restart` can publish a second copy of the stack beside yours.
 
 **None of the three required values has a default, and none ever gets one.** A missing or malformed
 value fails startup — or, for the web variable, the build — with a message naming it, because a

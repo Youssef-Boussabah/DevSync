@@ -11,38 +11,40 @@ can be read in one sitting, splitting it is itself a decision worth recording he
 Entries marked **direction** are commitments about what will be built, not descriptions of what
 exists. Nothing in a direction entry is installed.
 
-| #                                                                             | Decision                                            |
-| ----------------------------------------------------------------------------- | --------------------------------------------------- |
-| [D1](#d1--pnpm-and-turborepo)                                                 | pnpm workspaces and Turborepo                       |
-| [D2](#d2--nextjs-for-the-web-application)                                     | Next.js for the web application                     |
-| [D3](#d3--nestjs-for-the-api)                                                 | NestJS for the API                                  |
-| [D4](#d4--one-shared-configuration-package)                                   | Shared configuration in `@devsync/config`           |
-| [D5](#d5--reserved-package-boundaries-stay-empty)                             | Reserved packages stay empty                        |
-| [D6](#d6--vitest-for-the-frontend-and-pure-typescript)                        | Vitest for the frontend                             |
-| [D7](#d7--jest-retained-for-the-nestjs-api)                                   | Jest retained for `apps/api`                        |
-| [D8](#d8--playwright-for-browser-and-full-stack-testing)                      | Playwright for browser tests                        |
-| [D9](#d9--docker-compose-for-production-style-local-execution)                | Docker Compose locally                              |
-| [D10](#d10--one-workflow-four-independent-ci-jobs)                            | One workflow, four independent jobs                 |
-| [D11](#d11--no-env-loading-yet)                                               | No `.env` loading yet — **superseded in C1**        |
-| [D12](#d12--direction-monaco-and-yjs-for-collaborative-editing)               | **Direction:** Monaco + Yjs                         |
-| [D13](#d13--direction-postgresql-before-redis)                                | **Direction:** PostgreSQL before Redis              |
-| [D14](#d14--direction-an-isolated-execution-runner)                           | **Direction:** an isolated runner                   |
-| [D15](#d15--monaco-is-bundled-not-loaded-from-a-cdn)                          | Monaco is bundled, not loaded from a CDN            |
-| [D16](#d16--prisma-owned-by-devsyncdatabase)                                  | Prisma, owned by one package                        |
-| [D17](#d17--phase-c-is-single-user-and-deletion-is-permanent)                 | Single-user, and permanent deletes                  |
-| [D18](#d18--flat-file-names-and-language-as-a-validated-string)               | Flat names, language as a validated string          |
-| [D19](#d19--a-new-project-is-created-with-its-first-file)                     | Projects start with one file                        |
-| [D20](#d20--zod-contracts-in-devsyncshared)                                   | Zod contracts in `@devsync/shared`                  |
-| [D21](#d21--database-tests-run-against-real-postgresql)                       | Database tests use real PostgreSQL                  |
-| [D22](#d22--devsyncdatabase-is-a-built-commonjs-package)                      | `@devsync/database` is built, and CommonJS          |
-| [D23](#d23--postgresql-is-published-on-port-5433)                             | PostgreSQL is published on 5433                     |
-| [D24](#d24--file-name-uniqueness-is-pinned-to-the-c-collation)                | File-name uniqueness uses the `C` collation         |
-| [D25](#d25--devsyncshared-is-a-built-commonjs-package-carrying-zod-4)         | `@devsync/shared` is built, CommonJS, and owns Zod  |
-| [D26](#d26--the-json-body-limit-is-1-mib-and-an-oversized-body-is-a-400)      | 1 MiB of JSON, and oversize is a `400`              |
-| [D27](#d27--the-apis-database-suite-runs-jest-with---experimental-vm-modules) | Jest needs `--experimental-vm-modules` for Prisma 7 |
-| [D28](#d28--the-browser-api-url-is-a-build-time-public-variable)              | The browser API URL is public and build-time        |
-| [D29](#d29--cors-allows-exactly-one-configured-origin)                        | CORS allows exactly one configured origin           |
-| [D30](#d30--saving-is-explicit-and-there-is-no-autosave)                      | Saving is explicit; there is no autosave            |
+| #                                                                             | Decision                                               |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------ |
+| [D1](#d1--pnpm-and-turborepo)                                                 | pnpm workspaces and Turborepo                          |
+| [D2](#d2--nextjs-for-the-web-application)                                     | Next.js for the web application                        |
+| [D3](#d3--nestjs-for-the-api)                                                 | NestJS for the API                                     |
+| [D4](#d4--one-shared-configuration-package)                                   | Shared configuration in `@devsync/config`              |
+| [D5](#d5--reserved-package-boundaries-stay-empty)                             | Reserved packages stay empty                           |
+| [D6](#d6--vitest-for-the-frontend-and-pure-typescript)                        | Vitest for the frontend                                |
+| [D7](#d7--jest-retained-for-the-nestjs-api)                                   | Jest retained for `apps/api`                           |
+| [D8](#d8--playwright-for-browser-and-full-stack-testing)                      | Playwright for browser tests                           |
+| [D9](#d9--docker-compose-for-production-style-local-execution)                | Docker Compose locally                                 |
+| [D10](#d10--one-workflow-four-independent-ci-jobs)                            | One workflow, four independent jobs                    |
+| [D11](#d11--no-env-loading-yet)                                               | No `.env` loading yet — **superseded in C1**           |
+| [D12](#d12--direction-monaco-and-yjs-for-collaborative-editing)               | **Direction:** Monaco + Yjs                            |
+| [D13](#d13--direction-postgresql-before-redis)                                | **Direction:** PostgreSQL before Redis                 |
+| [D14](#d14--direction-an-isolated-execution-runner)                           | **Direction:** an isolated runner                      |
+| [D15](#d15--monaco-is-bundled-not-loaded-from-a-cdn)                          | Monaco is bundled, not loaded from a CDN               |
+| [D16](#d16--prisma-owned-by-devsyncdatabase)                                  | Prisma, owned by one package                           |
+| [D17](#d17--phase-c-is-single-user-and-deletion-is-permanent)                 | Single-user, and permanent deletes                     |
+| [D18](#d18--flat-file-names-and-language-as-a-validated-string)               | Flat names, language as a validated string             |
+| [D19](#d19--a-new-project-is-created-with-its-first-file)                     | Projects start with one file                           |
+| [D20](#d20--zod-contracts-in-devsyncshared)                                   | Zod contracts in `@devsync/shared`                     |
+| [D21](#d21--database-tests-run-against-real-postgresql)                       | Database tests use real PostgreSQL                     |
+| [D22](#d22--devsyncdatabase-is-a-built-commonjs-package)                      | `@devsync/database` is built, and CommonJS             |
+| [D23](#d23--postgresql-is-published-on-port-5433)                             | PostgreSQL is published on 5433                        |
+| [D24](#d24--file-name-uniqueness-is-pinned-to-the-c-collation)                | File-name uniqueness uses the `C` collation            |
+| [D25](#d25--devsyncshared-is-a-built-commonjs-package-carrying-zod-4)         | `@devsync/shared` is built, CommonJS, and owns Zod     |
+| [D26](#d26--the-json-body-limit-is-1-mib-and-an-oversized-body-is-a-400)      | 1 MiB of JSON, and oversize is a `400`                 |
+| [D27](#d27--the-apis-database-suite-runs-jest-with---experimental-vm-modules) | Jest needs `--experimental-vm-modules` for Prisma 7    |
+| [D28](#d28--the-browser-api-url-is-a-build-time-public-variable)              | The browser API URL is public and build-time           |
+| [D29](#d29--cors-allows-exactly-one-configured-origin)                        | CORS allows exactly one configured origin              |
+| [D30](#d30--saving-is-explicit-and-there-is-no-autosave)                      | Saving is explicit; there is no autosave               |
+| [D31](#d31--restart-validation-runs-in-its-own-compose-project)               | Restart validation is isolated, and its own command    |
+| [D32](#d32--the-published-host-ports-are-variables-with-their-old-defaults)   | Published host ports are variables; defaults unchanged |
 
 ---
 
@@ -59,7 +61,7 @@ across client and server. pnpm's content-addressed store makes that cheap on dis
 resolution stops a workspace importing something it never declared. Turborepo adds the task graph
 and caching without requiring the repository to be restructured around it.
 
-**Consequence today.** Nine workspaces, one lockfile, `pnpm lint` and `pnpm typecheck` covering
+**Consequence today.** Ten workspaces, one lockfile, `pnpm lint` and `pnpm typecheck` covering
 all of them. Both Docker images must use the repository root as their build context, because a
 frozen install needs the root lockfile and every manifest.
 
@@ -122,7 +124,7 @@ matters more than the framework does. The "it stays this small" clause has expir
 **Decision.** TypeScript and ESLint configuration live in `@devsync/config`. Prettier is
 configured once at the repository root. A rule is added in one place, never in a workspace.
 
-**Reason.** Nine workspaces with their own copies of a strictness setting drift within weeks, and
+**Reason.** Ten workspaces with their own copies of a strictness setting drift within weeks, and
 the drift is invisible until a rule that was supposed to be repository-wide turns out to be off
 in the one workspace where it mattered. Centralising it makes the strictness a property of the
 repository rather than of whoever scaffolded a directory.
@@ -910,6 +912,80 @@ is the stated behaviour rather than a gap.
 **Revisit if.** Phase E arrives, which changes the question rather than answering it: with a CRDT
 there is no draft to save. If autosave is ever wanted before then, the recorded first move is to keep
 the explicit Save and add a background write on top of the same draft model, not to replace it.
+
+---
+
+### D31 — Restart validation runs in its own Compose project
+
+**Decision.** C4's automated, full-stack proof that data survives a restart — the layer above C1's
+data-access lifecycle tests, not a replacement for them — runs under `pnpm test:restart`, in a Compose
+project called `devsync-c4-validation` with its own network, its own volume, and its own published
+ports — never against the `devsync` project a developer works in. It is a separate root command and
+is deliberately **not** part of `pnpm test:all`. The isolation is enforced in code: every Compose
+invocation's project name is checked before the process is spawned, the cleanup reads the volumes
+Docker labels as this project's and refuses the batch if one falls outside the prefix, and the run
+proves afterwards that the development project's volumes are unchanged.
+
+**Implemented in C4.**
+
+**Reason.** The scenario is destructive by nature. It stops an API mid-flight, takes a database away
+from it, and ends by deleting a volume — and the volume beside it, `devsync_postgres_data`, holds
+every project a developer has. A validation that could reach the wrong one would be a worse bug than
+anything it was written to catch, so "it does not touch the development stack" had to be a property
+of the code rather than a claim in a document. Compose already offers exactly the boundary needed:
+a project name scopes containers, networks, and volumes, and `--project-name` beats the `name:` key
+in the file.
+
+The command is separate for a different reason. `pnpm test:all` is the host ladder — three commands
+that need a PostgreSQL somebody started — and `test:restart` is the only command in the repository
+that needs a **Docker daemon**. Folding it in would make a pre-push command start failing on a
+machine with no daemon, and would put an image build in front of a suite whose value is being quick
+to reach. CI runs both, in different jobs, so nothing is skipped by the split.
+
+**Consequence today.** One more root command and one more workspace, `tests/restart`. The `api` and
+`migrate` images are built a second time under the validation project's name — a re-tag, because
+every layer is already in the BuildKit cache — and the `web` image is not built at all, because no
+C4 scenario opens a page. A developer can run the validation with their own stack up, `pnpm dev`
+running, and `pnpm test:e2e` in flight.
+
+**Revisit if.** A second validation needs the same isolation, at which point the project name and
+the guards belong in something shared rather than in one workspace. Or if Compose gains a way to
+express "a disposable copy of this stack" directly, which would make the project-name convention
+unnecessary.
+
+---
+
+### D32 — The published host ports are variables with their old defaults
+
+**Decision.** `compose.yaml` publishes `${WEB_HOST_PORT:-3000}`, `${API_HOST_PORT:-3001}`, and
+`${POSTGRES_HOST_PORT:-5433}` rather than three literals, and derives `WEB_ORIGIN` and the
+`NEXT_PUBLIC_API_URL` build argument from the first two. Container-side ports and everything Compose
+passes between services are unchanged, and `.env.example` documents the three commented out, so
+copying it changes nothing.
+
+**Implemented in C4.**
+
+**Reason.** [D31](#d31--restart-validation-runs-in-its-own-compose-project) needs a second copy of
+this stack running beside a developer's own, and two stacks cannot publish the same port. The
+alternatives were worse. A second Compose file would be a second production topology to keep in step
+with the first, and the point of C4 is to validate the images and the service graph that actually
+ship — a copy would validate the copy. An override file layered on top would be a third file to read
+before understanding what runs. Three variables with their previous values as defaults change nothing
+for anyone who does not set them, which is the smallest change that makes the isolation possible.
+
+`WEB_ORIGIN` and `NEXT_PUBLIC_API_URL` follow the ports rather than restating them because they are
+the two halves of one browser boundary: a stack published on another port whose API still allowed
+`http://127.0.0.1:3000` would answer every request without an allow-origin header, and the failure
+would look like a CORS bug rather than a port mismatch.
+
+**Consequence today.** Three variables that `compose.yaml` reads and no application does. Overriding
+`API_HOST_PORT` for a stack that serves pages means rebuilding the web image, because that value is
+embedded by `next build` — which is [D28](#d28--the-browser-api-url-is-a-build-time-public-variable)
+and not new. The restart validation avoids that entirely by never starting the web service.
+
+**Revisit if.** More of the Compose configuration needs to vary per stack, at which point the honest
+answer is a documented override file rather than a growing list of variables — or if a second
+production topology becomes genuinely necessary, which it is not for one disposable validation.
 
 ---
 

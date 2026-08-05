@@ -7,10 +7,11 @@ secret; **C1 added one job and a PostgreSQL service to another**, because there 
 to exercise and an API that will not start without a database. C2 added no job. **C3 added no job
 either**: it added one workflow-level environment variable, because `apps/web` no longer builds
 without knowing where its API is, and two read-only verification steps to the `docker` job. There are
-still four jobs, and still no CI-only script. CI adds no capability to DevSync; it runs the checks
-that already existed, on someone else's machine, on every change. Every command in the workflow is
-one you can run yourself, which is the point — a red run should never require reading CI internals to
-reproduce.
+still four jobs, and still no CI-only script. **C4 added no job either**: `pnpm test:restart` runs as
+one step of the existing `docker` job, which is where a command that needs a Docker daemon belongs.
+CI adds no capability to DevSync; it runs the checks that already existed, on someone else's machine,
+on every change. Every command in the workflow is one you can run yourself, which is the point — a
+red run should never require reading CI internals to reproduce.
 
 The single workflow lives in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
@@ -57,12 +58,12 @@ appear to, because each would then be exercising an artifact assembled elsewhere
 workflow a developer or a production image actually follows. The cost is that dependencies are
 installed more than once; the benefit is that each job is a complete, honest reproduction.
 
-| Job        | Timeout | What it proves                                                                       |
-| ---------- | ------- | ------------------------------------------------------------------------------------ |
-| `quality`  | 20 min  | The tree is formatted, lints, type-checks, passes its in-process tests, and builds   |
-| `database` | 20 min  | The data layer **and** the API's routes against a real PostgreSQL, migration applied |
-| `e2e`      | 20 min  | Both applications start from a real build and answer in a real browser               |
-| `docker`   | 25 min  | Every image builds, the migration exits 0, and every service becomes healthy         |
+| Job        | Timeout | What it proves                                                                           |
+| ---------- | ------- | ---------------------------------------------------------------------------------------- |
+| `quality`  | 20 min  | The tree is formatted, lints, type-checks, passes its in-process tests, and builds       |
+| `database` | 20 min  | The data layer **and** the API's routes against a real PostgreSQL, migration applied     |
+| `e2e`      | 20 min  | Both applications start from a real build and answer in a real browser                   |
+| `docker`   | 25 min  | Every image builds and becomes healthy, **and the data survives restarts and an outage** |
 
 **`database` and `e2e` each run their own PostgreSQL** as a service container, on the same image
 Compose pins and published on the same port, so `TEST_DATABASE_URL` is character-for-character the
@@ -133,11 +134,15 @@ row and back is exercised. See [`testing.md`](testing.md) for what each spec ass
 
 ### `docker`
 
-Uses **no Node and no pnpm setup at all**. Both images install and build everything they need
-internally, and that self-containment is precisely the property under test — a Docker job that
-depended on a host toolchain would not be testing the images.
+**No image build in this job uses the host toolchain.** Both images install and build everything they
+need internally, and that self-containment is precisely the property under test. C4 added Node and
+Corepack to the job — but only to _drive_ Docker: `pnpm test:restart` is a Node script with no
+dependencies of its own, there is no `pnpm install` and no store cache in this job, and nothing that
+builds an image reads anything from the host. The property is unchanged; what is new is a client for
+the Docker API written in JavaScript.
 
 ```text
+corepack enable, setup-node            # only to run `pnpm test:restart` below
 docker compose config --quiet          # the Compose file is valid
 docker compose build                   # every image builds from the repository root
 docker compose up --detach --wait      # PostgreSQL, the migration, the API, then the web app
@@ -148,6 +153,7 @@ docker compose up --detach --wait      # PostgreSQL, the migration, the API, the
 <verify projects>                      # GET /projects is 200 and a JSON array
 <verify CORS>                          # the web origin is allowed and no other is
 <verify web image>                     # the API URL is embedded, and no database value is
+pnpm test:restart                      # C4, in its own Compose project — see below
 ```
 
 The ordering in the third line is C3's: `web` waits for a healthy `api`, which waits for a healthy
@@ -205,19 +211,52 @@ proves the API origin really was embedded at build time, and that **no database 
 image**. A **browser** flow is deliberately not run here: it would mean installing Chromium in the
 Docker job, and the `e2e` job already drives one against the same code.
 
-On failure, a step guarded by `if: failure()` prints `docker compose ps --all` and
-`docker compose logs --no-color`. It sits **before** the cleanup step, so the containers still
-exist to be read from.
+#### The C4 restart validation, in this job
 
-Cleanup runs under `if: always()`:
+```bash
+pnpm test:restart
+```
+
+The same command a developer runs, and the only place in CI where a record is written, a process is
+restarted, and a database is taken away underneath it. It belongs here rather than in a fifth job
+because it needs a Docker daemon and nothing else — no Node build, no browser, no service container —
+and this is the job that already has one.
+
+Four properties keep it understandable:
+
+- **It cannot see the stack running above it.** It brings its own up in the Compose project
+  `devsync-c4-validation`, on ports 4321 and 5434, and refuses in code to issue a Compose command
+  against any other project. The `devsync` containers, network, and volume that the steps above
+  created are untouched, and the two stacks share no port.
+- **It builds the `api` and `migrate` images a second time, and that costs almost nothing.**
+  `docker compose build` has already put every layer in the BuildKit cache, so the rebuild under a
+  different project name is a re-tag. The `web` image is not built at all, because no C4 scenario
+  opens a page. Building twice under two names is the price of the isolation being real rather than
+  arranged; the alternative — reusing the running stack — would mean stopping the containers the
+  earlier steps just verified.
+- **It reports its own failures.** The runner prints the scenario, the named invariant that did not
+  hold, `docker compose ps --all` for its project, and the last 120 log lines, all redacted, before
+  it exits non-zero. The job's own `if: failure()` step covers the `devsync` stack, which is a
+  different subject.
+- **It writes nothing to the repository**, exactly like every other step here. It creates rows in a
+  database it created and deletes both.
+
+On failure, a step guarded by `if: failure()` prints `docker compose ps --all` and
+`docker compose logs --no-color` for the development project. It sits **before** the cleanup steps,
+so the containers still exist to be read from.
+
+Cleanup runs under `if: always()`, twice, once per project:
 
 ```bash
 docker compose down --volumes --remove-orphans
+docker compose --project-name devsync-c4-validation down --volumes --remove-orphans
 ```
 
-It therefore executes whether the job passed, failed at any verification step, or failed during
-the build — a leaked container or network on a shared runner is a problem for the next job, not
-just this one.
+Both therefore execute whether the job passed, failed at any verification step, or failed during
+the build — a leaked container, network, or volume on a shared runner is a problem for the next job,
+not just this one. The second is belt and braces: the restart runner removes its own project in a
+`finally` path, and this covers the case where the runner itself was killed. A Compose command is
+scoped to the project it names, so neither line can reach the other's stack.
 
 **No image is pushed anywhere.** There is no registry, no login step, and no credential. The
 images are built, exercised, and discarded.
@@ -338,6 +377,7 @@ Every CI step maps to a command you already have. There is no CI-only script to 
 | Verify the endpoints      | `curl http://127.0.0.1:3000/`, `…:3001/health`, and `…:3001/projects` |
 | Verify CORS               | `curl -D - -H 'Origin: http://127.0.0.1:3000' …:3001/projects`        |
 | Verify the web image      | `docker compose exec web sh -c "grep -rl … /repo/apps/web/.next"`     |
+| Restart validation        | `pnpm test:restart`                                                   |
 | Clean up                  | `docker compose down --volumes --remove-orphans`                      |
 
 To reproduce a whole job in one go:
@@ -348,18 +388,25 @@ pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typeche
 
 ## Current limitations
 
-- **The C1, C2, and C3 jobs have not yet been observed running on GitHub.** The workflow parses, and
-  every command in it has been run locally against the current commit — including `pnpm test:db`
-  covering both persistence suites, `pnpm test:e2e` covering the browser flow, and the full Compose
-  stack with its migration, its HTTP verifications, and C3's CORS and image checks. What has not been
-  proved is the runner-specific part: service containers, their published ports, and the health
-  options attached to them. The first run against a real pull request is that proof.
+- **The C1, C2, C3, and C4 jobs have not yet been observed running on GitHub.** The workflow parses,
+  and every command in it has been run locally against the current commit — including `pnpm test:db`
+  covering both persistence suites, `pnpm test:e2e` covering the browser flow, the full Compose stack
+  with its migration, its HTTP verifications, and C3's CORS and image checks, and `pnpm test:restart`
+  twice in a row. What has not been proved is the runner-specific part: service containers, their
+  published ports, the health options attached to them, and the restart validation under a Linux
+  Docker daemon rather than Docker Desktop. The first run against a real pull request is that proof.
 - **No branch protection is configured**, so a failing run does not yet block a merge. That is a
   repository setting rather than a file, and it is not something this milestone can add.
 - **Playwright browsers are downloaded on every `e2e` run** — roughly 300 MB and a minute or so.
   See the caching section for why it is not cached yet.
 - **Dependencies are installed three times**, in `quality`, `database`, and `e2e`, because the jobs
-  are independent by design. The pnpm store cache absorbs most of the cost.
+  are independent by design. The pnpm store cache absorbs most of the cost. The `docker` job installs
+  none: `pnpm test:restart` has no dependencies of its own.
+- **The `api` and `migrate` images are built twice in the `docker` job**, once under each Compose
+  project name. Every layer is cached from the first build, so what the second costs is a re-tag —
+  the alternative would be running the restart validation against the stack the earlier steps
+  verified, which would mean stopping those containers and would make the two sets of assertions
+  interfere.
 - **Ubuntu only.** Nothing validates that the repository works on Windows or macOS, even though
   it is developed on Windows. A build matrix is deliberately not added for two applications with
   no platform-specific code.

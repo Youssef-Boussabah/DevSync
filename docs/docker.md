@@ -14,6 +14,12 @@ alongside the application, because `apps/web` imports it; and `NEXT_PUBLIC_API_U
 **build argument**, because `next build` embeds it into the JavaScript it emits. No new service was
 added.
 
+**C4 added no service and no stage.** It made the three published host ports variables with their
+existing values as defaults, so a second, disposable copy of this stack can run beside a developer's
+own — which is what [`pnpm test:restart`](#the-c4-restart-validation) does. Nothing else about the
+file changed: the same four services, the same dependency graph, the same volume, and the same
+container-side ports.
+
 Docker is an additional way to run DevSync; it replaces nothing. Every `pnpm` command still works
 exactly as before, and the test architecture still runs on the host — though `pnpm test:db` and
 `pnpm test:e2e` now expect the `database` service to be up, because the API will not start without
@@ -182,12 +188,23 @@ inside a container.
 
 ## Ports
 
-| Service    | Container | Host | URL                                           |
-| ---------- | --------- | ---- | --------------------------------------------- |
-| `web`      | 3000      | 3000 | http://127.0.0.1:3000/                        |
-| `api`      | 3001      | 3001 | http://127.0.0.1:3001/health                  |
-| `database` | 5432      | 5433 | `postgresql://devsync:devsync@127.0.0.1:5433` |
-| `migrate`  | —         | —    | one-shot, publishes nothing                   |
+| Service    | Container | Host default | Variable             | URL                                           |
+| ---------- | --------- | ------------ | -------------------- | --------------------------------------------- |
+| `web`      | 3000      | 3000         | `WEB_HOST_PORT`      | http://127.0.0.1:3000/                        |
+| `api`      | 3001      | 3001         | `API_HOST_PORT`      | http://127.0.0.1:3001/health                  |
+| `database` | 5432      | 5433         | `POSTGRES_HOST_PORT` | `postgresql://devsync:devsync@127.0.0.1:5433` |
+| `migrate`  | —         | —            | —                    | one-shot, publishes nothing                   |
+
+**The container-side ports never move**, and neither does anything Compose passes between services:
+`DATABASE_URL` still names `database:5432`, because inside the network there is nothing to collide
+with. Only the published side is a variable, and each defaults to the value it has always had, so
+`docker compose up` with no environment behaves exactly as it did before C4.
+
+`WEB_ORIGIN` and the `NEXT_PUBLIC_API_URL` build argument are **derived** from those two application
+ports rather than restated beside them. That is not tidiness: they are the two halves of one browser
+boundary, and a stack published on another port whose API still allowed `http://127.0.0.1:3000` would
+fail every request with no allow-origin header. Restating a number in two places is how the two stop
+agreeing.
 
 The two applications use the same ports as local development, deliberately: a developer should not
 have to learn a second set. The consequence is that `docker compose up` and `pnpm dev` cannot both
@@ -257,8 +274,16 @@ system rather than understate it.
 | `POSTGRES_USER`       | `database`       | `devsync`                                            |
 | `POSTGRES_PASSWORD`   | `database`       | `devsync`                                            |
 | `POSTGRES_DB`         | `database`       | `devsync`                                            |
+| `WEB_HOST_PORT`       | Compose itself   | `3000` by default — the published web port           |
+| `API_HOST_PORT`       | Compose itself   | `3001` by default — the published API port           |
+| `POSTGRES_HOST_PORT`  | Compose itself   | `5433` by default — the published PostgreSQL port    |
 
-Every one is passed **explicitly** in `compose.yaml`. The containers load no `.env` file —
+The last three are the exception to the rule below and are the only variables `compose.yaml` reads
+rather than passes: they are substituted while the file is parsed, no container ever sees one, and
+each has its previous literal as its default. `.env.example` documents them commented out, so copying
+that file leaves every one at its default.
+
+Every other one is passed **explicitly** in `compose.yaml`. The containers load no `.env` file —
 `.dockerignore` excludes every `.env*` from the build context, so none can end up in an image
 layer — which means a variable not stated in Compose is not configured at all. Outside containers
 `apps/api` reads `.env` and `apps/web` reads it while it builds, and `.env.example` is the documented
@@ -337,7 +362,47 @@ image with two commands.
 
 Nothing else joins Compose. No Redis, no queue, no message broker, and no database administration
 UI: each would be a service nothing uses, which is the thing this file has avoided since A3. C3 added
-an edge and a build argument, and no service.
+an edge and a build argument, and no service; C4 added three port variables, and no service.
+
+## The C4 restart validation
+
+```bash
+pnpm test:restart
+```
+
+The one command in this repository that stops and starts containers on purpose. It brings **this
+Compose file** up in a project of its own — `devsync-c4-validation` — creates a project and two files
+through the API, and then restarts the API, stops PostgreSQL underneath it, brings PostgreSQL back
+without restarting the API, and redeploys the committed migration over the populated volume,
+comparing every field of the fixture after each. [`testing.md`](testing.md) is the full account of
+what it asserts.
+
+What matters here is what it does to Docker:
+
+| Belonging to       | The `devsync` project   | The `devsync-c4-validation` project    |
+| ------------------ | ----------------------- | -------------------------------------- |
+| Containers         | `devsync-*-1`           | `devsync-c4-validation-*-1`            |
+| Network            | `devsync_default`       | `devsync-c4-validation_default`        |
+| Volume             | `devsync_postgres_data` | `devsync-c4-validation_postgres_data`  |
+| Published ports    | 3000, 3001, 5433        | 4321 and 5434 (`web` is never started) |
+| Removed by the run | **never**               | always, in a `finally` path            |
+
+- **It builds `api` and `migrate` only.** No C4 scenario opens a page, so building Next.js would be
+  minutes spent on an image nothing starts. Under its own project name those images are tagged
+  `devsync-c4-validation-api` and `devsync-c4-validation-migrate`; every layer comes from the same
+  BuildKit cache as the ordinary build, so a second build after `docker compose build` is a re-tag
+  rather than a rebuild.
+- **`docker compose down --volumes` is run against the validation project and never the development
+  one.** Before the cleanup deletes anything it reads the volumes **Docker** labels as this project's
+  and refuses the whole batch if a single name falls outside the `devsync-c4-validation_` prefix, and
+  afterwards it proves the `devsync` project's volumes are exactly as it found them. The guard is in
+  code, in `tests/restart/lib/`, not in this document.
+- **It needs none of your ports free.** 3000, 3001, and 5433 stay yours; the run refuses to start if
+  4321 or 5434 is taken, rather than failing partway through an image build.
+- **It starts from nothing, and proves it did.** The preflight removes any validation stack a killed
+  run left behind and **asserts that removal succeeded** before an image is built. If it could not,
+  the previous run's populated volume would still be there and the fixture assertions would be
+  counting somebody else's rows, so the run stops with the redacted command failure instead.
 
 ### What survives, and what does not
 
@@ -348,7 +413,9 @@ an edge and a build argument, and no service.
   every project and file. CI's `docker` job passes `--volumes` in its cleanup step, which is
   correct there and only there: a runner is disposable by definition.
 - **Restarting the database and API containers changes nothing**, because the data lives in the
-  volume rather than in either container's writable layer.
+  volume rather than in either container's writable layer. **C4 proves that rather than asserting
+  it**: `pnpm test:restart` stops and starts both, redeploys the migration over the rows, and
+  compares every field of a fixture it created through the API.
 
 ### What the API image carries
 
@@ -440,7 +507,8 @@ has no use for the request contracts.
   hot reload in Docker. `pnpm dev` remains the development loop; these images run production
   builds only.
 - **Ports 3000 and 3001 are shared with local development**, so Docker and `pnpm dev` cannot
-  run simultaneously.
+  run simultaneously. `WEB_HOST_PORT` and `API_HOST_PORT` can move the published side if you need
+  them to, but the web image embeds the API address, so changing `API_HOST_PORT` means rebuilding it.
 - **`linux/amd64` and `linux/arm64` are whatever the host provides.** The images build for the
   local platform; no multi-platform build or registry push is configured.
 - **No image is published anywhere.** There is no registry, no tagging scheme beyond Compose's
@@ -451,6 +519,12 @@ has no use for the request contracts.
   waits for their health checks, and verifies both endpoints — but the Playwright suite itself
   runs against host processes on ports 4310 and 4311 and is deliberately not moved into Docker.
   No browser is installed in an application image, and no container-specific test was invented.
+  `pnpm test:restart` drives containers **from outside**, as a Node script talking to the Docker
+  CLI; nothing about it is installed into an image.
+- **No backup, restore, replication, failover, or high availability exists.** One PostgreSQL, one
+  volume, one API instance. C4 proves the volume outlives its containers and that a temporary
+  outage is a controlled failure; it does not make the stack redundant, and nothing here is
+  production-ready or safe to expose.
 
 ## Shutdown
 

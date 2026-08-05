@@ -20,6 +20,8 @@ monorepo it is being built in.
 - `packages/config` — shared development configuration.
 - `packages/test-utils` — reusable test helpers.
 - `tests/e2e` (`@devsync/e2e`) — Playwright browser and full-stack tests.
+- `tests/restart` (`@devsync/restart`) — C4's Docker-level restart, outage, and migration-redeploy
+  validation, plus a Vitest suite over its own pure helpers.
 - `docs/` — project documentation.
 
 Code shared by more than one workspace belongs in `packages/`, not duplicated across apps.
@@ -81,25 +83,37 @@ order to make a command pass. A workspace with nothing worth testing yet is expe
 and exit cleanly, which is what its `test` script already does — leave it that way until there
 is real behaviour to cover.
 
-Three runners, each with a boundary:
+Three runners plus one harness, each with a boundary:
 
-- **Vitest** — `apps/web`, `packages/database`, `packages/shared`, and any other `packages/*` that
-  gains testable code. jsdom for components, Node for packages. Runner-agnostic configuration lives
-  in `@devsync/config/vitest/base`.
+- **Vitest** — `apps/web`, `packages/database`, `packages/shared`, `tests/restart`, and any other
+  workspace that gains testable pure code. jsdom for components, Node for packages. Runner-agnostic
+  configuration lives in `@devsync/config/vitest/base`.
 - **Jest** — `apps/api` only, in two suites: `*.spec.ts` under `src` for the fast one, and
   `tests/*.db-spec.ts` under its own configuration for the PostgreSQL-backed one. Jest stays there
   because `@nestjs/testing` targets Jest's API and `ts-jest` already honours
   `emitDecoratorMetadata`. Do not migrate it for uniformity; a migration needs a concrete
   technical reason. The database suite runs through `node --experimental-vm-modules` because
   Prisma 7 loads its query compiler with a dynamic `import()`; do not remove that flag.
-- **Playwright** — `tests/e2e` only, and it is the only layer allowed to start real processes.
-  Chromium only for now. Do not add a second browser-testing framework.
+- **Playwright** — `tests/e2e` only, and it is the only layer allowed to start real **host**
+  processes. Chromium only for now. Do not add a second browser-testing framework.
+- **The restart validation** — `tests/restart` only, behind `pnpm test:restart`, and the only layer
+  allowed to build images and start, stop, and remove containers. It is a plain Node runner rather
+  than a test framework, deliberately: it is one ordered scenario against real containers, and a
+  runner would add parallelism, retries, and per-test isolation to something that is a sequence by
+  nature. Do not move it under Playwright, and do not mock Docker anywhere and call the result a
+  restart proof.
 
 `pnpm test` must stay fast: in-process source-level suites only. It performs **no workspace build
 and no Prisma generation**, and starts no database, browser, server, or container — `pnpm clean`
 followed by `pnpm test` has to pass with `packages/*/dist`, `packages/database/src/generated`, and
 `apps/api/dist` still absent afterwards. `test`, `test:unit`, and `test:coverage` therefore declare
 **no `dependsOn`** in `turbo.json`; do not add `^build` back to any of them.
+
+**`test:unit` is the Vitest layer, so every Vitest workspace must declare a `test:unit` script.**
+`apps/api` has none because its suites are Jest; a Vitest workspace without one disappears from the
+command silently, which makes `test:unit` quietly stop meaning what its name says. `tests/restart`
+declares it, and only its 58 pure-helper tests run under it — the Docker scenario stays behind
+`pnpm test:restart` and joins neither `test` nor `test:unit`.
 
 What makes that possible is a source-level alias in each workspace that consumes a package which
 builds. `apps/api/jest.config.mjs` maps `@devsync/shared` to `packages/shared/src/index.ts` and
@@ -111,9 +125,38 @@ C3 made the web application the package's second consumer. Those are the real mo
 resolve the packages through their `exports` maps to `dist`. `jest.db.config.mjs` deliberately
 carries no mapping, because that suite must load the compiled packages.
 
-Browser runs live behind `pnpm test:e2e`, the browser download behind `pnpm test:e2e:install`, and
-database runs behind `pnpm test:db` — never inside an ordinary test command. Those three may build
-their real runtime dependencies; the fast command may not.
+Browser runs live behind `pnpm test:e2e`, the browser download behind `pnpm test:e2e:install`,
+database runs behind `pnpm test:db`, and container runs behind `pnpm test:restart` — never inside an
+ordinary test command. Those may build their real runtime dependencies; the fast command may not.
+
+**`pnpm test:restart` is C4's and stays outside `pnpm test:all`.** `test:all` is the host ladder —
+`test`, then `test:db`, then `test:e2e` — and `test:restart` is the only command that needs a Docker
+daemon rather than a running PostgreSQL. It runs in CI's `docker` job. It is also the one root test
+script with **no** Turborepo task, because it invokes no Turborepo task: it runs
+`node tests/restart/tools/run-restart-validation.mjs` directly and builds its images through Docker.
+Declaring a task nothing runs would let `turbo run test:restart` exit 0 having done nothing, which is
+the failure the "every root test script needs a task" rule exists to prevent. Every root test script
+that **fans out through Turborepo** still needs one.
+
+**The restart validation runs only in the `devsync-c4-validation` Compose project**, on host ports
+4321 and 5434, with its own network and its own volume, and it removes all three in a `finally` path.
+That isolation is enforced in `tests/restart/lib/`, not documented: a Compose command against any
+other project is refused before the process is spawned, the cleanup refuses to delete a volume Docker
+does not label as this project's, and the run proves afterwards that the `devsync` project's volumes
+are unchanged. **Never point `docker compose down --volumes` at the development project**, and do not
+weaken those guards. Every wait in it is a named condition with a deadline; no fixed sleep is
+acceptable as proof of readiness anywhere in it.
+
+**Every Docker command in that harness has its exit code asserted, including the preflight cleanup.**
+A stale-stack removal that failed leaves the previous run's populated volume in place, so the run
+stops there rather than building images over data it did not create. Do not reintroduce a discarded
+command result anywhere in `tests/restart`.
+
+**The harness is plain `.mjs` and is type-checked as such.** `tests/restart/tsconfig.json` turns on
+`allowJs` and `checkJs` — the same arrangement `packages/config` uses — so `lib/support.mjs`,
+`lib/docker.mjs`, `lib/api.mjs`, and `tools/run-restart-validation.mjs` are all in `pnpm typecheck`.
+`lib/support.mjs` is named in `files` rather than left to the `lib` wildcard because a wildcard drops
+a `.mjs` whose `.d.mts` sits beside it; removing that entry silently stops checking the file.
 
 `pnpm test:e2e` runs `tests/e2e/tools/run-e2e.mjs`, which does two things Turborepo and Playwright
 cannot: it resets the disposable database through `@devsync/database/test-database` **before** the
@@ -137,8 +180,9 @@ End-to-end tests start their own servers on ports 4310 and 4311, wait on an HTTP
 check, and must never reuse a server a developer started by hand or sleep for a fixed interval.
 Development ports 3000 and 3001 are off limits to them.
 
-Every root test script needs a matching task in `turbo.json`. Anything depending on live
-processes or a browser must set `cache: false`.
+Every root test script that fans out through Turborepo needs a matching task in `turbo.json` —
+`pnpm test:restart` is the one exception, and the paragraph above says why. Anything depending on
+live processes or a browser must set `cache: false`.
 
 Test artifacts — `coverage/`, `test-results/`, `playwright-report/` — stay git-ignored, and a
 test run must never modify a tracked file. Coverage is measured in `apps/web` and `apps/api`
@@ -176,6 +220,11 @@ alongside PostgreSQL.
   `tsc` back in the pnpm store. Keep that flag on the `prod-deps` stage and off the `migrate` one.
 - Do not add a cache, queue, or database UI until something uses one. The `web` → `api`
   `depends_on` edge exists from C3, because the browser the `web` image serves now calls `api`.
+- **The three published host ports are `${WEB_HOST_PORT:-3000}`, `${API_HOST_PORT:-3001}`, and
+  `${POSTGRES_HOST_PORT:-5433}`**, and `WEB_ORIGIN` and the `NEXT_PUBLIC_API_URL` build argument are
+  derived from the first two rather than restated. Container-side ports never move and nothing passed
+  between services changes. They exist so C4's validation can publish a second copy of the stack;
+  keep the defaults exactly as they are, and do not parameterise anything else for symmetry.
 - **The browser API URL is a build argument, not a runtime variable.** `next build` embeds
   `NEXT_PUBLIC_API_URL`, so Compose passes it under `build.args` and it must be an address the
   **user's browser** can resolve — `http://127.0.0.1:3001`, never the Compose service name
@@ -194,6 +243,10 @@ One workflow, `.github/workflows/ci.yml`, with four independent jobs: `quality`,
 - **CI runs the same commands a developer runs.** Do not add a CI-only script, and do not let a
   workflow step drift from the `package.json` script it mirrors. If a job needs a new command,
   the command belongs in `package.json` first.
+- **C4's restart validation is a step of the `docker` job, not a fifth job.** That job now enables
+  Corepack and sets up Node — only to _run_ `pnpm test:restart`; no image build reads anything from
+  the host, which is still the property under test. Its cleanup is two `down --volumes` lines, one
+  per Compose project, both under `if: always()`.
 - **CI reports, it never rewrites.** `format:check` and `lint` only — never `format` or
   `lint:fix`, and never a step that commits, pushes, or tags.
 - `permissions: contents: read` at the workflow level. Do not grant write scopes, and do not
@@ -214,8 +267,10 @@ One workflow, `.github/workflows/ci.yml`, with four independent jobs: `quality`,
 ## Documentation
 
 `README.md` describes what exists, not what is planned. Do not describe collaboration, accounts,
-version history, or code execution as working until they are, and do not describe restart survival
-as proved until C4 proves it. Update documentation in the same change that makes it inaccurate.
+version history, or code execution as working until they are. **Restart survival is proved from C4
+and may be described as such; backup, restore, replication, failover, high availability, automatic
+retry, zero downtime, production readiness, and public-deployment safety are none of them true and
+must not be claimed.** Update documentation in the same change that makes it inaccurate.
 
 Seven documents, each owning one subject. Link to them rather than restating their content, so
 there is exactly one place to correct.
@@ -267,16 +322,17 @@ here is installed, and none may be installed ahead of the milestone that calls f
 
 ## Current boundary
 
-**Phase A and Phase B are complete. Phase C — database-backed projects — is at C3: C0, C1, C2, and
-C3 are complete, and C4 is next.** Phase A's foundation is in place: monorepo scaffold, centralised
-TypeScript and quality configuration, the testing layers, two production Docker images, GitHub
-Actions CI, and the documentation above. Phase B added the local editor.
+**Phase A and Phase B are complete. Phase C — database-backed projects — is at C4: C0, C1, C2, C3,
+and C4 are complete, and C5 is next.** Phase A's foundation is in place: monorepo scaffold,
+centralised TypeScript and quality configuration, the testing layers, two production Docker images,
+GitHub Actions CI, and the documentation above. Phase B added the local editor.
 
-**C1 built the storage half of Phase C, C2 put an HTTP surface on it, and C3 connected the
-browser.** PostgreSQL 18 and a one-shot `migrate` service are in Compose; Prisma 7, the schema, one
-committed migration, and the data layer are in `@devsync/database`; `apps/api` validates
-`DATABASE_URL` and `WEB_ORIGIN`, opens a connection during startup, and serves five project routes
-and five nested project-file routes over it, with the contracts in `@devsync/shared`.
+**C1 built the storage half of Phase C, C2 put an HTTP surface on it, C3 connected the browser, and
+C4 proved the data outlives the processes.** PostgreSQL 18 and a one-shot `migrate` service are in
+Compose; Prisma 7, the schema, one committed migration, and the data layer are in
+`@devsync/database`; `apps/api` validates `DATABASE_URL` and `WEB_ORIGIN`, opens a connection during
+startup, and serves five project routes and five nested project-file routes over it, with the
+contracts in `@devsync/shared`.
 
 **`apps/web` now calls `apps/api`**, which is the first web-to-API runtime dependency the repository
 has ever had. A person can create a project, open it, edit a file in Monaco, press Save, reload, and
@@ -315,8 +371,10 @@ Eight Phase C rules are durable enough to state here; the reasoning is in `docs/
   Prisma code, a table name, a connection string, or a stack. Validation failures, malformed
   identifiers, unreadable bodies, and oversized bodies are all `400`; the JSON limit is 1 MiB.
 - **Database-backed tests use real PostgreSQL** through `TEST_DATABASE_URL`, behind `pnpm test:db`
-  and its own non-cached task. `pnpm test` must keep building nothing and starting nothing, and no
-  fake database may be used to claim a route works.
+  and its own non-cached task, and **restart behaviour uses real containers** through
+  `pnpm test:restart`. `pnpm test` must keep building nothing and starting nothing; no fake database
+  may be used to claim a route works, and no mocked Docker may be used to claim data survives a
+  restart.
 - **Migrations are committed and immutable.** `prisma migrate dev` creates them locally,
   `prisma migrate deploy` applies them everywhere else, and a mistake is corrected by a new
   migration. Generated Prisma Client stays untracked and reproducible.
@@ -353,9 +411,52 @@ Two Monaco integration facts are worth knowing before changing the editor:
 `apps/api/src/projects/starter-file.ts` is the one place that decides what a new project contains.
 C3 rewrote its content, because the file it creates is now stored rather than held in a tab.
 
-**C4 owns restart validation** — an API restart, a PostgreSQL restart, the committed migration
-applied over existing rows, and a database that goes away under a running API. C3 proves a browser
-reload and nothing stronger, and no document may claim otherwise.
+**C4 made restart survival an automated proof, and added no product behaviour.** It is a layer above
+C1's, not a correction of it: C1 met its own boundary at the data-access edge, with
+`packages/database`'s lifecycle tests over a client disconnect and reconnect and an unreachable
+database classified rather than leaked, plus container restarts a developer checked by hand. C4 stops
+the server instead of the client, goes through the public HTTP routes instead of the package, runs
+the production Compose topology instead of a host PostgreSQL, compares a recorded fixture field by
+field, and adds the outage contract and the migration over populated rows. Both layers still run.
+**Do not describe C1 as having had no restart evidence**, and do not describe C4 as the first time
+persistence was tested. `pnpm test:restart` runs
+`tests/restart/tools/run-restart-validation.mjs`: it builds the `api` and `migrate` images, brings
+them up beside PostgreSQL in the `devsync-c4-validation` Compose project, creates a project and two
+files **through the public HTTP routes only**, records every field of every resource, and then
+
+- stops and starts the API container, asserting the container's PID changed so the scenario cannot
+  pass against a process that never went away;
+- stops PostgreSQL with the API running, and asserts `GET /projects/:projectId` answers `503`
+  `DATABASE_UNAVAILABLE` within a bounded timeout, twice, with a body whose property set is exactly
+  `statusCode`, `code`, and `message` and whose raw text carries no stack frame, ORM name, Prisma
+  code, driver socket error code, SQL, table name, or connection string — while `GET /health` keeps
+  answering and the API's PID does not change;
+- starts PostgreSQL again **without restarting the API**, polls the persistence route until it
+  succeeds, and asserts the PID is the same one throughout, so the same process and the same pool
+  recovered;
+- redeploys the committed migration through `docker compose run --rm migrate` against the populated
+  volume, requiring exit 0;
+
+comparing the fixture field by field after each, and finally confirming the API runtime image still
+carries no Prisma CLI and no TypeScript compiler.
+
+**No production code needed correcting.** The scenarios were run against C3's implementation as it
+stood and every one already held; the only non-documentation change outside `tests/restart` is that
+`compose.yaml`'s three published host ports became variables with their existing values as defaults.
+C4 added no retry, no circuit breaker, no queue, no schema change, and no second migration.
+
+**Three corrections landed inside `tests/restart` after the first pass**, and none of them changed a
+scenario: the workspace declares `test:unit` so its 58 Vitest tests cannot vanish from that command,
+its `tsconfig.json` type-checks the four `.mjs` runtime files rather than only the TypeScript beside
+them, and the preflight stale-stack removal asserts its exit code instead of discarding it.
+
+**What C4 does not claim.** There is no backup, restore, replication, failover, high availability,
+automatic retry, or zero-downtime story, and nothing here is production-ready or safe to expose. The
+validation shows one API process recovers after one PostgreSQL returns; it says nothing about
+behaviour under load, about a request in flight when the connection drops, or about how many requests
+fail while the database is away.
+
+**C5 owns Phase C closure** — the reconciliation pass over the whole phase.
 
 Do not implement later milestones early. Specifically, do not add authentication, WebSockets, a CRDT
 library, code execution, Kubernetes, cloud deployment, release automation, or a dependency bot until

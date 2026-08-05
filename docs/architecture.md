@@ -7,7 +7,7 @@ DevSync is intended to become a browser-based collaborative development environm
 product does not exist yet.** What exists is a monorepo, two applications that now talk to each
 other, a shared configuration package, a PostgreSQL data layer, an HTTP API over that data layer,
 the contracts both applications validate against, a browser workspace that reads and writes through
-those contracts, six testing layers, two production images, and a CI workflow. This document
+those contracts, seven testing layers, two production images, and a CI workflow. This document
 describes that, and separates it from the design the repository is being shaped towards.
 
 ## How to read this document
@@ -55,13 +55,19 @@ create, read, change, and delete projects and the files inside them, through `@d
 nothing else. A person opens the application, creates a project, edits a file, presses Save, and
 finds it there after a reload.
 
+**From C4, that work is also proved to outlive the processes holding it.** Restarting the API,
+restarting PostgreSQL, and redeploying the committed migration over populated rows each leave every
+field of every record unchanged; a request made while the database is away is a controlled `503`, and
+the same API process recovers on its own when it returns. There is no backup, restore, replication,
+or failover behind that — one database, one volume, one API instance.
+
 There is still no cache, queue, message broker, background worker, scheduler, or WebSocket anywhere
 in the repository, and no shared session or cookie between the two applications: every request is
 anonymous.
 
 ## Repository structure
 
-A pnpm workspace with a Turborepo task graph over it. Nine workspaces, plus the root project that
+A pnpm workspace with a Turborepo task graph over it. Ten workspaces, plus the root project that
 owns the shared tooling.
 
 ```text
@@ -77,7 +83,8 @@ devsync/
 │   ├── ui/                   Reusable interface components         reserved
 │   └── test-utils/           Shared test helpers                   reserved
 ├── tests/
-│   └── e2e/                  Playwright browser and HTTP suite     implemented
+│   ├── e2e/                  Playwright browser and HTTP suite     implemented
+│   └── restart/              C4 restart and outage validation      implemented
 ├── .github/workflows/ci.yml  Quality, database, e2e, Docker jobs   implemented
 ├── compose.yaml              web, api, PostgreSQL, and migrate     implemented
 ├── turbo.json                Task graph
@@ -96,9 +103,16 @@ devsync/
 | `packages/ui`            | `@devsync/ui`            | Reserved        | no     | nothing          |
 | `packages/test-utils`    | `@devsync/test-utils`    | Reserved        | no     | nothing          |
 | `tests/e2e`              | `@devsync/e2e`           | Test suite      | no     | reports, ignored |
+| `tests/restart`          | `@devsync/restart`       | Validation      | no     | nothing          |
 
-All nine participate in `pnpm lint` and `pnpm typecheck`. None is excluded from either, and the
+All ten participate in `pnpm lint` and `pnpm typecheck`. None is excluded from either, and the
 four that build are the only four that produce a deployable artifact.
+
+**`tests/restart` is C4's, and it is a validation harness rather than a test suite.** It holds one
+ordered scenario against real containers — build, seed, restart, stop the database, recover, redeploy
+the migration — run by `pnpm test:restart`, plus a Vitest suite over its own pure helpers that runs
+in `pnpm test`. It imports no workspace package, produces no artifact, and reaches the product only
+over HTTP. [`testing.md`](testing.md) describes what it proves.
 
 ### Why most `packages/*` libraries do not build, and why two do
 
@@ -419,12 +433,19 @@ carries a password.
 `onModuleInit` and disconnects during `onModuleDestroy`. `main.ts` calls `enableShutdownHooks()`,
 without which SIGTERM would kill the process before the pool was ever closed.
 
-**`GET /health` was deliberately left alone again in C2.** It reports that the process is answering
-and says nothing about the database, its host, the migration state, or how many projects there are.
-It does not need to: the API cannot finish starting without a working connection, so a service that
-answers at all has already proved one. A readiness endpoint that distinguishes "up" from "able to
-serve" earns its place when a database that goes away _after_ startup has to be told apart from one
-that was never there — which is C4's question, with C4's restart tests to make it concrete.
+**`GET /health` was deliberately left alone again in C2, and C4 kept it that way.** It reports that
+the process is answering and says nothing about the database, its host, the migration state, or how
+many projects there are. It does not need to: the API cannot finish starting without a working
+connection, so a service that answers at all has already proved one.
+
+C4 asked the question this paragraph reserved for it — should a readiness endpoint distinguish "up"
+from "able to serve"? — and answered no, for now. What C4 needed to establish was what a
+**persistence route** does while the database is away, and the restart validation asserts exactly
+that: `GET /projects/:projectId` answers `503 DATABASE_UNAVAILABLE` while `GET /health` keeps
+answering `200`. That split is honest rather than accidental: the process **is** up, and it recovers
+on its own when PostgreSQL returns, without a restart. A readiness probe earns its place when
+something consumes one — an orchestrator that would stop routing traffic to an instance — and nothing
+does. That is Phase M's, alongside structured logging and metrics.
 
 ### CORS — implemented
 
@@ -594,21 +615,45 @@ on ports 4310 and 4311, waits on HTTP readiness checks — never a fixed sleep �
 afterwards. From C3 the suite writes: it creates projects and files through the real interface, which
 is why it runs serially against the one schema it shares.
 
-The six testing layers as a whole:
+## `tests/restart` — implemented
 
-| Layer                  | Runner     | Location            | Runs against                                    |
-| ---------------------- | ---------- | ------------------- | ----------------------------------------------- |
-| Contract               | Vitest     | `packages/shared`   | Schemas, in Node, in-process                    |
-| Component              | Vitest     | `apps/web`          | React components in jsdom                       |
-| HTTP-level application | Jest       | `apps/api`          | A Nest app on an ephemeral socket               |
-| Database integration   | Vitest     | `packages/database` | A real PostgreSQL, migrated                     |
-| API integration        | Jest       | `apps/api`          | The real `AppModule`, over that same PostgreSQL |
-| Browser and full-stack | Playwright | `tests/e2e`         | Both compiled applications, on ports            |
+C4's, and the only workspace that starts containers. `pnpm test:restart` brings the production `api`
+and `migrate` images up beside PostgreSQL in the Compose project `devsync-c4-validation`, creates a
+project and two files **through the public HTTP routes**, and then restarts the API, stops PostgreSQL
+underneath it, brings PostgreSQL back without restarting the API, and redeploys the committed
+migration over the populated volume — comparing every field of the fixture after each. It refuses in
+code to issue a Compose command against any other project, refuses to delete a volume Docker does not
+label as its own, and proves afterwards that the development project's volumes are unchanged.
 
-Five hundred and seven real tests in total, of which the two integration layers are the only
-ones needing an external service — which is why they share one command, `pnpm test:db`, and why
-`pnpm test` still starts nothing. [`testing.md`](testing.md) covers what each layer proves, why the
-API stays on Jest, and what is deliberately untested.
+It is not part of `pnpm test:all`: it is the one command that requires a Docker daemon rather than a
+PostgreSQL somebody started. CI runs it in the `docker` job.
+
+**It is a layer above `packages/database`'s connection-lifecycle tests, not a replacement for them.**
+C1 proved at the data-access boundary that a record survives a client disconnecting and reconnecting,
+and that a query against an unreachable database is classified rather than leaked, against a
+PostgreSQL that stayed up; the container restarts behind C1's boundary were checked by hand. C4 stops
+the server rather than the client, drives the public HTTP routes rather than the package, runs the
+production Compose topology rather than a host database, compares a recorded fixture field by field,
+and adds the outage contract and the migration-over-populated-rows case that C1 had no way to reach.
+Both still run — C1's on every change under `pnpm test:db`, this one under `pnpm test:restart`.
+
+The seven testing layers as a whole:
+
+| Layer                  | Runner        | Location            | Runs against                                    |
+| ---------------------- | ------------- | ------------------- | ----------------------------------------------- |
+| Contract               | Vitest        | `packages/shared`   | Schemas, in Node, in-process                    |
+| Component              | Vitest        | `apps/web`          | React components in jsdom                       |
+| HTTP-level application | Jest          | `apps/api`          | A Nest app on an ephemeral socket               |
+| Database integration   | Vitest        | `packages/database` | A real PostgreSQL, migrated                     |
+| API integration        | Jest          | `apps/api`          | The real `AppModule`, over that same PostgreSQL |
+| Browser and full-stack | Playwright    | `tests/e2e`         | Both compiled applications, on ports            |
+| Restart and outage     | a Node runner | `tests/restart`     | The production images, under Docker Compose     |
+
+Five hundred and sixty-five real tests in total, plus six restart scenarios counted separately. The
+two database integration layers are the only ones needing a service somebody else started — which is
+why they share one command, `pnpm test:db` — and `pnpm test` still starts nothing.
+[`testing.md`](testing.md) covers what each layer proves, why the API stays on Jest, and what is
+deliberately untested.
 
 ## Request and process boundaries
 
@@ -1139,10 +1184,16 @@ without touching the client.
 Two failures are configuration rather than requests. **A missing or malformed `DATABASE_URL` fails
 startup**, loudly, rather than defaulting to some other database. **A database that goes away after
 startup** produces `503` and `DATABASE_UNAVAILABLE` from the persistence routes for as long as it is
-gone; the mapping is implemented and covered by injecting the typed failure, and **actually stopping
-PostgreSQL under a running API is C4's test**, not something to do in the middle of an integration
-run. `GET /health` is a separate question, and whether it should start reporting readiness is C4's
-to decide with those restarts in front of it.
+gone.
+
+**C4 stopped PostgreSQL under a running API and confirmed that**, which is what turned the paragraph
+above from a mapping into a behaviour. `pnpm test:restart` asserts the status, the stable code, and
+that the body's property set is exactly `statusCode`, `code`, and `message`, then audits the raw text
+for a stack frame, an ORM name, a Prisma code, a driver socket error code, SQL, a table name, and a
+credential. It also asserts the API process does not restart, and that the **same** process serves
+again once PostgreSQL returns. The fast suite's injected failures remain the cover for
+`INTERNAL_ERROR`, which no container can be asked to produce on demand. `GET /health` keeps answering
+`200` throughout the outage, which is [decided above](#appsapi--implemented) rather than incidental.
 
 ### Where the code goes
 
@@ -1225,8 +1276,9 @@ engine binary ships anywhere.
   start at once.
 - **A destructive reset is only ever pointed at a database that has been explicitly declared
   disposable.** The database suite drops a schema before it runs, and refuses to start against any
-  database it cannot prove is throwaway. Verifying that a migration preserves existing data belongs
-  to C4.
+  database it cannot prove is throwaway. **C4 verified that a migration preserves existing data**:
+  `pnpm test:restart` redeploys the committed migration through the real `migrate` service against a
+  populated volume and compares every field of the fixture, timestamps included, before and after.
 
 One migration exists, `create_projects_and_files`, and it is committed. Generated Prisma Client is
 **not** committed: it is written to `src/generated/prisma`, git-ignored, and reproduced by the
@@ -1277,8 +1329,8 @@ that reads configuration cannot safely be. `.env.example` documents all five wit
 
 [`docker.md`](docker.md) owns the Compose topology — the PostgreSQL service, the named volume, the
 health check, the migration service, and what `docker compose down` does and does not destroy.
-[`testing.md`](testing.md) owns the testing ladder — what the data layer and the API prove today,
-what C3 and C4 still have to prove, and why database-backed tests stay outside `pnpm test`.
+[`testing.md`](testing.md) owns the testing ladder — what each of the seven layers proves today, and
+why database-backed and container-backed tests stay outside `pnpm test`.
 
 ### What Phase C changed about the editor
 

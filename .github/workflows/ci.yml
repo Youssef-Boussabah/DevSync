@@ -199,8 +199,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # No Node or pnpm setup in this job: both images install and build everything
-      # they need internally, which is the property being tested.
+      # Node and pnpm are here only to *drive* Docker: `pnpm test:restart` is a
+      # plain Node script with no dependencies of its own, and it runs no build.
+      # Both images still install and build everything they need internally, which
+      # is the property the steps below test — nothing about it is weakened by the
+      # host having a Node on PATH. There is deliberately no `pnpm install` and no
+      # store cache, because the restart runner needs neither.
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - name: Validate the Compose file
         run: docker compose config --quiet
 
@@ -280,7 +291,22 @@ jobs:
           ! docker compose exec -T web sh -c \
             "grep -rqE 'postgres(ql)?://|DATABASE_URL' /repo/apps/web/.next"
 
-      # Before the cleanup step below, so the containers still exist to be read from.
+      # C4. The same command a developer runs, and the only place in CI where a
+      # record is written, a process is restarted, and a database is taken away
+      # underneath it.
+      #
+      # It runs in its own Compose project — `devsync-c4-validation`, on ports
+      # 4320, 4321, and 5434 — so it cannot see, stop, or delete anything
+      # belonging to the `devsync` stack this job has running above it, and it
+      # brings that project up and tears it down itself. It builds the `api` and
+      # `migrate` images again under its own project name; every layer is already
+      # in the BuildKit cache from the step above, so what that costs is a re-tag
+      # rather than a rebuild. It prints its own container states and redacted
+      # logs when it fails.
+      - name: Run the C4 restart validation
+        run: pnpm test:restart
+
+      # Before the cleanup steps below, so the containers still exist to be read from.
       - name: Show container status and logs
         if: failure()
         run: |
@@ -293,3 +319,10 @@ jobs:
       - name: Stop and remove containers
         if: always()
         run: docker compose down --volumes --remove-orphans
+
+      # Belt and braces for the validation project only, named explicitly, in case
+      # the runner above was killed before its own cleanup ran. It cannot reach the
+      # `devsync` project: a Compose command is scoped to the project it names.
+      - name: Remove the C4 validation project
+        if: always()
+        run: docker compose --project-name devsync-c4-validation down --volumes --remove-orphans

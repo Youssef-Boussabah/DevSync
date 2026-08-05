@@ -11,6 +11,14 @@
 #
 # **Open DevSync at http://127.0.0.1:3000**, not at `localhost:3000`. The API
 # allows exactly one browser origin and those two are different origins.
+#
+# The three published host ports are variables with the defaults they have always
+# had, so `docker compose up` on its own behaves exactly as before. They exist
+# because C4's restart validation brings a second, disposable copy of this stack
+# up in its own Compose project (`devsync-c4-validation`) while a developer's own
+# stack may be running, and two stacks cannot publish the same port. The
+# container-side ports never move, and neither does the URL Compose passes
+# between services. See docs/testing.md.
 
 name: devsync
 
@@ -30,7 +38,7 @@ services:
       # connection succeeds against the wrong server and then fails to
       # authenticate, or worse, does not. Inside the Compose network the port is
       # the ordinary 5432, so only host-side URLs carry the offset.
-      - '5433:5432'
+      - '${POSTGRES_HOST_PORT:-5433}:5432'
     environment:
       # Development credentials, stated explicitly. They are not secrets, and
       # nothing outside a developer's machine ever authenticates with them.
@@ -76,7 +84,7 @@ services:
     # grace period before killing it.
     init: true
     ports:
-      - '3001:3001'
+      - '${API_HOST_PORT:-3001}:3001'
     environment:
       NODE_ENV: production
       # Passed explicitly. DevSync loads `.env` only outside containers, so a
@@ -87,7 +95,11 @@ services:
       # address to open DevSync at. It is matched exactly: to a browser
       # `http://localhost:3000` is a different origin from the one below, and a
       # page loaded at that address gets no allow-origin header back.
-      WEB_ORIGIN: http://127.0.0.1:3000
+      #
+      # It follows the published web port rather than restating 3000, so a stack
+      # brought up on another port still allows the address it is actually served
+      # from.
+      WEB_ORIGIN: http://127.0.0.1:${WEB_HOST_PORT:-3000}
     depends_on:
       database:
         condition: service_healthy
@@ -119,10 +131,14 @@ services:
         # user's browser. `http://api:3001` would resolve inside the Compose
         # network and nowhere else, and every request would fail with a name the
         # browser cannot look up.
-        NEXT_PUBLIC_API_URL: http://127.0.0.1:3001
+        #
+        # It follows the published API port for the same reason `WEB_ORIGIN`
+        # follows the published web port: the two halves of one boundary must
+        # agree, and restating a number in two places is how they stop agreeing.
+        NEXT_PUBLIC_API_URL: http://127.0.0.1:${API_HOST_PORT:-3001}
     init: true
     ports:
-      - '3000:3000'
+      - '${WEB_HOST_PORT:-3000}:3000'
     environment:
       NODE_ENV: production
       # Read by the Next.js standalone server. HOSTNAME is what makes it listen on
