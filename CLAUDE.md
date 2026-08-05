@@ -109,11 +109,14 @@ followed by `pnpm test` has to pass with `packages/*/dist`, `packages/database/s
 `apps/api/dist` still absent afterwards. `test`, `test:unit`, and `test:coverage` therefore declare
 **no `dependsOn`** in `turbo.json`; do not add `^build` back to any of them.
 
-**`test:unit` is the Vitest layer, so every Vitest workspace must declare a `test:unit` script.**
-`apps/api` has none because its suites are Jest; a Vitest workspace without one disappears from the
-command silently, which makes `test:unit` quietly stop meaning what its name says. `tests/restart`
-declares it, and only its 58 pure-helper tests run under it — the Docker scenario stays behind
-`pnpm test:restart` and joins neither `test` nor `test:unit`.
+**`test:unit` is the Vitest layer, so every Vitest workspace must declare a `test:unit` script —
+including one whose suite cannot run in it.** Turborepo resolves an undeclared task to nothing and
+reports nothing, so a Vitest workspace without the script disappears from the command silently, which
+makes `test:unit` quietly stop meaning what its name says. `apps/api` correctly has none because its
+suites are Jest. `tests/restart` declares it and its 58 pure-helper tests run under it — the Docker
+scenario stays behind `pnpm test:restart` and joins neither `test` nor `test:unit`.
+**`packages/database` declares it and prints that its suite needs PostgreSQL**, the same thing its
+`test` script says, so the exclusion is stated rather than omitted.
 
 What makes that possible is a source-level alias in each workspace that consumes a package which
 builds. `apps/api/jest.config.mjs` maps `@devsync/shared` to `packages/shared/src/index.ts` and
@@ -152,11 +155,17 @@ A stale-stack removal that failed leaves the previous run's populated volume in 
 stops there rather than building images over data it did not create. Do not reintroduce a discarded
 command result anywhere in `tests/restart`.
 
-**The harness is plain `.mjs` and is type-checked as such.** `tests/restart/tsconfig.json` turns on
-`allowJs` and `checkJs` — the same arrangement `packages/config` uses — so `lib/support.mjs`,
-`lib/docker.mjs`, `lib/api.mjs`, and `tools/run-restart-validation.mjs` are all in `pnpm typecheck`.
-`lib/support.mjs` is named in `files` rather than left to the `lib` wildcard because a wildcard drops
-a `.mjs` whose `.d.mts` sits beside it; removing that entry silently stops checking the file.
+**Every `.mjs` file DevSync runs carries `// @ts-check` and must be in `pnpm typecheck`**, or the
+annotation is decorative. Two rules make that true, and both are load-bearing: the workspace's
+`tsconfig.json` turns on `allowJs` and `checkJs`, and any `.mjs` with a `.d.mts` beside it is named
+in `files` rather than left to a wildcard — a wildcard drops it, because the declaration wins on
+extension priority. That covers `tests/restart/lib/*.mjs` and `tools/run-restart-validation.mjs`,
+`packages/database/tools/test-database.mjs`, `packages/config/vitest/base.mjs` and `eslint/*.mjs`,
+`apps/api/tests/global-setup.mjs`, and `tests/e2e/tools/run-e2e.mjs`. Where a `files` list is added
+to a config a build config extends, the build config must clear it — `files` beats `exclude`, and
+tooling must not reach `dist`. Tool configuration read only by its own tool — `jest.config.mjs`,
+`jest.db.config.mjs`, `postcss.config.mjs`, `prettier.config.mjs` — carries no `// @ts-check` and
+stays outside every tsconfig.
 
 `pnpm test:e2e` runs `tests/e2e/tools/run-e2e.mjs`, which does two things Turborepo and Playwright
 cannot: it resets the disposable database through `@devsync/database/test-database` **before** the
@@ -199,7 +208,9 @@ alongside PostgreSQL.
 
 - **Build context is always the repository root**, for both Dockerfiles. A pnpm workspace
   cannot do a frozen install without the root lockfile, `pnpm-workspace.yaml`, and every
-  workspace manifest, so a per-app context cannot work.
+  workspace manifest, so a per-app context cannot work. **Both Dockerfiles enumerate every workspace
+  manifest, and a new workspace must be added to both** — the install still succeeds without one, so
+  the omission is silent until something about resolution depends on it.
 - Install from the committed lockfile with `--frozen-lockfile`, and get pnpm from Corepack so
   the image uses the version pinned in `packageManager`.
 - Multi-stage, always: build tooling must not reach the runtime image. `apps/web` ships the
@@ -251,8 +262,11 @@ One workflow, `.github/workflows/ci.yml`, with four independent jobs: `quality`,
   `lint:fix`, and never a step that commits, pushes, or tags.
 - `permissions: contents: read` at the workflow level. Do not grant write scopes, and do not
   introduce secrets — nothing here authenticates to anything.
-- Official `actions/*` only, pinned to a major version. No third-party action where an official
-  one or a direct command will do.
+- Official `actions/*` only, each pinned to **that action's own current major** —
+  `checkout@v6`, `setup-node@v6`, `upload-artifact@v7`. The three release independently, so the
+  numbers are not meant to match; pinning them all to one is how a reference to a major that was
+  never published gets written. Check the action's releases before changing a pin, and never use a
+  floating tag or a branch. No third-party action where an official one or a direct command will do.
 - Node comes from a workflow-level `NODE_VERSION`; pnpm comes from Corepack reading
   `packageManager`. Never hard-code a pnpm version in the workflow.
 - `corepack enable` must stay **before** `actions/setup-node`, because its pnpm cache runs
@@ -322,17 +336,17 @@ here is installed, and none may be installed ahead of the milestone that calls f
 
 ## Current boundary
 
-**Phase A and Phase B are complete. Phase C — database-backed projects — is at C4: C0, C1, C2, C3,
-and C4 are complete, and C5 is next.** Phase A's foundation is in place: monorepo scaffold,
-centralised TypeScript and quality configuration, the testing layers, two production Docker images,
-GitHub Actions CI, and the documentation above. Phase B added the local editor.
+**Phases A, B, and C are complete. Phase D — rooms and presence — is next.** Phase A's foundation is
+in place: monorepo scaffold, centralised TypeScript and quality configuration, the testing layers,
+two production Docker images, GitHub Actions CI, and the documentation above. Phase B added the local
+editor.
 
-**C1 built the storage half of Phase C, C2 put an HTTP surface on it, C3 connected the browser, and
-C4 proved the data outlives the processes.** PostgreSQL 18 and a one-shot `migrate` service are in
-Compose; Prisma 7, the schema, one committed migration, and the data layer are in
-`@devsync/database`; `apps/api` validates `DATABASE_URL` and `WEB_ORIGIN`, opens a connection during
-startup, and serves five project routes and five nested project-file routes over it, with the
-contracts in `@devsync/shared`.
+**C1 built the storage half of Phase C, C2 put an HTTP surface on it, C3 connected the browser, C4
+proved the data outlives the processes, and C5 audited and closed the phase.** PostgreSQL 18 and a
+one-shot `migrate` service are in Compose; Prisma 7, the schema, one committed migration, and the
+data layer are in `@devsync/database`; `apps/api` validates `DATABASE_URL` and `WEB_ORIGIN`, opens a
+connection during startup, and serves five project routes and five nested project-file routes over
+it, with the contracts in `@devsync/shared`.
 
 **`apps/web` now calls `apps/api`**, which is the first web-to-API runtime dependency the repository
 has ever had. A person can create a project, open it, edit a file in Monaco, press Save, reload, and
@@ -411,52 +425,30 @@ Two Monaco integration facts are worth knowing before changing the editor:
 `apps/api/src/projects/starter-file.ts` is the one place that decides what a new project contains.
 C3 rewrote its content, because the file it creates is now stored rather than held in a tab.
 
-**C4 made restart survival an automated proof, and added no product behaviour.** It is a layer above
-C1's, not a correction of it: C1 met its own boundary at the data-access edge, with
-`packages/database`'s lifecycle tests over a client disconnect and reconnect and an unreachable
-database classified rather than leaked, plus container restarts a developer checked by hand. C4 stops
-the server instead of the client, goes through the public HTTP routes instead of the package, runs
-the production Compose topology instead of a host PostgreSQL, compares a recorded fixture field by
-field, and adds the outage contract and the migration over populated rows. Both layers still run.
-**Do not describe C1 as having had no restart evidence**, and do not describe C4 as the first time
-persistence was tested. `pnpm test:restart` runs
-`tests/restart/tools/run-restart-validation.mjs`: it builds the `api` and `migrate` images, brings
-them up beside PostgreSQL in the `devsync-c4-validation` Compose project, creates a project and two
-files **through the public HTTP routes only**, records every field of every resource, and then
+**C4's restart validation is a layer above C1's, not a correction of it.** C1 met its own boundary at
+the data-access edge — `packages/database`'s lifecycle tests over a client disconnect and reconnect,
+an unreachable database classified rather than leaked — plus container restarts checked by hand. C4
+stops the server instead of the client, goes through the public HTTP routes, runs the production
+Compose topology, and compares a recorded fixture field by field after an API restart, a PostgreSQL
+outage, a recovery without restarting the API, and the committed migration redeployed over populated
+rows. Both layers still run. **Do not describe C1 as having had no restart evidence**, and do not
+describe C4 as the first time persistence was tested. `docs/testing.md` has the scenarios in full.
 
-- stops and starts the API container, asserting the container's PID changed so the scenario cannot
-  pass against a process that never went away;
-- stops PostgreSQL with the API running, and asserts `GET /projects/:projectId` answers `503`
-  `DATABASE_UNAVAILABLE` within a bounded timeout, twice, with a body whose property set is exactly
-  `statusCode`, `code`, and `message` and whose raw text carries no stack frame, ORM name, Prisma
-  code, driver socket error code, SQL, table name, or connection string — while `GET /health` keeps
-  answering and the API's PID does not change;
-- starts PostgreSQL again **without restarting the API**, polls the persistence route until it
-  succeeds, and asserts the PID is the same one throughout, so the same process and the same pool
-  recovered;
-- redeploys the committed migration through `docker compose run --rm migrate` against the populated
-  volume, requiring exit 0;
+**Neither C4 nor C5 changed product behaviour.** C4's only non-documentation change outside
+`tests/restart` was making `compose.yaml`'s three published host ports variables with their existing
+defaults. C5 audited the phase against the C0 contract, found the two in agreement, and corrected
+four things that were not: both Dockerfiles now copy `tests/restart/package.json` like every other
+workspace manifest, `docs/ci.md` describes the action pins the workflow actually uses,
+`packages/database` declares a `test:unit` that names the command its suite needs, and the four
+runtime `.mjs` files whose `// @ts-check` no tsconfig was reading are in `pnpm typecheck`. **No
+retry, circuit breaker, queue, schema change, or second migration was added by either.**
 
-comparing the fixture field by field after each, and finally confirming the API runtime image still
-carries no Prisma CLI and no TypeScript compiler.
-
-**No production code needed correcting.** The scenarios were run against C3's implementation as it
-stood and every one already held; the only non-documentation change outside `tests/restart` is that
-`compose.yaml`'s three published host ports became variables with their existing values as defaults.
-C4 added no retry, no circuit breaker, no queue, no schema change, and no second migration.
-
-**Three corrections landed inside `tests/restart` after the first pass**, and none of them changed a
-scenario: the workspace declares `test:unit` so its 58 Vitest tests cannot vanish from that command,
-its `tsconfig.json` type-checks the four `.mjs` runtime files rather than only the TypeScript beside
-them, and the preflight stale-stack removal asserts its exit code instead of discarding it.
-
-**What C4 does not claim.** There is no backup, restore, replication, failover, high availability,
+**What none of this claims.** There is no backup, restore, replication, failover, high availability,
 automatic retry, or zero-downtime story, and nothing here is production-ready or safe to expose. The
 validation shows one API process recovers after one PostgreSQL returns; it says nothing about
 behaviour under load, about a request in flight when the connection drops, or about how many requests
-fail while the database is away.
-
-**C5 owns Phase C closure** — the reconciliation pass over the whole phase.
+fail while the database is away. **No Phase C run of the GitHub Actions workflow has been observed**;
+every command in it has been run locally, which is not the same thing.
 
 Do not implement later milestones early. Specifically, do not add authentication, WebSockets, a CRDT
 library, code execution, Kubernetes, cloud deployment, release automation, or a dependency bot until

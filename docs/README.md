@@ -5,11 +5,12 @@ describes an intention rather than a system. Where a document does describe dire
 architecture DevSync is being built towards, or the milestones ahead — it says so explicitly and
 keeps it separate from what exists.
 
-**Phases A and B are complete. Phase C is at C4: C0, C1, C2, C3, and C4 are done, and C5 is next.**
+**Phases A, B, and C are complete. Phase D — rooms and presence — is next.**
 C0 decided how persistence would be built; C1 built the storage half — PostgreSQL, Prisma, the schema,
 one committed migration, the data layer, and an API that connects during startup; C2 put ten
 project and file routes over it, with the request and response contracts in `@devsync/shared`; C3
-connected the browser to those routes; **C4 proved the data outlives the processes holding it**.
+connected the browser to those routes; **C4 proved the data outlives the processes holding it**; C5
+audited the phase against the C0 contract, corrected what it found, and closed it.
 
 **A person can now reach it.** The home page lists projects, `/projects/[projectId]` opens one in
 Monaco, and pressing Save writes to PostgreSQL — a reload finds the work unchanged. There is no

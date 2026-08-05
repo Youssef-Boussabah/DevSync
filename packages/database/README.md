@@ -123,3 +123,16 @@ database it cannot prove is disposable.
 From C2 that command runs this package's 57 tests **and then** the API's 110
 PostgreSQL-backed HTTP tests, one after the other against the same schema. It is
 deliberately not part of `pnpm test`, which starts no external service.
+
+**This package runs Vitest but appears in neither `pnpm test` nor `pnpm test:unit`,
+and it says so in both.** Each script prints that the suite needs PostgreSQL and names
+`pnpm test:db`. A Vitest workspace that simply declared no `test:unit` would be
+resolved to nothing and reported as nothing, which is how a command that claims to be
+the Vitest layer quietly stops being one — so the exclusion is stated rather than
+omitted.
+
+`tools/test-database.mjs` holds the safety gate and is plain JavaScript, so it is named
+in `files` in `tsconfig.json` and the package turns on `allowJs` and `checkJs`. Without
+that it was outside `pnpm typecheck` entirely — the `.d.mts` beside it wins on extension
+priority — and `tsconfig.build.json` clears the list again, because `files` beats
+`exclude` and CLI tooling must not reach `dist`.

@@ -22,9 +22,20 @@ WORKDIR /repo
 
 # --- Manifests ----------------------------------------------------------------
 # Shared by every install below, so the manifest layer is fetched and cached once.
-# All manifests are copied because pnpm resolves the whole workspace graph before
-# it can honour a filter, and a missing one fails the install rather than being
-# ignored.
+#
+# Every workspace manifest is copied, deliberately: pnpm reads the whole workspace
+# graph before it applies a filter, so the install should see the same graph the
+# repository has.
+#
+# **A manifest missing for a workspace nothing here depends on does not necessarily
+# fail the install.** C5 found `tests/restart` absent from this list and the frozen
+# install resolving 10 of the repository's 11 workspace projects without a word
+# about it. The omission is therefore silent, and the rule has to be kept by hand:
+# **a new workspace must be added here and to `apps/web/Dockerfile`.**
+#
+# Copying a manifest installs nothing from that workspace. The `--filter` on each
+# install below is what decides what is installed, and it is what keeps every
+# unrelated workspace's dependencies and source out of the image.
 FROM base AS manifests
 COPY pnpm-lock.yaml pnpm-workspace.yaml .npmrc package.json ./
 COPY apps/api/package.json apps/api/
@@ -36,6 +47,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/test-utils/package.json packages/test-utils/
 COPY packages/ui/package.json packages/ui/
 COPY tests/e2e/package.json tests/e2e/
+COPY tests/restart/package.json tests/restart/
 
 # --- Build dependencies -------------------------------------------------------
 # The full set for `@devsync/api` and everything it depends on, including the dev

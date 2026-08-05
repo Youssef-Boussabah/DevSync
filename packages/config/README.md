@@ -160,3 +160,12 @@ tried to express both would be harder to read than either.
 `base.mjs` ships a hand-written `base.d.mts` beside it. This package emits nothing
 and is consumed as source, and both importers are type-checked `.mts` files — without
 the declarations, a strict `.mts` importing a `.mjs` is an implicit `any`.
+
+**`base.mjs` is named in `files` in `tsconfig.json`, not left to the `vitest/**/*.mjs`
+wildcard.** A wildcard drops a `.mjs` whose `.d.mts` sits beside it, because the
+declaration wins on extension priority — so until C5 the implementation was the one
+file here the compiler never read, and its `// @ts-check` meant nothing outside an
+editor. `files` entries are literal and are not subject to that rule, so both are in
+the program: the declarations describe the module to its importers, and the
+implementation is checked against them. `packages/database` and `tests/restart` each
+carry the same entry for the same reason; removing one silently stops checking a file.

@@ -908,9 +908,10 @@ flowchart TB
 ## Phase C — the persistence architecture
 
 C0 decided this; C1 built the storage half; C2 built the HTTP surface over it; C3 connected the
-browser. **Everything in this section is implemented** — the data model, the routes, the error
-contract, the request size limit, the package boundaries, the Prisma and migration policy, and the
-configuration rules.
+browser; C4 proved it survives a restart; **C5 audited every row of it against the code and found
+the two in agreement**. **Everything in this section is implemented** — the data model, the routes,
+the error contract, the request size limit, the package boundaries, the Prisma and migration policy,
+and the configuration rules.
 
 **The product reaches all of it from C3.** [`roadmap.md`](roadmap.md) has the C0–C5 sequence and what
 each milestone must meet; [`decisions.md`](decisions.md) has the reasoning behind each choice and what
@@ -949,7 +950,9 @@ invalid rather than stored. **Project names are not unique** — two projects ma
 a person naming two things the same has not made an error worth rejecting, and uniqueness would
 need a scope that does not exist until there are owners. 100 characters is a practical ceiling for
 a label that appears in a list, chosen so the column is bounded rather than because anything
-measured it; the number is C0's to set and C5's to correct if the interface disagrees with it.
+measured it. C5 reviewed it against the interface that now exists and left it alone: the project
+list truncates a long name rather than wrapping, and nothing in the browser or the API pushes
+against 100 characters.
 
 Deletion is permanent. There is no archive state, no `deletedAt`, and no restore route.
 

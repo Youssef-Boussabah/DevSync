@@ -2,10 +2,10 @@
 
 The milestone sequence DevSync is being built in, and the current position within it.
 
-**Phases A and B are complete, and Phase C is under way: C0, C1, C2, C3, and C4 are complete, and C5
-is next.** C0 settled how persistence would be shaped; C1 built the storage half; C2 put an HTTP
-surface on it; C3 connected the browser to it; **C4 turned restart survival into an automated,
-repeatable proof through the public API**. PostgreSQL,
+**Phases A, B, and C are complete. Phase D is next.** C0 settled how persistence would be shaped;
+C1 built the storage half; C2 put an HTTP surface on it; C3 connected the browser to it; **C4 turned
+restart survival into an automated, repeatable proof through the public API**; C5 reconciled the
+phase and closed it. PostgreSQL,
 Prisma, the schema, the committed migration, the data layer, ten project and file routes, the
 contracts in `@devsync/shared`, a web application that creates, opens, edits, saves, and deletes
 projects and files through them, and an automated Docker-level validation of restart, outage,
@@ -19,29 +19,30 @@ after it stopped being true.
 
 ## Position
 
-| Phase | Name                      | Status          |
-| ----- | ------------------------- | --------------- |
-| **A** | Project foundation        | **Complete**    |
-| **B** | Local editor              | **Complete**    |
-| **C** | Database-backed projects  | **C4 complete** |
-| D     | Rooms and presence        | Not started     |
-| E     | Single-file collaboration | Not started     |
-| F     | Multi-file collaboration  | Not started     |
-| G     | Persistence and recovery  | Not started     |
-| H     | Authentication and RBAC   | Not started     |
-| I     | Reliability               | Not started     |
-| J     | Collaboration tools       | Not started     |
-| K     | Version history           | Not started     |
-| L     | Secure code execution     | Not started     |
-| M     | Production hardening      | Not started     |
-| N     | Portfolio closure         | Not started     |
+| Phase | Name                      | Status       |
+| ----- | ------------------------- | ------------ |
+| **A** | Project foundation        | **Complete** |
+| **B** | Local editor              | **Complete** |
+| **C** | Database-backed projects  | **Complete** |
+| D     | Rooms and presence        | **Next**     |
+| E     | Single-file collaboration | Not started  |
+| F     | Multi-file collaboration  | Not started  |
+| G     | Persistence and recovery  | Not started  |
+| H     | Authentication and RBAC   | Not started  |
+| I     | Reliability               | Not started  |
+| J     | Collaboration tools       | Not started  |
+| K     | Version history           | Not started  |
+| L     | Secure code execution     | Not started  |
+| M     | Production hardening      | Not started  |
+| N     | Portfolio closure         | Not started  |
 
 **The product is a persistent single-user workspace.** Phase B's Monaco editor is still the editing
 surface, and C3 put a database-backed project and file model around it: a project list, a project
 workspace, an explicit save, and work that survives a reload. **C4 added no product behaviour and
 proved what was already there**: the work also survives an API restart, a PostgreSQL restart, and a
-redeployment of the committed migration. Nothing else in the table above is built — no accounts, no
-collaboration, no presence, no history, and no execution.
+redeployment of the committed migration. **C5 added none either** — it audited the phase, corrected
+what the audit found, and rewrote the documentation from plan to record. Nothing else in the table
+above is built — no accounts, no collaboration, no presence, no history, and no execution.
 
 ---
 
@@ -147,7 +148,7 @@ editor works before anything else depends on it.
 
 ---
 
-## Phase C — database-backed projects 🚧 In progress
+## Phase C — database-backed projects ✅ Complete
 
 **Goal.** Projects and files that survive a restart, owned by the API and reached through one
 data-access package. **Phase C is single-user**: it gives DevSync something worth collaborating on
@@ -162,13 +163,13 @@ before any collaboration exists.
 | C2        | Project and file API                               | **Delivered** |
 | C3        | Persistent web workspace                           | **Delivered** |
 | C4        | Persistence and restart validation                 | **Delivered** |
-| C5        | Phase closure                                      | **Next**      |
+| C5        | Phase closure                                      | **Delivered** |
 
-**What the phase has to add up to.** By C5, one person can create a project, list their projects,
+**What the phase had to add up to.** By C5, one person can create a project, list their projects,
 open one, rename it, and delete it; create files in it, list and open them, edit a file's contents,
 rename it, change the language it is read as, and delete it; reload the browser and find all of it
-unchanged; and restart both the API and PostgreSQL and still find it unchanged. **All of that now
-holds** — C3 delivered the browser half and C4 proved the restart half.
+unchanged; and restart both the API and PostgreSQL and still find it unchanged. **All of that
+holds** — C3 delivered the browser half, C4 proved the restart half, and C5 audited both.
 
 **Excluded from the whole phase**, and not to be prepared for with a spare column or a placeholder
 contract: users, owners, authentication, memberships, invitations, roles, authorization, slugs,
@@ -381,18 +382,63 @@ guards, redaction, bounded waiting, and comparison.
 **Excluded.** No backup and restore tooling, no load testing, and no failover — those are Phase M.
 C4 adds no retry, no circuit breaker, no queue, no schema change, and no second migration.
 
-### C5 — phase closure
+### C5 — phase closure ✅ Delivered
 
-**Deliverables.** The reconciliation pass. Documentation rewritten from plan to record, the
-implementation audited against the C0 contract, any drift between the two resolved in whichever
-direction turns out to be right, and the full validation suite rerun.
+**Delivered.** The reconciliation pass: the implementation audited against the C0 contract, the
+drift the audit found corrected, the documentation rewritten from plan to record, and the full
+validation ladder rerun from a clean tree.
 
-**Completion boundary.** Every document describes the persistence that exists, the exclusions above
-are still absent, and the phase's completion boundary is met and stated as met.
+**The C0 contract holds.** Every field, rule, route, status code, error code, ownership boundary,
+and exclusion C0 settled is implemented as C0 described it. No row of that contract turned out to
+be missing or contradicted, so **no schema change and no second migration was needed** — the one
+committed migration is still the only one. `Project` and `ProjectFile` carry exactly the columns
+C0 named; identifiers are database-generated UUIDs; file names are unique per project under the
+`C` collation; `Project.updatedAt` moves in the transaction that changes a file; a project is
+created with its `main.ts` atomically and may later hold none; deletion is permanent and cascades.
+
+**Four defects were found and corrected, none of them in product behaviour.**
+
+- **The two Dockerfiles had not been told about C4's workspace.** Both enumerate every workspace
+  manifest before a frozen install, but neither copied `tests/restart/package.json`, added in C4.
+  The install had been quietly resolving 10 workspace projects where the host has 11. Both now copy
+  it, and both images report the same count as the repository — and copying a manifest installs
+  nothing, so neither image gained anything from that workspace.
+
+  **The comments in both files had also been wrong about why it mattered**, and correcting them was
+  half the fix: each claimed a missing manifest fails the install. It does not. The images had built
+  cleanly for the whole of C4 with the workspace absent and said nothing about it, which is exactly
+  what made the omission survive four milestones. Both now record that the rule is kept by hand.
+
+- **[`ci.md`](ci.md) described action pins that do not exist.** It said every official action was
+  pinned to one and the same major, the one `actions/upload-artifact` is on — but neither
+  `actions/checkout` nor `actions/setup-node` has ever published a major that high, and `main`'s
+  workflow asked each of them for it anyway. Phase C had already corrected the workflow to each
+  action's real current major and left the document behind. **The workflow was right and the prose
+  was wrong**, so the prose was corrected to the actual inventory — `actions/checkout` and
+  `actions/setup-node` at `@v6`, `actions/upload-artifact` at `@v7` — with a note that the three
+  repositories release independently and are not meant to match. No workflow line changed.
+- **`// @ts-check` was decorative on four runtime `.mjs` files.** `tests/restart` had solved this
+  for its own harness in C4 and recorded exactly why; the same shape existed in four earlier files
+  and none of them was in the TypeScript program. `packages/database/tools/test-database.mjs` — the
+  gate that decides whether a schema may be dropped — and `packages/config/vitest/base.mjs` were
+  each shadowed by the `.d.mts` beside them, and `apps/api/tests/global-setup.mjs` and
+  `tests/e2e/tools/run-e2e.mjs` sat in workspaces whose compiler never reads JavaScript at all. All
+  four are now in `pnpm typecheck`, and all four pass. The emitted output of both builds is
+  byte-for-byte what it was.
+- **A Vitest workspace was disappearing from `pnpm test:unit`.** `packages/database` runs Vitest but
+  declared no `test:unit`, so Turborepo resolved the task to nothing and said nothing — the precise
+  failure the rule in [`testing.md`](testing.md) exists to prevent. It now declares one that names
+  the command its suite really needs, so the exclusion is stated rather than silent.
+
+**Completion boundary.** Every document describes the persistence that exists, every exclusion above
+is still absent, and the phase's completion boundary is met. **Met.**
+
+**Excluded.** C5 added no product behaviour, no route, no column, no migration, no dependency, and
+nothing from Phase D or later. It removed nothing that worked.
 
 ---
 
-## Phase D — rooms and presence
+## Phase D — rooms and presence ⬅ Next
 
 **Goal.** A real-time transport and the ability to see who else is in a project, without yet
 sharing document content.

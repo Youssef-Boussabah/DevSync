@@ -1,6 +1,20 @@
 {
   "extends": "@devsync/config/tsconfig.nest.json",
+
+  // `tests/global-setup.mjs` is plain JavaScript, because Jest loads it directly
+  // with no compile step in front of it. It carries `// @ts-check`, and these two
+  // options are what make that annotation mean something in `pnpm typecheck`
+  // rather than only in an editor — the same arrangement `@devsync/config`,
+  // `@devsync/database`, and `@devsync/restart` use for the `.mjs` they run.
   "compilerOptions": {
-    "outDir": "./dist"
-  }
+    "outDir": "./dist",
+    "allowJs": true,
+    "checkJs": true
+  },
+
+  // Stated rather than left to the default. Without it, `allowJs` would also
+  // sweep in `jest.config.mjs`, `jest.db.config.mjs`, and `eslint.config.mjs`,
+  // none of which is application code and each of which lives outside every
+  // other tsconfig on purpose. `tsconfig.build.json` narrows this to `src`.
+  "include": ["src", "tests"]
 }

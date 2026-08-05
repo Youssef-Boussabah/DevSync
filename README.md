@@ -20,9 +20,10 @@ editor controlled by it rather than keeping the text to itself. B2 let the user 
 languages that one file is read as — TypeScript, JavaScript, Python, JSON, or Markdown — from a
 labelled selector beside the file name, with the content passed through untouched when the language
 changes. B3 added the browser test that types into the real editor, and B4 reconciled the
-documentation and closed the phase. That is the only product functionality in the repository.
+documentation and closed the phase. At Phase B's close that was the only product functionality in
+the repository, and nothing it held survived a reload.
 
-**Phase C — database-backed projects: C0, C1, C2, C3, and C4 are complete, and C5 is next.** C0
+**Phase C complete — database-backed projects.** C0
 settled the data model, the HTTP resources, the error boundary, and the package ownership. **C1 built
 the storage half of it**: PostgreSQL 18 in Compose with a named volume and a one-shot migration
 service, Prisma 7 and the schema in `@devsync/database`, one committed migration, a data layer with
@@ -36,7 +37,13 @@ proved the data outlives the processes holding it**, automatically and through t
 than at C1's data-access edge: one command that brings the production images up in a Compose project
 of its own, restarts the API, stops PostgreSQL underneath it, brings it back without restarting the
 API, and redeploys the committed migration over populated rows — comparing every field of a fixture
-after each.
+after each. **C5 audited the phase and closed it**: the implementation matched the C0 contract row
+for row, so no schema change and no second migration were needed, and the four defects the audit did
+find — two Dockerfiles that had not been told about C4's workspace, a CI document describing action
+versions that were never published, four `.mjs` files whose `// @ts-check` was never actually run,
+and a Vitest workspace that was vanishing from `pnpm test:unit` — were corrected together.
+
+**Phase D — rooms and presence — is next.**
 
 **A person can now use it.** Open the application, create a project, edit its `main.ts`, press Save,
 reload — the work is still there, because it is in PostgreSQL. Restart the containers and it is still

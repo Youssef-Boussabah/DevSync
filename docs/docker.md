@@ -20,6 +20,22 @@ own — which is what [`pnpm test:restart`](#the-c4-restart-validation) does. No
 file changed: the same four services, the same dependency graph, the same volume, and the same
 container-side ports.
 
+**C5 added nothing and corrected one omission.** Both Dockerfiles enumerate every workspace manifest
+before their frozen install, but neither had been updated when C4 added the `tests/restart`
+workspace, so both installs were resolving 10 workspace projects where the repository has 11. Both
+now copy `tests/restart/package.json`, and both images report the same count as the host.
+
+**What that omission is, and what it is not.** Both files used to claim a missing manifest fails the
+install. It does not, and C5 is what showed it: the images built cleanly for the whole of C4 with the
+workspace absent, and nothing in the output said so. **A manifest missing for a workspace nothing in
+the image depends on may be resolved past in silence**, which makes this a rule kept by hand rather
+than one the build enforces — **when a workspace is added, its manifest belongs in both Dockerfiles.**
+
+Copying a manifest installs nothing from that workspace. `tests/restart` is not installed into either
+image, has no runtime dependency in either, and contributes no source to either; the `--filter` on
+each install is what decides what is installed, and it is still what keeps every unrelated
+workspace's dependencies and source out.
+
 Docker is an additional way to run DevSync; it replaces nothing. Every `pnpm` command still works
 exactly as before, and the test architecture still runs on the host — though `pnpm test:db` and
 `pnpm test:e2e` now expect the `database` service to be up, because the API will not start without

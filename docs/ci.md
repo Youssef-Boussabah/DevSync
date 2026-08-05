@@ -9,6 +9,11 @@ either**: it added one workflow-level environment variable, because `apps/web` n
 without knowing where its API is, and two read-only verification steps to the `docker` job. There are
 still four jobs, and still no CI-only script. **C4 added no job either**: `pnpm test:restart` runs as
 one step of the existing `docker` job, which is where a command that needs a Docker daemon belongs.
+**C5 added no job, step, or command, and changed nothing in the workflow.** What it corrected was
+this document: it had claimed every official action was pinned to `@v7`, which is not a version
+`actions/checkout` or `actions/setup-node` publishes. The workflow already referenced each action's
+real current major; only the description of it was wrong. The inventory is
+[below](#node-and-pnpm).
 CI adds no capability to DevSync; it runs the checks that already existed, on someone else's machine,
 on every change. Every command in the workflow is one you can run yourself, which is the point — a
 red run should never require reading CI internals to reproduce.
@@ -161,7 +166,7 @@ database and a migration that exited 0.
 
 `--wait` blocks until every service reports healthy and exits non-zero if one does not, so the
 health checks already declared in `compose.yaml` are the gate. There is no fixed sleep anywhere.
-`--wait-timeout 180` bounds it, so a service that never comes up fails promptly instead of
+`--wait-timeout 240` bounds it, so a service that never comes up fails promptly instead of
 consuming the job timeout.
 
 The two verification steps are ordinary `curl`:
@@ -299,10 +304,20 @@ steps produces a "pnpm: command not found" failure inside the caching step.
 `COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'` stops Corepack asking for confirmation before it
 downloads the pinned pnpm.
 
-Only official `actions/*` actions are used — `checkout`, `setup-node`, and `upload-artifact` —
-each pinned to a major version (`@v7`) so patch and minor fixes arrive without a workflow edit.
-No third-party action is used anywhere; where an official action does not exist, the workflow
-runs the command directly.
+Only official `actions/*` actions are used, each pinned to a major version so patch and minor
+fixes arrive without a workflow edit. **Each pin is that action's own current major, and they are
+not all the same number** — the three repositories release independently, so a single version for
+all of them would be a reference to something that does not exist:
+
+| Action                    | Pin   | Used by                         |
+| ------------------------- | ----- | ------------------------------- |
+| `actions/checkout`        | `@v6` | all four jobs                   |
+| `actions/setup-node`      | `@v6` | all four jobs                   |
+| `actions/upload-artifact` | `@v7` | `e2e` only, and only on failure |
+
+No floating tag and no branch reference is used, and nothing is pinned to a commit SHA — a major
+is the level at which these actions promise compatibility. No third-party action is used anywhere;
+where an official action does not exist, the workflow runs the command directly.
 
 ## Dependency caching
 
@@ -388,13 +403,16 @@ pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typeche
 
 ## Current limitations
 
-- **The C1, C2, C3, and C4 jobs have not yet been observed running on GitHub.** The workflow parses,
-  and every command in it has been run locally against the current commit — including `pnpm test:db`
-  covering both persistence suites, `pnpm test:e2e` covering the browser flow, the full Compose stack
-  with its migration, its HTTP verifications, and C3's CORS and image checks, and `pnpm test:restart`
-  twice in a row. What has not been proved is the runner-specific part: service containers, their
-  published ports, the health options attached to them, and the restart validation under a Linux
-  Docker daemon rather than Docker Desktop. The first run against a real pull request is that proof.
+- **No Phase C run of this workflow has been observed on GitHub.** That is still true at C5 closure.
+  The workflow parses, and every command in it has been run locally against the current tree —
+  `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test` from a clean tree, `pnpm build`,
+  `pnpm test:db` covering both persistence suites, `pnpm test:e2e` covering the browser flow, the
+  full Compose stack built `--no-cache` with its migration and every HTTP, CORS, and image check, and
+  `pnpm test:restart` twice in a row. What has not been proved is the runner-specific part: service
+  containers, their published ports, the health options attached to them, the `actions/*` majors
+  resolving on a real runner, and the restart validation under a Linux Docker daemon rather than
+  Docker Desktop. **The first run against a real pull request is that proof, and it has not happened
+  — local validation and reading the workflow are not the same as watching CI.**
 - **No branch protection is configured**, so a failing run does not yet block a merge. That is a
   repository setting rather than a file, and it is not something this milestone can add.
 - **Playwright browsers are downloaded on every `e2e` run** — roughly 300 MB and a minute or so.

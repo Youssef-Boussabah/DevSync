@@ -29,6 +29,7 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
     "test": "node -e \"console.log('@devsync/database: its tests need PostgreSQL; run pnpm test:db.')\"",
+    "test:unit": "node -e \"console.log('@devsync/database: its Vitest suite needs PostgreSQL; run pnpm test:db.')\"",
     "test:db": "vitest run",
     "clean": "node -e \"['dist','src/generated','coverage','.turbo','tsconfig.tsbuildinfo','tsconfig.build.tsbuildinfo'].forEach((p) => require('fs').rmSync(p, { recursive: true, force: true }))\""
   },

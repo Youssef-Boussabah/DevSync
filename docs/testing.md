@@ -13,8 +13,12 @@ the seventh layer and closed the next one**: a Docker-level restart validation t
 and takes the database away from a running API. That layer sits **above** C1's, rather than replacing
 it — C1's lifecycle tests already covered a client disconnecting and reconnecting against a running
 PostgreSQL, and C4 is what stops the server process instead of the client, through the public routes
-and in containers. The product still has no collaboration, no accounts, and no code execution, so
-none of those things are tested.
+and in containers. **C5 added no layer and no test.** It audited the ones above, reran all of them
+from a clean tree, and corrected two ways this document had been describing more coverage than the
+repository was running: a Vitest workspace that had vanished from `pnpm test:unit`, and four `.mjs`
+files whose `// @ts-check` no tsconfig was reading. Both are recorded in the sections that own them.
+The product still has no collaboration, no accounts, and no code execution, so none of those things
+are tested.
 
 ## Layers
 
@@ -519,11 +523,20 @@ not a side effect of running tests.
 
 The `test:unit` / `test` distinction is a real one rather than an alias: `apps/api`'s suites are
 HTTP-level application tests, so it correctly has no `test:unit` script and does not appear in that
-command. `packages/shared` does, because schemas in Node are exactly what that layer is. **Every
-other Vitest workspace has to appear**, or the command quietly stops meaning "the Vitest layer" —
-which is why `tests/restart` declares `test:unit` alongside `test` even though the Docker half of
-that workspace is behind neither. The three that run are `@devsync/shared` (100), `@devsync/web`
-(151), and `@devsync/restart` (58): **309 assertions, and no container**.
+command. `packages/shared` does, because schemas in Node are exactly what that layer is. The three
+that actually run a suite are `@devsync/shared` (100), `@devsync/web` (151), and `@devsync/restart`
+(58): **309 assertions, and no container**.
+
+**Every Vitest workspace declares a `test:unit` script, including the one whose suite cannot run in
+that layer.** Turborepo resolves a task a workspace does not declare to nothing and reports nothing,
+so a Vitest workspace without the script disappears from the command in silence — and a command that
+silently drops a workspace has stopped meaning "the Vitest layer". `tests/restart` declares it
+because its helper suite belongs there. **`packages/database` declares it too, and it prints the
+command its suite really needs**: that workspace runs Vitest, but every one of its 57 tests wants a
+PostgreSQL, so it belongs to `pnpm test:db` and not here. C5 added that script after finding
+`@devsync/database#test:unit` resolving to nothing — the exact failure this rule exists to prevent,
+sitting inside the repository that states it. The exclusion is now something the command says out
+loud rather than something it omits.
 
 ### Within a workspace
 
@@ -1022,10 +1035,28 @@ run is built from; **the real run is the proof**, and it is the only thing that 
 **The half the Vitest suite cannot reach is covered by the compiler instead.** `lib/docker.mjs`,
 `lib/api.mjs`, and `tools/run-restart-validation.mjs` spawn processes and open sockets, so they are
 not unit-tested — but all three, and `lib/support.mjs` with them, are in `pnpm typecheck`. The
-workspace turns on `allowJs` and `checkJs`, the same arrangement `@devsync/config` uses for the
-`.mjs` it ships, which is what makes the `// @ts-check` at the top of each file mean something
-outside an editor. `lib/support.mjs` is named in `files` rather than left to the `lib` wildcard,
-because a wildcard drops a `.mjs` that has a `.d.mts` beside it and that one file does.
+workspace turns on `allowJs` and `checkJs`, which is what makes the `// @ts-check` at the top of each
+file mean something outside an editor. `lib/support.mjs` is named in `files` rather than left to the
+`lib` wildcard, because a wildcard drops a `.mjs` that has a `.d.mts` beside it and that one file
+does.
+
+**C5 applied both halves of that arrangement to the four runtime `.mjs` files that had been missing
+it.** Every JavaScript file DevSync actually runs carries `// @ts-check`, but an annotation only
+means anything if some tsconfig reads the file, and four did not:
+`packages/database/tools/test-database.mjs` and `packages/config/vitest/base.mjs` were each shadowed
+by the `.d.mts` beside them — the same extension-priority rule `tests/restart` had already worked
+around — while `apps/api/tests/global-setup.mjs` and `tests/e2e/tools/run-e2e.mjs` sat in workspaces
+whose compiler was never told to read JavaScript at all. A deliberate type error was added to the
+first of them and `pnpm typecheck` passed, which is how the gap was confirmed rather than reasoned
+about; the probe was reverted before anything was changed. All four are now in the program and all
+four pass, and both packages that emit produce byte-for-byte the output they did before.
+`packages/database/tsconfig.build.json` clears the inherited `files` list, because `files` beats
+`exclude` and the CLI tooling must not reach `dist`.
+
+The `.mjs` files that carry no `// @ts-check` — `jest.config.mjs`, `jest.db.config.mjs`,
+`postcss.config.mjs`, and `prettier.config.mjs` — stay outside every tsconfig on purpose. They are
+tool configuration read by the tool that owns them, and each already declares its shape with a
+`@type` annotation an editor honours.
 
 ## Still planned
 
@@ -1184,7 +1215,9 @@ application and its CORS policy, 13 for the error boundary, 8 for the pipes, 8 f
 for health. `@devsync/restart`'s 58 are all over `lib/support.mjs`.
 
 The four workspaces without a runner print that they have no tests and exit successfully — as does
-`@devsync/database` under `pnpm test`, where it says its tests need PostgreSQL and names the command
-that runs them. That is the correct behaviour for a workspace with no implementation: a test runner
-installed into an empty package, or a test asserting that `true` is `true`, would make the table
-above look uniform while proving strictly less than the sentence it prints.
+`@devsync/database` under `pnpm test` **and under `pnpm test:unit`**, where it says its tests need
+PostgreSQL and names the command that runs them. That is the correct behaviour for a workspace with
+no implementation: a test runner installed into an empty package, or a test asserting that `true` is
+`true`, would make the table above look uniform while proving strictly less than the sentence it
+prints. It is also the correct behaviour for a Vitest workspace whose suite belongs to another
+command — saying so is what stops it disappearing from a command that claims to be the Vitest layer.
