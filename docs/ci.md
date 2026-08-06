@@ -120,7 +120,7 @@ run one after the other because they reset and rewrite the same schema, and the 
 with `&&` rather than leaving the order to Turborepo. No fifth job was added, and no CI-only command
 exists — the step is still `pnpm test:db`.
 
-**`packages/database`'s other 51 tests are not here.** They classify driver failures, need no
+**`packages/database`'s other 83 tests are not here.** They classify driver failures, need no
 database and no generated client, and run in the `quality` job as part of `pnpm test`. Nothing runs
 in both jobs.
 
@@ -419,13 +419,13 @@ pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typeche
   until all four jobs pass.** Running every command locally proves the commands; it does not prove
   the runner-specific part — service containers, their published ports, the health options attached
   to them, the `actions/*` majors resolving, and the Docker job under a Linux daemon rather than
-  Docker Desktop. Phase C's pull-request runs demonstrated it twice: both failures were exposed by
-  the workflow because neither the exact shell assertion nor the exact shutdown timing had been
-  exercised locally before the pull request. Once each was isolated, both **were** reproduced
-  locally — the CORS comparison directly, and the shutdown condition through a deterministic probe
-  over a `P2010` carrying a structured `57P01`. What CI proved was not that the failures were
-  unreachable from a developer's machine; it proved that nothing a developer had actually run would
-  have reached them first.
+  Docker Desktop. Phase C's pull-request runs demonstrated it three times: every failure was exposed
+  by the workflow because neither the exact shell assertion nor the way a Linux daemon resolves a
+  stopped container's name had been exercised locally before the pull request. Once each was isolated, both **were** reproduced
+  locally — the CORS comparison directly, and each outage shape through a deterministic probe run
+  inside the production image. What CI proved was not that the failures were unreachable from a
+  developer's machine; it proved that nothing a developer had actually run would have reached them
+  first.
 
   The **first** run: `quality`, `database`, and `e2e` passed, and `docker` reached the CORS step and
   failed on the **assertion** rather than on the behaviour — `grep -i` matched
@@ -434,16 +434,23 @@ pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typeche
   now compares the header **value** and matches the **name** case-insensitively.
 
   The **second** run got past that and failed inside C4's restart validation, on the
-  database-outage scenario, on a **real defect**: PostgreSQL shut down under a live connection and
-  logged `57P01`, the driver reported it as a generic query failure, and the first persistence
-  request answered `500 INTERNAL_ERROR` where the contract says `503 DATABASE_UNAVAILABLE`. **C4's
+  database-outage scenario, on a **real defect**: the first persistence request after PostgreSQL
+  stopped answered `500 INTERNAL_ERROR` where the contract says `503 DATABASE_UNAVAILABLE`. **C4's
   container-level scenario is the layer that caught it** — earlier local runs of it had passed
-  because the connection was refused outright there, which the data layer already classified. Once
-  the CI failure identified the shape, a deterministic probe reproduced the same driver-wrapped
-  `57P01` locally, which is what the fix was written against. The classifier now reads the structured
-  condition the driver attaches, and 51 pure tests hold it in `pnpm test` so the rule no longer
-  depends on a container to be checked. **Do not describe a Phase C workflow run as green until the
-  corrected commit has actually completed one.**
+  because Docker Desktop resolves a stopped service differently from a Linux runner.
+
+  The **third** run failed the same way, which is the part worth recording. The first fix addressed
+  a real shape — PostgreSQL reporting `57P01` under a live pool, published by the adapter under
+  `meta.driverAdapterError.cause` — but not the shape CI was hitting. `@prisma/adapter-pg` converts
+  only four socket codes and rethrows every other system error untouched, and Prisma turns any error
+  carrying a string `code` into a known request error **whose code is that operating-system code and
+  whose metadata holds nothing but the model name**. On a Linux runner, resolving a stopped
+  container's service name fails with `EAI_AGAIN`, so there was no metadata to search. Both shapes
+  were then captured from the production image, the CI one reproduced deterministically against a
+  black-holed resolver, and the classifier rewritten to read the **whole exception** rather than one
+  property of it. 83 pure tests hold it in `pnpm test` so the rule no longer depends on a container
+  to be checked. **Do not describe a Phase C workflow run as green until the corrected commit has
+  actually completed one.**
 
 - **No branch protection is configured**, so a failing run does not yet block a merge. That is a
   repository setting rather than a file, and it is not something this milestone can add.

@@ -176,6 +176,44 @@ describe('the API exception boundary', () => {
     expect(logged).toHaveBeenCalledWith(expect.stringContaining(LEAKY_CAUSE), expect.any(String));
   });
 
+  // The data layer names which rule classified a failure, because every meaning
+  // it produces carries the same fixed sentence and a log otherwise cannot tell
+  // "understood" from "not recognised" — the thing that made an outage answering
+  // 500 impossible to diagnose from CI output alone. It is for the log only.
+  it('logs which rule classified a failure, and never answers with it', async () => {
+    const error = new PersistenceError({ kind: 'unavailable' }, 'The database is unavailable.', {
+      cause: new Error(LEAKY_CAUSE),
+      diagnostic: 'network-errno',
+    });
+
+    const server = await serving(error);
+    const response = await request(server).get('/projects');
+
+    expect(response.status).toBe(503);
+    expect(logged).toHaveBeenCalledWith(
+      expect.stringContaining('DATABASE_UNAVAILABLE [network-errno]'),
+      expect.any(String),
+    );
+    expect(response.text).not.toContain('network-errno');
+    expect(apiError(response.body)).toEqual({
+      statusCode: 503,
+      code: 'DATABASE_UNAVAILABLE',
+      message: 'The database is unavailable. Try again shortly.',
+    });
+  });
+
+  it('logs nothing extra for a failure that carries no classification', async () => {
+    const server = await serving(persistenceError({ kind: 'unknown' }));
+    const response = await request(server).get('/projects');
+
+    expect(response.status).toBe(500);
+    expect(logged).toHaveBeenCalledWith(
+      expect.stringContaining('INTERNAL_ERROR: '),
+      expect.any(String),
+    );
+    expect(logged).not.toHaveBeenCalledWith(expect.stringContaining('['), expect.any(String));
+  });
+
   it.each([
     ['a not found', { kind: 'notFound', entity: 'project' } satisfies PersistenceFailure],
     [

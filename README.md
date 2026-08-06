@@ -42,13 +42,14 @@ for row, so no schema change and no second migration were needed, and the four d
 find — two Dockerfiles that had not been told about C4's workspace, a CI document describing action
 versions that were never published, four `.mjs` files whose `// @ts-check` was never actually run,
 and a Vitest workspace that was vanishing from `pnpm test:unit` — were corrected together. **The
-first pull-request rerun then failed C4's outage scenario in CI**, on a driver-specific path no
-lower-level suite covered deterministically; C4's container-level outage scenario caught it.
-PostgreSQL shut down under a live connection, its `57P01` arrived wrapped inside a generic query
-failure, and the first request during the outage answered `500` instead of `503`. Once the error
-shape was isolated it was reproduced locally with a deterministic probe, the classification rules
-were corrected and moved into a Prisma-free module, and the fifty-one tests that now hold them run in
-the fast command.
+pull-request reruns then failed C4's outage scenario in CI**, twice, on driver-specific paths no
+lower-level suite covered deterministically; C4's container-level outage scenario caught both. The
+first request during the outage answered `500` instead of `503`, because a database that cannot be
+reached arrives at the data layer in more than one shape — sometimes as a PostgreSQL SQLSTATE nested
+in driver metadata, and sometimes, on a Linux runner, as nothing but an operating-system error code
+on the exception itself. Both shapes were captured from the production image and reproduced
+deterministically, the classifier was rewritten to read the whole exception rather than one property
+of it, and the eighty-three tests that now hold the rules run in the fast command.
 
 **Phase D — rooms and presence — is next.**
 
@@ -79,7 +80,7 @@ What exists today:
 - `tests/restart` — the C4 validation: it brings the production images up in a Compose project of its
   own, restarts containers, takes the database away from a running API, and redeploys the committed
   migration over existing rows, comparing every field of a fixture after each.
-- Six hundred and sixteen real tests across seven layers, plus six restart scenarios. See
+- Six hundred and fifty real tests across seven layers, plus six restart scenarios. See
   [`docs/testing.md`](docs/testing.md).
 - A production Docker image for each application, a migration image, and a root `compose.yaml`
   running those alongside PostgreSQL. See [`docs/docker.md`](docs/docker.md).
@@ -226,7 +227,7 @@ Run these from the repository root; Turborepo fans each one out across the works
 | `pnpm lint:fix`         | The same rules, applying every auto-fixable one                    |
 | `pnpm typecheck`        | Type-checks all ten workspaces                                     |
 | `pnpm test`             | Every in-process source suite. **Builds nothing, starts nothing**  |
-| `pnpm test:unit`        | The Vitest layer only — 360 of the 435                             |
+| `pnpm test:unit`        | The Vitest layer only — 392 of the 469                             |
 | `pnpm test:db`          | The data layer, then the API's routes. Needs disposable PostgreSQL |
 | `pnpm test:e2e`         | Playwright, against freshly built applications. Needs it too       |
 | `pnpm test:restart`     | C4's restart and outage scenarios, in containers. **Needs Docker** |
@@ -267,7 +268,7 @@ curl -X POST http://localhost:3001/projects \
 
 ## Testing
 
-Seven layers, six hundred and sixteen real tests, plus six restart scenarios:
+Seven layers, six hundred and fifty real tests, plus six restart scenarios:
 
 - **Vitest** covers `packages/shared` — one hundred tests over the schemas both applications agree
   on: trimming, length boundaries, defaults, strictness, the language list, the identifier and
@@ -276,18 +277,19 @@ Seven layers, six hundred and sixteen real tests, plus six restart scenarios:
   list, the project workspace, the typed API client and its configuration, the language metadata,
   the draft model, and the editor wrapper, in jsdom, with `fetch` and Monaco replaced at their
   narrowest boundaries.
-- **Jest** covers `apps/api` twice. Seventy-five fast tests over the configuration validator, the
+- **Jest** covers `apps/api` twice. Seventy-seven fast tests over the configuration validator, the
   CORS policy, the database lifecycle, `GET /health`, the validation pipes, the storage-to-wire
   mappers, and the error boundary — including every persistence failure mapped to its documented
   status and code, proved by making the data layer fail on purpose. **One hundred and ten more run
   the real `AppModule` over a real PostgreSQL**, covering every route and every failure the contract
   names.
-- **Vitest** covers `packages/database` twice. Fifty-one fast tests over failure classification —
-  which driver errors mean the database is unavailable, which mean it answered and refused, and that
-  no message reaching a caller carries SQL, a table name, or a connection string. They need no
-  database and no generated client, which is the point: an administrator shutdown reaching the API as
-  `500` rather than `503` was a pure rule whose missing case was first exposed by the container-level
-  outage scenario, and these tests are what hold it now. **Fifty-seven more need
+- **Vitest** covers `packages/database` twice. Eighty-three fast tests over failure classification —
+  which driver errors mean the database is unavailable, which mean it answered and refused, how far
+  into an exception the answer is looked for, and that no message reaching a caller carries SQL, a
+  table name, or a connection string. They need no database and no generated client, which is the
+  point: a PostgreSQL outage reaching the API as `500` rather than `503` was a pure rule whose
+  missing cases were first exposed by the container-level outage scenario, and these tests are what
+  hold it now. **Fifty-seven more need
   a real database.** Thirty-nine run against a **real PostgreSQL** with the committed migration
   applied first, because cascades, unique constraints, and transaction rollback are exactly what
   SQLite or a mocked client does not have. The other eighteen cover the safety gate that decides
@@ -310,7 +312,7 @@ Workspaces with no implementation print that they have no tests and exit success
 than pretending to run a suite.
 
 ```bash
-pnpm test               # 435, fast: Vitest and Jest over source. Builds nothing, starts nothing
+pnpm test               # 469, fast: Vitest and Jest over source. Builds nothing, starts nothing
 docker compose up -d database
 pnpm test:db            # 167, the data layer then the API's routes, against real PostgreSQL
 pnpm test:e2e:install   # once per machine — downloads Chromium
@@ -416,8 +418,8 @@ and no generated output is linted.
 | Workspace                | lint | typecheck | test                                                | build    |
 | ------------------------ | ---- | --------- | --------------------------------------------------- | -------- |
 | `@devsync/web`           | yes  | yes       | 151 Vitest tests                                    | `next`   |
-| `@devsync/api`           | yes  | yes       | 75 Jest, plus 110 via `test:db`                     | `nest`   |
-| `@devsync/database`      | yes  | yes       | 51 Vitest, plus 57 via `pnpm test:db`               | `tsc`    |
+| `@devsync/api`           | yes  | yes       | 77 Jest, plus 110 via `test:db`                     | `nest`   |
+| `@devsync/database`      | yes  | yes       | 83 Vitest, plus 57 via `pnpm test:db`               | `tsc`    |
 | `@devsync/shared`        | yes  | yes       | 100 Vitest tests                                    | `tsc`    |
 | `@devsync/e2e`           | yes  | yes       | 14, via `pnpm test:e2e`                             | no build |
 | `@devsync/restart`       | yes  | yes       | 58 Vitest, plus 6 scenarios via `pnpm test:restart` | no build |

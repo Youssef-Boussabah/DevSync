@@ -20,16 +20,16 @@ files whose `// @ts-check` no tsconfig was reading. Both are recorded in the sec
 The product still has no collaboration, no accounts, and no code execution, so none of those things
 are tested.
 
-**The first pull-request rerun then found something the top layer caught and no lower one held.**
-C4's container-level outage scenario failed in GitHub Actions: PostgreSQL shut down under a live
-connection, the driver wrapped its `57P01` inside a generic query failure, and the first persistence
-request answered `500 INTERNAL_ERROR` instead of `503 DATABASE_UNAVAILABLE`. **That layer did its
-job** — the defect was real and the assertion found it. What was missing was below it: none of the
-lower-level suites held a deterministic regression for the adapter-wrapped classification shape,
-because classifying a driver failure is a pure decision that had been left in a suite needing a
-running PostgreSQL. Once the shape was isolated a deterministic probe reproduced it locally, and
+**The pull-request reruns then found something the top layer caught and no lower one held.** C4's
+container-level outage scenario failed in GitHub Actions: the first persistence request after
+PostgreSQL stopped answered `500 INTERNAL_ERROR` instead of `503 DATABASE_UNAVAILABLE`. **That layer
+did its job** — the defect was real and the assertion found it, twice, including after a first fix
+that addressed a different shape. What was missing was below it: none of the lower-level suites held
+a deterministic regression for how a driver failure is classified, because that is a pure decision
+about an exception's structure and it had been left in a suite needing a running PostgreSQL. Both
+shapes were eventually captured from the production image and reproduced deterministically, and
 `packages/database` gained a second, pure half that runs in the fast command. It is described in
-[its own section](#the-database-layer--packagesdatabase-51-pure-and-57-postgresql-backed).
+[its own section](#the-database-layer--packagesdatabase-83-pure-and-57-postgresql-backed).
 
 ## Layers
 
@@ -320,7 +320,7 @@ configuration — `api-exception.filter.spec.ts` and the PostgreSQL-backed suite
 `configureHttpApplication`, so the body limit and the error boundary are proved **behind** the CORS
 middleware rather than beside it.
 
-### `apps/api` — the error boundary and the mappers (Jest, 29 tests)
+### `apps/api` — the error boundary and the mappers (Jest, 31 tests)
 
 Three files C2 added that need no database, and must not have one.
 
@@ -334,7 +334,10 @@ code, that an exception nobody anticipated becomes a generic `500`, that the rea
 **logged** rather than returned, and — with a deliberately leaky cause carrying a Prisma error name,
 a code, a SQL fragment, a table name, a host, and a password — that none of it reaches the response.
 It also proves a body that is not JSON becomes `400 VALIDATION_FAILED`, and that an unmatched route
-is left to the framework rather than given a code the contract does not have.
+is left to the framework rather than given a code the contract does not have. Two more cover the
+`diagnostic` the data layer attaches: the rule that classified a failure reaches the **log**, in
+brackets after the stable code, and never the response — and a failure carrying no classification
+adds nothing to the line.
 
 **It is not a claim that any route works.** The database is a stand-in that only ever fails; a fake
 database proving CRUD would prove that a controller calls a stand-in the way the test expects, which
@@ -459,7 +462,7 @@ before the next run regardless.
 | Command                 | What it runs                                                                  |
 | ----------------------- | ----------------------------------------------------------------------------- |
 | `pnpm test`             | Every in-process suite: Vitest and Jest. No browsers, no builds, no database. |
-| `pnpm test:unit`        | The Vitest layer only — 360 of the 435, and the fast inner loop.              |
+| `pnpm test:unit`        | The Vitest layer only — 392 of the 469, and the fast inner loop.              |
 | `pnpm test:db`          | The two database-backed suites, in sequence, against a running PostgreSQL.    |
 | `pnpm test:e2e`         | Playwright. Builds both applications first, then starts them.                 |
 | `pnpm test:restart`     | C4's restart, outage, recovery, and migration scenarios. **Needs Docker.**    |
@@ -541,7 +544,7 @@ The `test:unit` / `test` distinction is a real one rather than an alias: `apps/a
 HTTP-level application tests, so it correctly has no `test:unit` script and does not appear in that
 command. `packages/shared` does, because schemas in Node are exactly what that layer is. The four
 that actually run a suite are `@devsync/shared` (100), `@devsync/web` (151), `@devsync/restart` (58),
-and `@devsync/database` (51): **360 assertions, and no container**.
+and `@devsync/database` (83): **392 assertions, and no container**.
 
 **Every Vitest workspace declares a `test:unit` script, including the one whose suite could not run
 in that layer.** Turborepo resolves a task a workspace does not declare to nothing and reports
@@ -551,11 +554,11 @@ declares it because its helper suite belongs there. C5 added one to `packages/da
 `@devsync/database#test:unit` resolving to nothing — the exact failure this rule exists to prevent,
 sitting inside the repository that states it.
 
-**That script printed a notice until the shutdown-classification fix; now it runs a suite.** The
+**That script printed a notice until the outage-classification fix; now it runs a suite.** The
 notice was accurate at the time — every one of that workspace's 57 tests wanted a PostgreSQL — but
 it was also the shape of the problem. A rule about what a driver error _means_ is a pure decision
-about a code and some metadata, and leaving it in the database-backed suite meant nothing in the
-fast layer could hold it. Splitting the package's pure half out gave `@devsync/database` 51 tests in
+about an exception's structure, and leaving it in the database-backed suite meant nothing in the
+fast layer could hold it. Splitting the package's pure half out gave `@devsync/database` 83 tests in
 `pnpm test` and `pnpm test:unit`, and left its 57 integration tests exactly where they were.
 
 ### Within a workspace
@@ -810,44 +813,56 @@ a number, and the useful version of it is set from what real application logic a
 C3 is the first milestone with a body of client logic worth measuring; introducing a threshold is a
 decision for the phase closure, not something to bolt on with the code.
 
-## The database layer — `packages/database` (51 pure and 57 PostgreSQL-backed)
+## The database layer — `packages/database` (83 pure and 57 PostgreSQL-backed)
 
 Two halves, two commands, two Vitest configurations, and no test counted twice.
 
 | Half                     | Config                   | Tests | Command                       | Needs                       |
 | ------------------------ | ------------------------ | ----- | ----------------------------- | --------------------------- |
-| Failure classification   | `vitest.unit.config.mts` | 51    | `pnpm test`, `pnpm test:unit` | nothing — not even a client |
+| Failure classification   | `vitest.unit.config.mts` | 83    | `pnpm test`, `pnpm test:unit` | nothing — not even a client |
 | Data access and the gate | `vitest.config.mts`      | 57    | `pnpm test:db`                | a real PostgreSQL           |
 
 **The pure half exists because the layer that caught a defect sat far above the rule that was wrong.**
 C4's outage scenario asserts that the first persistence request made after PostgreSQL is confirmed
-stopped answers `503 DATABASE_UNAVAILABLE`. In GitHub Actions it answered
-`500 INTERNAL_ERROR`, because PostgreSQL had shut down under a live connection — SQLSTATE `57P01`,
-"terminating connection due to administrator command" — and the data layer recognised only Prisma's
-own `P1000`/`P1001`/`P1002`/`P1008`/`P1017` as meaning "unavailable". The driver-wrapped SQLSTATE fell
-through to `unknown`, which the API maps to `500`.
+stopped answers `503 DATABASE_UNAVAILABLE`. In GitHub Actions it answered `500 INTERNAL_ERROR` — and
+it did so twice, because the first fix addressed a shape that was real but was not the one CI was
+hitting.
+
+**Two shapes, one meaning.** When PostgreSQL is stopped under a live pool it reports SQLSTATE `57P01`
+or `57P03`, and `@prisma/adapter-pg` publishes that under `meta.driverAdapterError.cause` with
+`kind: 'postgres'`. But the adapter converts only four socket codes — `ENOTFOUND`, `ECONNREFUSED`,
+`ECONNRESET`, `ETIMEDOUT` — and rethrows every other system error untouched, and Prisma turns any
+error carrying a string `code` into a `PrismaClientKnownRequestError` **whose code is that
+operating-system code and whose metadata holds nothing but the model name**. On a Linux CI runner,
+resolving a stopped container's service name fails with `EAI_AGAIN`, so the exception carried no
+SQLSTATE, no adapter kind, and no driver metadata at all. A classifier reading `error.meta` had
+nothing to read.
 
 Nothing was wrong with the harness, and nothing was wrong with the API's mapping. **C4's
-container-level scenario detected the defect**; what was missing was a suite in a position to ask
-"what does this driver error mean?" without a database being involved, so that the rule had a
-deterministic regression of its own. Once the CI failure identified the error shape, a probe
-reproduced the same driver-wrapped `57P01` locally — the fix was written and verified against it
-rather than against a container. `src/failure-classification.ts` was split out of `src/errors.ts`,
-importing nothing from Prisma, and `tests/unit/failure-classification.unit.test.ts` covers it in the
-fast command. `errors.ts` still owns recognising _which_ Prisma exception arrived, which is the only
-part that needs a generated client.
+container-level scenario detected the defect both times**; what was missing was a suite in a position
+to ask "what does this driver error mean?" without a database being involved. Both shapes were
+captured from the production image against PostgreSQL 18.3, and the CI shape was reproduced
+deterministically by pointing a container at a black-holed resolver — the fix was written and
+verified against captured exceptions rather than against a guess.
+`src/failure-classification.ts` imports nothing from Prisma, and
+`tests/unit/failure-classification.unit.test.ts` covers it in the fast command. `errors.ts` still
+owns recognising _which_ Prisma exception arrived, which is the only part that needs a generated
+client — and it now hands over the **whole exception** rather than one property of it.
 
-The 51 hold, among other things: the recorded `57P01` metadata shape becomes `unavailable`; every
-SQLSTATE in connection-exception class `08` does too; `P1001` and `P1017` still do; a `P2010`
-carrying `42601`, `22012`, `40001`, or `53300` stays `unknown`; `57014`, `57P04`, and `57P05` stay
-`unknown`, because only three codes of class `57` mean the server is going away; a message that
-merely mentions `57P01` classifies nothing; `P2002`, `P2025`, and `P2003` keep their meanings even
-when connectivity metadata is attached; metadata that references itself terminates; and no message
+The 83 hold, among other things: both recorded outage exceptions become `unavailable`, and so does
+the CI one that carries only `code: 'EAI_AGAIN'`; every SQLSTATE in connection-exception class `08`
+does too; `P1001` and `P1017` still do; each of the fourteen transport codes does; a `P2010` carrying
+`42601`, `22012`, `40001`, or `53300` stays `unknown`; `57014`, `57P04`, and `57P05` stay `unknown`,
+because only three codes of class `57` mean the server is going away; `ENOENT` and `EACCES` stay
+`unknown`, because not every system error is a transport failure; `sqlState` is not read, because
+nothing installed writes it; a message that merely mentions `57P01` classifies nothing; `P2002`,
+`P2025`, and `P2003` keep their meanings even when connectivity metadata is attached; the walk stops
+at four links and 32 nodes, terminates on a cycle, and reads no inherited property; and no message
 this package produces carries any of the SQL, table name, or connection string it was given.
 
 **The two configurations cannot overlap.** `vitest.unit.config.mts` includes only
 `tests/unit/**/*.unit.test.ts`, and `vitest.config.mts` excludes `tests/unit/**` — without that
-second line the shared file glob would match the pure tests and `pnpm test:db` would report 108
+second line the shared file glob would match the pure tests and `pnpm test:db` would report 140
 where 57 is the truth.
 
 ### The PostgreSQL-backed half
@@ -978,7 +993,7 @@ the fast suite above, and stopping PostgreSQL under a running API is the restart
 C4's layer, and the only one that runs containers. `pnpm test:restart` is the whole of it.
 
 **What this layer adds to C1's, which also said "restart".** C1's completion boundary was met at the
-data-access layer: [`packages/database`'s connection-lifecycle tests](#the-database-layer--packagesdatabase-51-pure-and-57-postgresql-backed)
+data-access layer: [`packages/database`'s connection-lifecycle tests](#the-database-layer--packagesdatabase-83-pure-and-57-postgresql-backed)
 write a record, disconnect the client, reconnect through a second one, read the same data back, and
 classify a query against an unreachable database as `unavailable` — all against a PostgreSQL that
 never stopped — and the container restarts behind that boundary were confirmed by hand. This layer
@@ -1014,15 +1029,19 @@ The scenarios, in order:
 - **API restart.** `docker compose stop api`, the stopped state confirmed, then `start`. The
   container's **PID is asserted to have changed**: without that, the scenario would pass against a
   process that never went away. The fixture is compared field by field afterwards.
-- **A database outage, with the API left running.** PostgreSQL is stopped, the stopped state
+- **A database outage, with the API left running.** A persistence route is required to answer `200`
+  immediately beforehand, so the outage happens **under a live pool** rather than to an API that had
+  never opened a connection — otherwise the two requests below would be the first to meet the
+  database at all, which proves something easier. PostgreSQL is then stopped, the stopped state
   confirmed, and `GET /projects/:projectId` requested twice. Each must answer **`503`** with
   **`DATABASE_UNAVAILABLE`**, inside a bounded client timeout, with a body whose property set is
   **exactly** `statusCode`, `code`, and `message` — so a `stack`, an `error`, or a `cause` fails at
   the shape rather than at a pattern. The raw text is then audited for a stack frame, the ORM's name,
   a Prisma error code, the PostgreSQL name or a connection string, a driver socket error code, SQL, a
   table name, and a credential. `GET /health` must still answer, and the API's PID must be unchanged.
-  **The first request is as binding as the second**, and that is what caught the shutdown
-  classification gap: an initial `500` followed by a correct `503` is a failure here, not a warm-up.
+  **The first request is as binding as the second**, and that is what caught the outage
+  classification gap twice: an initial `500` followed by a correct `503` is a failure here, not a
+  warm-up. No retry, no sleep, and no tolerance of `500` may be added to make it pass.
 - **Recovery, without restarting the API.** PostgreSQL is started, its own health check is waited on,
   and the persistence route is polled until it succeeds. The PID is asserted to be the same one
   before, during, and after — so **the same process and the same connection pool** are what recovered.
@@ -1248,9 +1267,9 @@ needs the collaboration transport to exist first.
 | ------------------------ | ------------- | ----------- | ------------------------------- | ------------------- |
 | `@devsync/shared`        | Vitest        | 100         | node                            | yes                 |
 | `@devsync/web`           | Vitest        | 151         | jsdom                           | yes                 |
-| `@devsync/api`           | Jest          | 75          | node                            | yes                 |
+| `@devsync/api`           | Jest          | 77          | node                            | yes                 |
 | `@devsync/restart`       | Vitest        | 58          | node                            | yes                 |
-| `@devsync/database`      | Vitest        | 51          | node                            | yes                 |
+| `@devsync/database`      | Vitest        | 83          | node                            | yes                 |
 | `@devsync/api`           | Jest          | 110         | node, real PostgreSQL           | no — `test:db`      |
 | `@devsync/database`      | Vitest        | 57          | node, real PostgreSQL           | no — `test:db`      |
 | `@devsync/e2e`           | Playwright    | 14          | Chromium and HTTP               | no — `test:e2e`     |
@@ -1260,14 +1279,14 @@ needs the collaboration transport to exist first.
 | `@devsync/test-utils`    | none          | 0           | —                               | —                   |
 | `@devsync/config`        | none          | 0           | —                               | —                   |
 
-**Six hundred and sixteen real tests in total**, of which **435 run in `pnpm test`**, **167 in
+**Six hundred and fifty real tests in total**, of which **469 run in `pnpm test`**, **167 in
 `pnpm test:db`** — 57 in the data layer, 110 in the API — and 14 in `pnpm test:e2e`. Of the 167, 149
 genuinely reach PostgreSQL; the other 18 are the safety gate, which connects to nothing and lives
 there because it is database tooling.
 
-`@devsync/database` appears twice because it has two halves that share no test: 51 pure
+`@devsync/database` appears twice because it has two halves that share no test: 83 pure
 classification tests in the fast command and 57 against a real PostgreSQL in `pnpm test:db`. The
-totals above count each of the 108 once.
+totals above count each of the 140 once.
 
 **The six restart scenarios are counted separately and are not part of that total**, deliberately.
 They are not tests in the sense the other rows are — one run is one ordered sequence against real
@@ -1277,9 +1296,9 @@ reports the 58 Vitest tests over the harness that drives them.
 
 `apps/web`'s 151 break down as 8 for the home page, 38 for the API client and its configuration, 26
 for the language metadata and the draft model, 16 for the project list, 52 for the workspace, and 11
-for the Monaco wrapper. `apps/api`'s 75 are 28 for configuration and lifecycle, 17 for the HTTP
-application and its CORS policy, 13 for the error boundary, 8 for the pipes, 8 for the mappers, and 1
-for health. `@devsync/restart`'s 58 are all over `lib/support.mjs`. `@devsync/database`'s 51 are all
+for the Monaco wrapper. `apps/api`'s 77 are 28 for configuration and lifecycle, 17 for the HTTP
+application and its CORS policy, 15 for the error boundary, 8 for the pipes, 8 for the mappers, and 1
+for health. `@devsync/restart`'s 58 are all over `lib/support.mjs`. `@devsync/database`'s 83 are all
 over `src/failure-classification.ts`.
 
 The four workspaces without a runner print that they have no tests and exit successfully. That is the

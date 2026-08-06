@@ -8,16 +8,25 @@ import type { ClassifiedFailure } from '../../src/failure-classification';
  * These run in `pnpm test` and `pnpm test:unit`, which is the whole reason
  * `src/failure-classification.ts` imports no Prisma: deciding what a driver
  * error means is pure, and a rule that only a live PostgreSQL can exercise is a
- * rule that goes unchecked until something breaks in Docker. It is exactly what
- * did break — an administrator shutdown reached the API as `500 INTERNAL_ERROR`
- * instead of `503 DATABASE_UNAVAILABLE`, and no suite in the repository was in a
- * position to notice.
+ * rule nothing checks quickly.
  *
- * The metadata shapes below are the real ones, recorded from Prisma 7.9.1 and
- * `@prisma/adapter-pg` 7.9.1 against PostgreSQL 18 while the server was stopped
- * under a live connection. They are written out in full rather than built by a
- * helper that guesses, because the point of the suite is that this package
- * agrees with what the driver actually produces.
+ * **C4's container-level restart and outage validation is what caught the
+ * defect** — a PostgreSQL outage reaching the API as `500 INTERNAL_ERROR` instead
+ * of `503 DATABASE_UNAVAILABLE`, through the real HTTP routes against real
+ * containers. Detection was never the gap. What was missing was **deterministic
+ * coverage below it**: no suite held the classification rule where it could be
+ * exercised without Docker and without a server, so the rule could only be
+ * checked by taking a database away from a running stack. This file is that
+ * coverage, and it needs neither.
+ *
+ * The shapes below are structural, and the ones in "the exceptions this stack
+ * really produces" are transcriptions of exceptions captured from Prisma 7.9.1
+ * and `@prisma/adapter-pg` 7.9.1 against PostgreSQL 18.3 in the production
+ * container image, while the server was stopped under a live pool. They are
+ * written out in full rather than built by a helper that guesses, because the
+ * point of the suite is that this package agrees with what the driver actually
+ * produces — including in the case it did not agree with, where the exception
+ * carries no driver metadata whatsoever.
  */
 
 // Detail that must never reach a caller. Every message assertion below is also
@@ -213,7 +222,11 @@ describe('classifying a known driver request failure', () => {
     it('keeps P2003 a missing project, whatever the operation was about', () => {
       expect(
         classifyKnownRequestFailure('P2003', { field_name: 'project_id' }, 'projectFile'),
-      ).toEqual({ failure: { kind: 'notFound', entity: 'project' }, message: 'No such project.' });
+      ).toEqual({
+        failure: { kind: 'notFound', entity: 'project' },
+        message: 'No such project.',
+        reason: 'request-outcome',
+      });
     });
 
     // A unique violation raised while the connection was also in trouble is
@@ -247,10 +260,266 @@ describe('classifying a known driver request failure', () => {
       expect(classify('P2010', { driverAdapterError: cycle }).failure).toEqual({ kind: 'unknown' });
     });
 
+    // One link deeper than it used to be, because the walk now starts at the
+    // exception rather than at its metadata: `error` -> `meta` ->
+    // `driverAdapterError` -> `cause` is three links, and the bound leaves one
+    // spare. The property is unchanged — below the bound, nothing is read.
     it('stops looking below the depth any known driver shape uses', () => {
-      const deep = { cause: { cause: { cause: { cause: { kind: 'ConnectionClosed' } } } } };
+      const deep = {
+        cause: { cause: { cause: { cause: { cause: { kind: 'ConnectionClosed' } } } } },
+      };
 
       expect(classify('P2010', deep).failure).toEqual({ kind: 'unknown' });
+    });
+  });
+
+  // --- The exceptions this stack really produces -----------------------------
+  //
+  // Everything above hands the classifier a metadata object, which is what it
+  // used to receive. It now receives the whole exception, and these are the three
+  // exceptions captured from the production image with PostgreSQL stopped under a
+  // live pool. The third is the one that reached CI as a 500.
+
+  /**
+   * A `PrismaClientKnownRequestError` as Prisma 7.9.1 builds it, with only the
+   * properties the classifier can see: `code` and `meta` are own and enumerable,
+   * `message` and `stack` are not read at all.
+   */
+  function prismaException(code: string, meta?: unknown): unknown {
+    return { name: 'PrismaClientKnownRequestError', code, clientVersion: '7.9.1', meta };
+  }
+
+  /** PostgreSQL answered, and the adapter wrapped what it said. */
+  function driverMeta(kind: string, extra: Record<string, unknown> = {}): unknown {
+    return {
+      modelName: 'Project',
+      driverAdapterError: {
+        name: 'DriverAdapterError',
+        cause: { kind, ...extra },
+      },
+    };
+  }
+
+  describe('the exceptions this stack really produces', () => {
+    // Captured: PostgreSQL stopped gracefully, a connection acquired while it was
+    // shutting down. Prisma has no code for the adapter kind `postgres`, so it
+    // reports P2039 and the SQLSTATE is only in the metadata.
+    it('classifies the recorded P2039 shutdown exception as unavailable', () => {
+      const exception = prismaException(
+        'P2039',
+        driverMeta('postgres', {
+          originalCode: '57P03',
+          originalMessage: LEAKED_MESSAGE,
+          code: '57P03',
+          severity: 'FATAL',
+        }),
+      );
+
+      const classified = classifyKnownRequestFailure('P2039', exception, 'project');
+
+      expect(classified.failure).toEqual({ kind: 'unavailable' });
+      expect(classified.reason).toBe('sqlstate');
+    });
+
+    // Captured: the server was gone, so the pool could not open a connection.
+    // Prisma does have a code for this kind, and it was already classified.
+    it('classifies the recorded P1001 unreachable exception as unavailable', () => {
+      const exception = prismaException(
+        'P1001',
+        driverMeta('DatabaseNotReachable', { host: 'database', port: 5432 }),
+      );
+
+      const classified = classifyKnownRequestFailure('P1001', exception, 'project');
+
+      expect(classified.failure).toEqual({ kind: 'unavailable' });
+      expect(classified.reason).toBe('prisma-code');
+    });
+
+    /**
+     * **The defect.** `@prisma/adapter-pg` converts exactly four socket codes and
+     * rethrows every other system error untouched; Prisma turns any error with a
+     * string `code` into a known request error carrying that code. So a database
+     * whose address could not be resolved arrives with no adapter kind, no
+     * SQLSTATE, and no `driverAdapterError` at all — the entire signal is the
+     * exception's own `code`, and searching `meta` for it finds nothing.
+     */
+    it('classifies the recorded EAI_AGAIN exception, which carries no driver metadata', () => {
+      const exception = prismaException('EAI_AGAIN', { modelName: 'Project' });
+
+      const classified = classifyKnownRequestFailure('EAI_AGAIN', exception, 'project');
+
+      expect(classified.failure).toEqual({ kind: 'unavailable' });
+      expect(classified.reason).toBe('network-errno');
+      expect(classified.message).toBe('The database is unavailable.');
+    });
+
+    it.each([
+      'EAI_FAIL',
+      'EAI_NODATA',
+      'ENOTFOUND',
+      'ECONNREFUSED',
+      'EHOSTDOWN',
+      'EHOSTUNREACH',
+      'ENETDOWN',
+      'ENETUNREACH',
+      'ETIMEDOUT',
+      'ECONNABORTED',
+      'ECONNRESET',
+      'ENETRESET',
+      'EPIPE',
+    ])('classifies the transport failure %s as unavailable', (code) => {
+      const classified = classifyKnownRequestFailure(
+        code,
+        prismaException(code, { modelName: 'Project' }),
+        'project',
+      );
+
+      expect(classified.failure).toEqual({ kind: 'unavailable' });
+      expect(classified.reason).toBe('network-errno');
+    });
+
+    // The set is transport failures, not every system error. A file that is not
+    // there and a permission that was refused say nothing about the database
+    // being away, and neither may become a 503 a client retries against.
+    it.each(['ENOENT', 'EACCES', 'EMFILE', 'ENOMEM', 'ERR_INVALID_ARG_TYPE'])(
+      'leaves the unrelated system error %s unknown',
+      (code) => {
+        const classified = classifyKnownRequestFailure(
+          code,
+          prismaException(code, { modelName: 'Project' }),
+          'project',
+        );
+
+        expect(classified.failure).toEqual({ kind: 'unknown' });
+        expect(classified.reason).toBe('unclassified');
+      },
+    );
+
+    it('finds the adapter kind DatabaseNotReachable even when Prisma reported P2010', () => {
+      const classified = classifyKnownRequestFailure(
+        'P2010',
+        prismaException('P2010', driverMeta('DatabaseNotReachable', { host: 'database' })),
+        'project',
+      );
+
+      expect(classified.failure).toEqual({ kind: 'unavailable' });
+      expect(classified.reason).toBe('adapter-kind');
+    });
+
+    // `originalCode` is the adapter's own copy of the SQLSTATE, and it is a real
+    // field of every PostgreSQL error it converts.
+    it('reads a SQLSTATE published only as originalCode', () => {
+      const classified = classifyKnownRequestFailure(
+        'P2010',
+        prismaException(
+          'P2010',
+          driverMeta('postgres', { originalCode: '57P01', originalMessage: LEAKED_MESSAGE }),
+        ),
+        'project',
+      );
+
+      expect(classified.failure).toEqual({ kind: 'unavailable' });
+      expect(classified.reason).toBe('sqlstate');
+    });
+
+    // `sqlState` is not a field any installed package puts on an error: `pg`
+    // renames libpq's to `code`, and `pg-native` is not installed. Reading it
+    // would be reading a key nothing writes, so the allowlist stays closed.
+    it.each(['sqlState', 'sqlstate'])('does not read a condition out of %s', (key) => {
+      const classified = classifyKnownRequestFailure(
+        'P2010',
+        prismaException('P2010', { modelName: 'Project', [key]: '57P01' }),
+        'project',
+      );
+
+      expect(classified.failure).toEqual({ kind: 'unknown' });
+    });
+
+    it('finds structured connectivity data hanging off the exception cause', () => {
+      const exception = {
+        name: 'PrismaClientKnownRequestError',
+        code: 'P2010',
+        meta: { modelName: 'Project' },
+      };
+
+      // Non-enumerable, exactly as `new Error(message, { cause })` leaves it. A
+      // walk over enumerable properties alone would never see this, which is why
+      // `cause` is the one property read by name.
+      Object.defineProperty(exception, 'cause', {
+        value: { kind: 'ConnectionClosed' },
+        enumerable: false,
+      });
+
+      const classified = classifyKnownRequestFailure('P2010', exception, 'project');
+
+      expect(classified.failure).toEqual({ kind: 'unavailable' });
+      expect(classified.reason).toBe('adapter-kind');
+    });
+
+    it('still lets a request outcome win over connectivity anywhere in the exception', () => {
+      const exception = prismaException(
+        'P2002',
+        driverMeta('postgres', { code: '57P01', originalCode: '57P01' }),
+      );
+
+      expect(classifyKnownRequestFailure('P2002', exception, 'projectFile').failure).toEqual({
+        kind: 'uniqueViolation',
+        constraint: 'projectFileName',
+      });
+    });
+  });
+
+  describe('the bounds on reading an exception', () => {
+    /** `links` objects deep, with the connectivity marker at the bottom. */
+    function nested(links: number): unknown {
+      let node: Record<string, unknown> = { kind: 'ConnectionClosed' };
+
+      for (let remaining = links; remaining > 0; remaining -= 1) {
+        node = { meta: node };
+      }
+
+      return node;
+    }
+
+    // The real exception needs three links. Four are read, and the fifth is not:
+    // a bound rather than a target, and one that cannot be moved by accident.
+    it('reads a condition four links from the exception', () => {
+      expect(classify('P2010', nested(4)).failure).toEqual({ kind: 'unavailable' });
+    });
+
+    it('does not read one five links from the exception', () => {
+      expect(classify('P2010', nested(5)).failure).toEqual({ kind: 'unknown' });
+    });
+
+    it('stops after its node budget rather than walking a wide graph', () => {
+      const wide: Record<string, unknown> = {};
+
+      for (let index = 0; index < 40; index += 1) {
+        wide[`branch${index}`] = {};
+      }
+
+      // Last, so every one of the 40 shallow siblings is queued before it.
+      wide.last = { kind: 'ConnectionClosed' };
+
+      expect(classify('P2010', wide).failure).toEqual({ kind: 'unknown' });
+    });
+
+    it('terminates on an exception that references itself', () => {
+      const exception: Record<string, unknown> = { code: 'P2010', meta: {} };
+
+      exception.self = exception;
+      exception.meta = { driverAdapterError: exception };
+
+      expect(classify('P2010', exception).failure).toEqual({ kind: 'unknown' });
+    });
+
+    it('reads no inherited property', () => {
+      const prototype = { kind: 'ConnectionClosed' };
+      const exception = Object.create(prototype) as Record<string, unknown>;
+
+      exception.code = 'P2010';
+
+      expect(classify('P2010', exception).failure).toEqual({ kind: 'unknown' });
     });
   });
 

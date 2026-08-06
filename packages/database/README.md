@@ -71,30 +71,98 @@ belongs in this package**: it does not know what a status code is, and it must n
 learn.
 
 **Recognising the exception and deciding what it means are two files.**
-`src/errors.ts` does the first, and needs the generated client for its `instanceof`
-checks. `src/failure-classification.ts` does the second from a code and some
-metadata, and imports nothing from Prisma — so the rules can be tested without a
-database or a generated client, which is where the 51 fast tests live.
+`src/errors.ts` does the first — it is what knows a `PrismaClientKnownRequestError`
+from a `PrismaClientInitializationError`, and it needs the generated client for
+those `instanceof` checks. `src/failure-classification.ts` does the second and
+imports nothing from Prisma, so the rules can be tested without a database or a
+generated client, which is where the 83 fast tests live.
 
-**`unavailable` is decided structurally, over a narrow allowlist.** Three things
-mean it: one of the Prisma codes above; a SQLSTATE the driver attached that is in
-connection-exception class `08` or is `57P01`, `57P02`, or `57P03`; or one of the
-driver adapter's own socket kinds, `ConnectionClosed` and `SocketTimeout`. The
-metadata is walked to a bounded depth with a cycle guard, because its shape belongs
-to the driver rather than to this package.
+**`errors.ts` hands over the complete exception, not one property of it.** Where a
+driver publishes its structured condition is the driver's business, and it is not
+in one place. A PostgreSQL error nests a SQLSTATE under
+`meta.driverAdapterError.cause`. A system error the adapter does not convert
+arrives with **no driver metadata at all** and its operating-system code sitting in
+Prisma's own code slot — which is the shape a Linux host produces when a stopped
+container's name will not resolve, an outer `EAI_AGAIN` with nothing but a model
+name beside it. A classifier given only `error.meta` cannot see that failure at
+all.
 
-Two things it deliberately is **not**. It is not `P2010` — that code is a raw query
-failure, and a syntax error, a constraint, and a server shutting down all arrive
-under it, so only the condition named inside decides. And it is not anything read
-out of a message: a driver's wording is not a contract, and a classifier that
-grepped one would turn a reworded log line into a status-code change.
+### What decides
 
-That allowlist is why an administrator shutdown is a `503` rather than a `500`.
-PostgreSQL going away under a live connection answers `57P01`; before it was on the
-list, the whole thing fell through to `unknown`. **C4's container-level outage
-scenario is the layer that caught that**, on a pull-request CI run; the shape was
-then reproduced locally with a deterministic probe, and the 51 fast tests are what
-hold the rule now.
+**Request outcomes come first**, because they are answers about the request rather
+than about the database, and connectivity trouble attached to one must not change
+it: `P2002` is a unique violation, `P2025` a missing record, `P2003` a missing
+project.
+
+Only then does `unavailable`, over four closed allowlists:
+
+| Kind of evidence     | Members                                                                                                                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prisma codes         | `P1000`, `P1001`, `P1002`, `P1008`, `P1017`                                                                                                                                                 |
+| PostgreSQL SQLSTATEs | connection-exception class `08` whole, plus `57P01`, `57P02`, `57P03`                                                                                                                       |
+| Driver adapter kinds | `DatabaseNotReachable`, `ConnectionClosed`, `SocketTimeout`                                                                                                                                 |
+| Transport codes      | `EAI_AGAIN`, `EAI_FAIL`, `EAI_NODATA`, `ENOTFOUND`, `ECONNREFUSED`, `EHOSTDOWN`, `EHOSTUNREACH`, `ENETDOWN`, `ENETUNREACH`, `ETIMEDOUT`, `ECONNABORTED`, `ECONNRESET`, `ENETRESET`, `EPIPE` |
+
+A value counts only when it is an **exact member** of one of those, read from one
+of three structured fields: `kind` for an adapter kind, and `code` or
+`originalCode` for a condition code. Nothing else is read. `sqlState` is not on the
+list because nothing in the installed tree writes it — `pg` renames libpq's field
+to `code`, and `pg-native` is not installed. Class `57` is named code by code
+rather than taken by prefix: `57014` is a cancelled query, `57P04` a dropped
+database, `57P05` an idle session timing out, and none of them means "come back
+shortly".
+
+Three things it deliberately is **not**:
+
+- **Not `P2010` or `P2039` on their own.** Those are the codes Prisma reports when
+  it had none of its own for what the driver said — a raw query failure and a
+  passthrough database error — so a syntax error, a constraint, and a server
+  shutting down all arrive under them. Only the condition named inside decides.
+- **Not anything read out of a message.** A driver's wording is not a contract, and
+  a classifier that grepped one would turn a reworded log line into a status-code
+  change.
+- **Not every system error.** The transport list is failures of the connection to
+  the database. `ENOENT` and `EACCES` say nothing about the database being away and
+  stay `unknown`.
+
+### How the exception is read
+
+The search over the exception graph is bounded on every axis, because the graph is
+built by something other than this package:
+
+- **Breadth-first**, so the node budget is spent near the exception, where every
+  shape this stack produces puts its condition.
+- **Maximum depth 4.** The real shape needs three links —
+  `error` → `meta` → `driverAdapterError` → `cause` — which leaves one spare.
+- **Maximum 32 nodes inspected.**
+- **Cycle-safe**, by object identity.
+- **Own enumerable properties only**, so nothing inherited can answer for an object
+  this package did not build. The single deliberate exception is `cause`, read by
+  name: `new Error(message, { cause })` makes it non-enumerable, and it is the link
+  the driver adapter nests its condition under.
+
+### The diagnostic
+
+`PersistenceError` carries a `diagnostic`: a fixed internal token naming which rule
+classified the failure — `request-outcome`, `prisma-code`, `sqlstate`,
+`adapter-kind`, `network-errno`, `connection-open`, or `unclassified`.
+
+It exists because every meaning above answers with a **fixed** sentence, so a log
+line alone cannot distinguish a failure that was understood from one no rule
+recognised. `apps/api` writes it beside the stable code for 5xx responses only. It
+is **never serialised into an HTTP response**, and it is never copied from a driver
+value — no SQLSTATE, no driver code, no host, nothing out of the original
+exception.
+
+### Where the rule came from
+
+**C4's container-level outage scenario is the layer that caught the defect**: a
+persistence request made while PostgreSQL was stopped answered `500` where the
+contract says `503`. What was missing was not detection but **deterministic
+lower-level coverage** — deciding what a driver exception means is a pure decision
+about its structure, and it had been left in a suite that needed a running
+PostgreSQL. The exceptions were captured from the production image and the rules
+now live in the fast command, where no container is involved.
 
 ## The test-database subpath
 
@@ -144,12 +212,12 @@ migration is never edited.
 
 | Half                     | Config                   | Tests | Command                       | Needs             |
 | ------------------------ | ------------------------ | ----- | ----------------------------- | ----------------- |
-| Failure classification   | `vitest.unit.config.mts` | 51    | `pnpm test`, `pnpm test:unit` | nothing           |
+| Failure classification   | `vitest.unit.config.mts` | 83    | `pnpm test`, `pnpm test:unit` | nothing           |
 | Data access and the gate | `vitest.config.mts`      | 57    | `pnpm test:db`                | a real PostgreSQL |
 
 The unit configuration includes only `tests/unit/**/*.unit.test.ts` and has no
 global setup; the database configuration excludes `tests/unit/**`. Without that
-exclusion the shared file glob would match both and `pnpm test:db` would report 108
+exclusion the shared file glob would match both and `pnpm test:db` would report 140
 where 57 is the truth.
 
 `pnpm test:db` runs against a real PostgreSQL through `TEST_DATABASE_URL` — not
@@ -164,11 +232,14 @@ It is deliberately not part of `pnpm test`, which starts no external service.
 
 **The pure half was added because a rule went unheld.** Until then both scripts
 printed that this package's suite needed PostgreSQL — accurate, and also the problem:
-whether a driver error means "the database is unavailable" is a decision about a code
-and some metadata, and leaving it in the database-backed suite meant no fast command
-could hold it. A PostgreSQL shutdown classified as `unknown` reached the API as a
-`500`, and C4's container-level outage scenario — three layers above the rule — is
-what noticed. The 51 fast tests are the deterministic regression that was missing.
+whether a driver error means "the database is unavailable" is a decision about the
+**structure of an exception**, and leaving it in the database-backed suite meant no
+fast command could hold it. A PostgreSQL outage classified as `unknown` reached the
+API as a `500`, and C4's container-level outage scenario — three layers above the
+rule — is what noticed. The 83 fast tests are the deterministic regression that was
+missing: every allowlist member, both recorded outage exceptions, the one that
+carries no driver metadata at all, the codes that must stay `unknown`, and each of
+the traversal bounds.
 
 `tools/test-database.mjs` holds the safety gate and is plain JavaScript, so it is named
 in `files` in `tsconfig.json` and the package turns on `allowJs` and `checkJs`. Without

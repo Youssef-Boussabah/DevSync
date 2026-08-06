@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 
 // The pure half of `packages/database`, and the only half `pnpm test` runs.
 //
-// Classifying a driver failure is a decision about a code and some metadata. It
+// Classifying a driver failure is a decision about the structure of an exception. It
 // needs no PostgreSQL, and — because `src/failure-classification.ts` imports
 // nothing from Prisma — it needs no generated client either, so this suite runs
 // in the fast command that generates nothing and starts nothing.

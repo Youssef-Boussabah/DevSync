@@ -31,10 +31,14 @@ export function toPersistenceError(error: unknown, missingEntity: MissingEntity)
   }
 
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    // `meta` is handed over as it arrived. What is in it is the driver's
-    // business, and the classifier reads it as `unknown` rather than trusting a
-    // shape this package does not own.
-    return toError(classifyKnownRequestFailure(error.code, error.meta, missingEntity), error);
+    // **The whole exception**, not `error.meta`. Where the structured condition
+    // lives is the driver's business and it is not in one place: a PostgreSQL
+    // error puts a SQLSTATE under `meta.driverAdapterError.cause`, and a system
+    // error the adapter does not convert arrives with no metadata at all and its
+    // code on the exception itself. Handing over one branch of that graph is how
+    // an outage came back as `500`. The classifier reads it as `unknown` and
+    // trusts no shape this package does not own.
+    return toError(classifyKnownRequestFailure(error.code, error, missingEntity), error);
   }
 
   if (error instanceof Prisma.PrismaClientInitializationError) {
@@ -45,11 +49,14 @@ export function toPersistenceError(error: unknown, missingEntity: MissingEntity)
 }
 
 export function unavailable(cause: unknown): PersistenceError {
-  return toError(unavailableFailure(), cause);
+  return toError(unavailableFailure('connection-open'), cause);
 }
 
-function toError({ failure, message }: ClassifiedFailure, cause: unknown): PersistenceError {
-  return new PersistenceError(failure, message, { cause });
+function toError(
+  { failure, message, reason }: ClassifiedFailure,
+  cause: unknown,
+): PersistenceError {
+  return new PersistenceError(failure, message, { cause, diagnostic: reason });
 }
 
 /**

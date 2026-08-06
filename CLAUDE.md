@@ -450,24 +450,50 @@ workspace manifest, `docs/ci.md` describes the action pins the workflow actually
 tsconfig was reading are in `pnpm typecheck`. **No retry, circuit breaker, queue, schema change, or
 second migration was added by either.**
 
-**One real defect was first exposed after closure by the pull-request CI run: a PostgreSQL shutdown
-was classified as `unknown`.** When the server goes away under a live connection it answers SQLSTATE
-`57P01`, the driver adapter wraps that inside a generic `P2010`, and `@devsync/database` recognised
-only Prisma's own `P1000`/`P1001`/`P1002`/`P1008`/`P1017` — so C4's outage scenario got
-`500 INTERNAL_ERROR` where the contract says `503 DATABASE_UNAVAILABLE`. **C4's container-level layer
-is what caught it**; no lower-level suite held a deterministic regression for the adapter-wrapped
-shape, and earlier local runs of that scenario passed because the connection was refused outright
-there, which was already classified. Once the shape was isolated it **was** reproduced locally, with a
-deterministic `P2010`-plus-`57P01` probe, and the 51 pure tests in
-`tests/unit/failure-classification.unit.test.ts` now hold the rule with no PostgreSQL, no Prisma
-generation, and no Docker. **`unavailable` is now decided structurally**, in
-`src/failure-classification.ts`, over a narrow allowlist: those Prisma codes, SQLSTATE class `08`,
-`57P01`/`57P02`/`57P03`, and the adapter kinds `ConnectionClosed` and `SocketTimeout`. **`P2010` on
-its own still means `unknown`** — a syntax error, a constraint, and a shutdown all arrive under it —
-and **no classification may be made from words in a message**. Do not widen that allowlist without
-a captured error shape to justify each addition, and do not add class `57` by prefix: `57014`,
-`57P04`, and `57P05` are not unavailability. **No route, contract, schema, migration, dependency, or
-retry behaviour changed.**
+**One real defect was first exposed after closure by the pull-request CI run: a PostgreSQL outage was
+classified as `unknown`, and it took two attempts to fix because the mechanism was not the obvious
+one.** C4's outage scenario got `500 INTERNAL_ERROR` where the contract says
+`503 DATABASE_UNAVAILABLE`. **C4's container-level layer is what caught it**; no lower-level suite
+held a deterministic regression for any of it, and earlier local runs passed because Docker Desktop
+resolves a stopped service differently from a Linux CI runner.
+
+**Two distinct shapes were involved, and only the second is the one CI hit.** When PostgreSQL is
+stopped under a live pool it answers SQLSTATE `57P01`, and the adapter publishes that under
+`meta.driverAdapterError.cause` — a real shape, now handled. But when the _address_ of a stopped
+container cannot be resolved, `@prisma/adapter-pg` converts only four socket codes
+(`ENOTFOUND`, `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`) and rethrows every other system error
+untouched; Prisma then turns any error carrying a string `code` into a
+`PrismaClientKnownRequestError` **whose code is that operating-system code and whose metadata holds
+nothing but the model name**. On a GitHub runner that code is `EAI_AGAIN`, so there was no SQLSTATE,
+no adapter kind, and no driver metadata anywhere to find — and a classifier reading `error.meta`
+could not have found it. Both shapes were captured from the production image against real
+PostgreSQL 18.3, and the CI one was reproduced deterministically by pointing a container at a
+black-holed resolver.
+
+**The classifier now reads the complete exception**, not `error.meta`: a bounded, cycle-safe,
+own-property walk from the error itself over `meta` and `cause`, four links deep and 32 nodes wide.
+**`unavailable` is decided structurally**, in `src/failure-classification.ts`, over four closed
+allowlists — Prisma's `P1000`/`P1001`/`P1002`/`P1008`/`P1017`; SQLSTATE class `08` plus
+`57P01`/`57P02`/`57P03`; the adapter kinds `DatabaseNotReachable`, `ConnectionClosed`, and
+`SocketTimeout`; and the transport codes `EAI_AGAIN`, `EAI_FAIL`, `EAI_NODATA`, `ENOTFOUND`,
+`ECONNREFUSED`, `EHOSTDOWN`, `EHOSTUNREACH`, `ENETDOWN`, `ENETUNREACH`, `ETIMEDOUT`, `ECONNABORTED`,
+`ECONNRESET`, `ENETRESET`, and `EPIPE` — read only from the structured keys `code`, `originalCode`,
+and `kind`. **`P2010` and `P2039` on their own still mean `unknown`** — a syntax error, a constraint,
+and a shutdown all arrive under them — and **no classification may be made from words in a message**.
+`sqlState` is deliberately absent: nothing installed writes that key. Do not widen any allowlist
+without a captured error shape to justify each addition; do not add class `57` by prefix (`57014`,
+`57P04`, and `57P05` are not unavailability); and do not add a system error that is not a transport
+failure (`ENOENT` and `EACCES` say nothing about the database being away). The 83 pure tests in
+`tests/unit/failure-classification.unit.test.ts` hold all of it with no PostgreSQL, no Prisma
+generation, and no Docker.
+
+**`PersistenceError` now carries a `diagnostic`** — a fixed token naming which rule classified the
+failure, logged by `apps/api` for 5xx and never serialised. It exists because the defect was
+invisible from a log: every unclassified failure says the same fixed sentence, so nothing
+distinguished "understood" from "not recognised". It carries no value out of the original exception.
+That optional field is the only thing `contracts.ts` gained; `PersistenceFailure` still has its four
+meanings and the API still switches on those alone. **No route, HTTP response shape, error code,
+Prisma schema, migration, dependency, lockfile entry, or retry behaviour changed.**
 
 **What none of this claims.** There is no backup, restore, replication, failover, high availability,
 automatic retry, or zero-downtime story, and nothing here is production-ready or safe to expose. The

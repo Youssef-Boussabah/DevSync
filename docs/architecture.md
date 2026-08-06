@@ -365,7 +365,7 @@ Two configuration choices in `next.config.ts` matter to the rest of the system:
 | Configuration | `API_PORT` (default 3001), `DATABASE_URL` and `WEB_ORIGIN` (both required), via `.env` |
 | Dev port      | 3001                                                                                   |
 | Build output  | `dist/`, compiled by `tsc` through the Nest CLI                                        |
-| Tests         | Jest: 75 fast, and 110 against a real PostgreSQL under `pnpm test:db`                  |
+| Tests         | Jest: 77 fast, and 110 against a real PostgreSQL under `pnpm test:db`                  |
 
 ```http
 GET    /health                              →  200  {"status":"ok","service":"devsync-api"}
@@ -499,7 +499,7 @@ the architectural points are these.
 | Migrations   | One, committed, applied with `prisma migrate deploy`           |
 | Client       | Generated to `src/generated/prisma`, git-ignored, reproducible |
 | Build output | `dist/`, CommonJS, including the compiled client               |
-| Tests        | Vitest: 51 pure in `pnpm test`, 57 against real PostgreSQL     |
+| Tests        | Vitest: 83 pure in `pnpm test`, 57 against real PostgreSQL     |
 
 - **Nothing is constructed at import time.** `createDatabase({ connectionString })` builds the
   adapter, the client, and the pool; until a caller supplies a connection string there is no pool.
@@ -513,12 +513,23 @@ the architectural points are these.
   The API maps meanings to status codes and never reads an ORM exception.
 - **Recognising the exception and deciding what it means are two files.** `src/errors.ts` does the
   first and needs the generated client for its `instanceof` checks;
-  `src/failure-classification.ts` does the second from a code and some metadata and imports no
-  Prisma at all. The split is what lets the rules be tested in `pnpm test` — and it exists because
-  the rule that a PostgreSQL shutdown means "unavailable" was missing, and the container-level outage
-  scenario was the first layer to reveal it. **First discovery and permanent regression coverage are
-  different jobs**: the container scenario found the gap, and the pure suite is where the rule is now
-  held, deterministically and without a container.
+  `src/failure-classification.ts` does the second from a code and the exception's structure, and
+  imports no Prisma at all. The split is what lets the rules be tested in `pnpm test` — and it exists
+  because the rule that a PostgreSQL outage means "unavailable" was missing, and the container-level
+  outage scenario was the first layer to reveal it. **First discovery and permanent regression
+  coverage are different jobs**: the container scenario found the gap, and the pure suite is where
+  the rule is now held, deterministically and without a container.
+- **The classifier reads the whole exception, not one property of it.** Where the structured
+  condition lives is the driver's business and it is not in one place: a SQLSTATE sits under
+  `meta.driverAdapterError.cause`, and a system error the adapter does not convert arrives with the
+  operating-system code on the exception itself and no metadata at all. The walk is bounded — four
+  links, 32 nodes, cycle-safe, own properties only — and every decision is exact membership of one
+  of four closed allowlists. **No classification is ever made from words in a message.**
+- **`PersistenceError` carries a `diagnostic`**: a fixed token naming which rule classified the
+  failure, logged by `apps/api` for 5xx and never serialised into a response. Every meaning has a
+  fixed public sentence, so without it a log cannot distinguish a failure that was understood from
+  one nothing recognised — which is exactly what made the outage defect invisible. It carries no
+  value out of the original exception.
 - **The ORM-independent half is a file, not a claim.** `src/contracts.ts` holds the records, the
   operation interfaces, `Database`, `PersistenceFailure`, and `PersistenceError`, and imports
   nothing from Prisma; everything that touches the generated client depends on it rather than the
@@ -657,11 +668,11 @@ The seven testing layers as a whole:
 | Browser and full-stack | Playwright    | `tests/e2e`         | Both compiled applications, on ports            |
 | Restart and outage     | a Node runner | `tests/restart`     | The production images, under Docker Compose     |
 
-Six hundred and sixteen real tests in total, plus six restart scenarios counted separately. The
+Six hundred and fifty real tests in total, plus six restart scenarios counted separately. The
 `packages/database` and `apps/api` integration suites are the only ones needing a service somebody
 else started — which is why they share one command, `pnpm test:db` — and `pnpm test` still starts
 nothing. The database layer is one layer in two halves: deciding what a driver failure _means_ needs
-neither a database nor a generated client, so those 51 tests run in the fast command while the 57
+neither a database nor a generated client, so those 83 tests run in the fast command while the 57
 that query a real server stay in `pnpm test:db`.
 [`testing.md`](testing.md) covers what each layer proves, why the API stays on Jest, and what is
 deliberately untested.

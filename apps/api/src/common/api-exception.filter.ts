@@ -73,10 +73,28 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const { cause } = error;
 
     if (cause instanceof Error) {
-      this.logger.error(`${error.code}: ${cause.message}`, cause.stack);
+      const context = `${error.code}${describeClassification(cause)}`;
+
+      this.logger.error(`${context}: ${cause.message}`, cause.stack);
       return;
     }
 
     this.logger.error(`${error.code}: ${error.message}`);
   }
+}
+
+/**
+ * Which data-layer rule classified a failure, when one did.
+ *
+ * `@devsync/database` decides what a driver exception means and every meaning it
+ * can produce carries a fixed public sentence, so the message alone cannot say
+ * whether a `500` was a failure nothing recognised or one that was understood.
+ * This is the difference, and it is a fixed token: no SQLSTATE, no driver code,
+ * no host, nothing out of the original exception. It goes to the log only —
+ * `toApiErrorResource` decides what a client sees, and it does not read this.
+ */
+function describeClassification(cause: Error): string {
+  return isPersistenceError(cause) && cause.diagnostic !== undefined
+    ? ` [${cause.diagnostic}]`
+    : '';
 }

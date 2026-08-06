@@ -430,16 +430,25 @@ created with its `main.ts` atomically and may later hold none; deletion is perma
   failure the rule in [`testing.md`](testing.md) exists to prevent. It now declares one, and since
   the fix below it runs a real suite rather than printing a notice.
 
-**One defect was first exposed after closure by the pull-request CI run.** C4's container-level
-outage scenario failed on a GitHub Actions rerun: PostgreSQL shut down under a live connection and
-reported SQLSTATE `57P01`, the driver adapter wrapped it inside a generic query failure, and the data
-layer — which recognised only Prisma's own `P1000`/`P1001`/`P1002`/`P1008`/`P1017` — classified it as
-`unknown`, so the first request during the outage answered `500` where the contract says `503`. It was
-a genuine persistence-classification gap, not a flaky harness, and **that scenario is the layer that
-caught it**; what no lower-level suite had was a deterministic regression for the adapter-wrapped
-shape. Once isolated, the shape was reproduced locally with a deterministic probe. The classifier now
-reads the structured condition the adapter attaches, over a narrow allowlist, and `packages/database`
-gained 51 pure tests that run in `pnpm test`. **No route, schema, migration, or retry behaviour
+**One defect was first exposed after closure by the pull-request CI run, and it took two attempts to
+fix.** C4's container-level outage scenario failed on a GitHub Actions rerun: the first request
+during the outage answered `500` where the contract says `503`. It was a genuine
+persistence-classification gap, not a flaky harness, and **that scenario is the layer that caught
+it**; what no lower-level suite had was a deterministic regression for how a driver failure is
+classified.
+
+The first fix handled a real shape — PostgreSQL reporting SQLSTATE `57P01` under a live pool, which
+`@prisma/adapter-pg` publishes under `meta.driverAdapterError.cause` — and CI failed again, because
+that was not the shape it was hitting. The adapter converts only four socket codes and rethrows
+every other system error untouched; Prisma turns any error carrying a string `code` into a known
+request error **whose code is that operating-system code and whose metadata holds nothing but the
+model name**. On a Linux runner, resolving a stopped container's service name fails with
+`EAI_AGAIN`, so there was no metadata anywhere to search. Both shapes were captured from the
+production image and the CI one reproduced deterministically, and the classifier now reads the
+**whole exception** over four closed allowlists — Prisma codes, SQLSTATEs, adapter kinds, and
+transport codes — with `packages/database` holding 83 pure tests that run in `pnpm test`.
+`PersistenceError` also gained a logged-only `diagnostic` naming which rule decided, because the
+defect was invisible from a log. **No route, response schema, schema, migration, or retry behaviour
 changed.**
 
 **Completion boundary.** Every document describes the persistence that exists, every exclusion above

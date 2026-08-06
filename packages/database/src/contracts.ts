@@ -29,10 +29,26 @@ export type PersistenceFailure =
 export class PersistenceError extends Error {
   readonly failure: PersistenceFailure;
 
-  constructor(failure: PersistenceFailure, message: string, options?: { cause?: unknown }) {
-    super(message, options);
+  /**
+   * A short internal token naming the rule that classified this failure — for
+   * the server's log, never for a response.
+   *
+   * It carries no value read out of the original exception: no SQLSTATE, no
+   * driver code, no message, no host. What it answers is the question an outage
+   * that answered `500` left unanswerable from a log — *which* rule decided, and
+   * in particular whether any rule matched at all.
+   */
+  readonly diagnostic: string | undefined;
+
+  constructor(
+    failure: PersistenceFailure,
+    message: string,
+    options?: { cause?: unknown; diagnostic?: string },
+  ) {
+    super(message, options === undefined ? undefined : { cause: options.cause });
     this.name = 'PersistenceError';
     this.failure = failure;
+    this.diagnostic = options?.diagnostic;
   }
 }
 

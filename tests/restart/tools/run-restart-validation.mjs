@@ -616,6 +616,22 @@ async function scenarioApiRestart(baseline, before) {
 async function scenarioDatabaseOutage(baseline, context) {
   scenario('Stop PostgreSQL with the API still running');
 
+  // The outage has to happen *under a live pool*, or it proves something easier:
+  // an API that had never opened a connection would fail the first request for
+  // reasons that say nothing about surviving a server going away. So a
+  // persistence request is made and required to succeed immediately before the
+  // stop, which is what makes the two requests below the first ones to meet the
+  // outage rather than the first ones to meet the database at all.
+  const live = await api.request('GET', `/projects/${baseline.projectId}`);
+
+  must(
+    live.status === 200,
+    'the API has just served a persistence request, so the pool holds a live connection',
+    live.failure ?? `HTTP ${live.status}: ${live.text.slice(0, 200)}`,
+  );
+
+  note('A persistence route answered 200 just now; the connection pool is warm.');
+
   assertCommandSucceeded(
     'Stopping PostgreSQL',
     await compose(['stop', 'database'], { timeoutMs: 90_000 }),
