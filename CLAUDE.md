@@ -115,8 +115,15 @@ reports nothing, so a Vitest workspace without the script disappears from the co
 makes `test:unit` quietly stop meaning what its name says. `apps/api` correctly has none because its
 suites are Jest. `tests/restart` declares it and its 58 pure-helper tests run under it — the Docker
 scenario stays behind `pnpm test:restart` and joins neither `test` nor `test:unit`.
-**`packages/database` declares it and prints that its suite needs PostgreSQL**, the same thing its
-`test` script says, so the exclusion is stated rather than omitted.
+
+**`packages/database` has two Vitest configurations and they must not overlap.**
+`vitest.unit.config.mts` runs `tests/unit/**/*.unit.test.ts` — the pure failure-classification
+suite, which needs no database and no generated client — and is what its `test` and `test:unit`
+scripts invoke. `vitest.config.mts` runs everything else against real PostgreSQL under `test:db`, and
+**excludes `tests/unit/**`**; without that line the shared file glob matches the pure tests too and
+`test:db` silently reports them a second time. Neither suite may be moved into the other: a rule
+about what a driver error means belongs in the fast command, and a query against a real server
+cannot go there.
 
 What makes that possible is a source-level alias in each workspace that consumes a package which
 builds. `apps/api/jest.config.mjs` maps `@devsync/shared` to `packages/shared/src/index.ts` and
@@ -439,9 +446,28 @@ describe C4 as the first time persistence was tested. `docs/testing.md` has the 
 defaults. C5 audited the phase against the C0 contract, found the two in agreement, and corrected
 four things that were not: both Dockerfiles now copy `tests/restart/package.json` like every other
 workspace manifest, `docs/ci.md` describes the action pins the workflow actually uses,
-`packages/database` declares a `test:unit` that names the command its suite needs, and the four
-runtime `.mjs` files whose `// @ts-check` no tsconfig was reading are in `pnpm typecheck`. **No
-retry, circuit breaker, queue, schema change, or second migration was added by either.**
+`packages/database` declares a `test:unit`, and the four runtime `.mjs` files whose `// @ts-check` no
+tsconfig was reading are in `pnpm typecheck`. **No retry, circuit breaker, queue, schema change, or
+second migration was added by either.**
+
+**One real defect was first exposed after closure by the pull-request CI run: a PostgreSQL shutdown
+was classified as `unknown`.** When the server goes away under a live connection it answers SQLSTATE
+`57P01`, the driver adapter wraps that inside a generic `P2010`, and `@devsync/database` recognised
+only Prisma's own `P1000`/`P1001`/`P1002`/`P1008`/`P1017` — so C4's outage scenario got
+`500 INTERNAL_ERROR` where the contract says `503 DATABASE_UNAVAILABLE`. **C4's container-level layer
+is what caught it**; no lower-level suite held a deterministic regression for the adapter-wrapped
+shape, and earlier local runs of that scenario passed because the connection was refused outright
+there, which was already classified. Once the shape was isolated it **was** reproduced locally, with a
+deterministic `P2010`-plus-`57P01` probe, and the 51 pure tests in
+`tests/unit/failure-classification.unit.test.ts` now hold the rule with no PostgreSQL, no Prisma
+generation, and no Docker. **`unavailable` is now decided structurally**, in
+`src/failure-classification.ts`, over a narrow allowlist: those Prisma codes, SQLSTATE class `08`,
+`57P01`/`57P02`/`57P03`, and the adapter kinds `ConnectionClosed` and `SocketTimeout`. **`P2010` on
+its own still means `unknown`** — a syntax error, a constraint, and a shutdown all arrive under it —
+and **no classification may be made from words in a message**. Do not widen that allowlist without
+a captured error shape to justify each addition, and do not add class `57` by prefix: `57014`,
+`57P04`, and `57P05` are not unavailability. **No route, contract, schema, migration, dependency, or
+retry behaviour changed.**
 
 **What none of this claims.** There is no backup, restore, replication, failover, high availability,
 automatic retry, or zero-downtime story, and nothing here is production-ready or safe to expose. The

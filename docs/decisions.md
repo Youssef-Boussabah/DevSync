@@ -155,7 +155,7 @@ and it makes the repository look further along than it is.
 **Consequence today.** Three workspaces that lint, type-check, and report honestly that they have no
 tests. Each `src/index.ts` is a documented `export {}`, and each README states the boundary and the
 current state. `@devsync/database` was the fifth until C1 filled it — with a schema, a migration, a
-data layer, and 57 tests — and `@devsync/shared` the fourth until C2 did, with the schemas the API
+data layer, and 57 database-backed tests — and `@devsync/shared` the fourth until C2 did, with the schemas the API
 validates every request against. That is the outcome this decision was betting on, twice: the
 boundary was already there, so filling it was a matter of writing the implementation rather than
 agreeing where it should live. Neither arrived as a placeholder; both arrived with a consumer.

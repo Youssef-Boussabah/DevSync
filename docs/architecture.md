@@ -499,7 +499,7 @@ the architectural points are these.
 | Migrations   | One, committed, applied with `prisma migrate deploy`           |
 | Client       | Generated to `src/generated/prisma`, git-ignored, reproducible |
 | Build output | `dist/`, CommonJS, including the compiled client               |
-| Tests        | Vitest, 39 integration tests against real PostgreSQL           |
+| Tests        | Vitest: 51 pure in `pnpm test`, 57 against real PostgreSQL     |
 
 - **Nothing is constructed at import time.** `createDatabase({ connectionString })` builds the
   adapter, the client, and the pool; until a caller supplies a connection string there is no pool.
@@ -511,6 +511,14 @@ the architectural points are these.
 - **No Prisma error escapes either.** Failures are classified into four meanings — not found,
   unique violation, unavailable, unknown — with the original exception kept as `cause` for a log.
   The API maps meanings to status codes and never reads an ORM exception.
+- **Recognising the exception and deciding what it means are two files.** `src/errors.ts` does the
+  first and needs the generated client for its `instanceof` checks;
+  `src/failure-classification.ts` does the second from a code and some metadata and imports no
+  Prisma at all. The split is what lets the rules be tested in `pnpm test` — and it exists because
+  the rule that a PostgreSQL shutdown means "unavailable" was missing, and the container-level outage
+  scenario was the first layer to reveal it. **First discovery and permanent regression coverage are
+  different jobs**: the container scenario found the gap, and the pure suite is where the rule is now
+  held, deterministically and without a container.
 - **The ORM-independent half is a file, not a claim.** `src/contracts.ts` holds the records, the
   operation interfaces, `Database`, `PersistenceFailure`, and `PersistenceError`, and imports
   nothing from Prisma; everything that touches the generated client depends on it rather than the
@@ -644,14 +652,17 @@ The seven testing layers as a whole:
 | Contract               | Vitest        | `packages/shared`   | Schemas, in Node, in-process                    |
 | Component              | Vitest        | `apps/web`          | React components in jsdom                       |
 | HTTP-level application | Jest          | `apps/api`          | A Nest app on an ephemeral socket               |
-| Database integration   | Vitest        | `packages/database` | A real PostgreSQL, migrated                     |
+| Database               | Vitest        | `packages/database` | Failure classification, then a real PostgreSQL  |
 | API integration        | Jest          | `apps/api`          | The real `AppModule`, over that same PostgreSQL |
 | Browser and full-stack | Playwright    | `tests/e2e`         | Both compiled applications, on ports            |
 | Restart and outage     | a Node runner | `tests/restart`     | The production images, under Docker Compose     |
 
-Five hundred and sixty-five real tests in total, plus six restart scenarios counted separately. The
-two database integration layers are the only ones needing a service somebody else started — which is
-why they share one command, `pnpm test:db` — and `pnpm test` still starts nothing.
+Six hundred and sixteen real tests in total, plus six restart scenarios counted separately. The
+`packages/database` and `apps/api` integration suites are the only ones needing a service somebody
+else started — which is why they share one command, `pnpm test:db` — and `pnpm test` still starts
+nothing. The database layer is one layer in two halves: deciding what a driver failure _means_ needs
+neither a database nor a generated client, so those 51 tests run in the fast command while the 57
+that query a real server stay in `pnpm test:db`.
 [`testing.md`](testing.md) covers what each layer proves, why the API stays on Jest, and what is
 deliberately untested.
 

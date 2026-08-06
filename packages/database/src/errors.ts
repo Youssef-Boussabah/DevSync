@@ -1,25 +1,22 @@
 import { Prisma } from './generated/prisma/client';
 import { PersistenceError } from './contracts';
+import {
+  classifyKnownRequestFailure,
+  requestFailedFailure,
+  unavailableFailure,
+} from './failure-classification';
+import type { ClassifiedFailure, MissingEntity } from './failure-classification';
 
 /**
  * Turning what Prisma threw into one of the four meanings `contracts.ts`
  * defines. Everything ORM-specific about failure handling is here; the error
  * type itself is not, so a caller can name it without loading a generated
  * client.
+ *
+ * This file recognises the exception; `failure-classification.ts` decides what
+ * it means. Only the recognition needs the generated client, which is what lets
+ * the rules be tested without one.
  */
-
-/** Which record a "not found" means, for the operation that was being run. */
-type MissingEntity = 'project' | 'projectFile';
-
-// Prisma's codes for a database that is not answering. A connection that drops
-// mid-request surfaces here rather than as an initialisation error.
-const UNAVAILABLE_CODES = new Set([
-  'P1000', // authentication failed
-  'P1001', // cannot reach the database server
-  'P1002', // the server was reached but timed out
-  'P1008', // operation timed out
-  'P1017', // the server closed the connection
-]);
 
 /**
  * Translates whatever the driver threw into a `PersistenceError`.
@@ -34,52 +31,25 @@ export function toPersistenceError(error: unknown, missingEntity: MissingEntity)
   }
 
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    switch (error.code) {
-      case 'P2002':
-        return new PersistenceError(
-          { kind: 'uniqueViolation', constraint: 'projectFileName' },
-          'A file with that name already exists in this project.',
-          { cause: error },
-        );
-
-      case 'P2025':
-        return notFound(missingEntity, error);
-
-      // A foreign key that does not resolve can only be `project_id` here, so
-      // the project is what is missing — not the file the caller asked for.
-      case 'P2003':
-        return notFound('project', error);
-
-      default:
-        break;
-    }
-
-    if (UNAVAILABLE_CODES.has(error.code)) {
-      return unavailable(error);
-    }
-
-    return new PersistenceError({ kind: 'unknown' }, 'The database rejected the request.', {
-      cause: error,
-    });
+    // `meta` is handed over as it arrived. What is in it is the driver's
+    // business, and the classifier reads it as `unknown` rather than trusting a
+    // shape this package does not own.
+    return toError(classifyKnownRequestFailure(error.code, error.meta, missingEntity), error);
   }
 
   if (error instanceof Prisma.PrismaClientInitializationError) {
     return unavailable(error);
   }
 
-  return new PersistenceError({ kind: 'unknown' }, 'The database request failed.', {
-    cause: error,
-  });
+  return toError(requestFailedFailure(), error);
 }
 
 export function unavailable(cause: unknown): PersistenceError {
-  return new PersistenceError({ kind: 'unavailable' }, 'The database is unavailable.', { cause });
+  return toError(unavailableFailure(), cause);
 }
 
-function notFound(entity: MissingEntity, cause: unknown): PersistenceError {
-  const subject = entity === 'project' ? 'project' : 'file';
-
-  return new PersistenceError({ kind: 'notFound', entity }, `No such ${subject}.`, { cause });
+function toError({ failure, message }: ClassifiedFailure, cause: unknown): PersistenceError {
+  return new PersistenceError(failure, message, { cause });
 }
 
 /**

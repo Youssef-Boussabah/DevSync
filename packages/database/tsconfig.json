@@ -19,5 +19,12 @@
   // because `files` also beats `exclude` and nothing here belongs in `dist`.
   "files": ["tools/test-database.mjs"],
 
-  "include": ["src", "tests", "tools", "prisma.config.ts", "vitest.config.mts"]
+  "include": [
+    "src",
+    "tests",
+    "tools",
+    "prisma.config.ts",
+    "vitest.config.mts",
+    "vitest.unit.config.mts"
+  ]
 }

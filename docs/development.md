@@ -84,7 +84,7 @@ dependency order, and caches what is safe to cache.
 | `pnpm lint:fix`         | The same rules, applying every auto-fixable one                                 |
 | `pnpm typecheck`        | Type-checks all ten workspaces                                                  |
 | `pnpm test`             | Every in-process source suite — Vitest and Jest. Builds nothing, starts nothing |
-| `pnpm test:unit`        | The Vitest layer only — 309 of the 384                                          |
+| `pnpm test:unit`        | The Vitest layer only — 360 of the 435                                          |
 | `pnpm test:db`          | The data layer then the API's routes, both against a running PostgreSQL         |
 | `pnpm test:e2e`         | Playwright: resets the test database, then builds and drives both applications  |
 | `pnpm test:e2e:install` | Downloads Chromium. Once per machine                                            |
@@ -197,14 +197,15 @@ does not change it: it constrains browsers, not clients in general.
 
 ## Testing
 
-Seven layers, five hundred and sixty-five real tests, plus six restart scenarios — Vitest over the
+Seven layers, six hundred and sixteen real tests, plus six restart scenarios — Vitest over the
 schemas in `packages/shared`, Vitest in `apps/web`, Jest in `apps/api` twice over (fast, and against
-a real database), Vitest against a real PostgreSQL in `packages/database`, Vitest over the restart
-harness's helpers in `tests/restart`, Playwright in `tests/e2e`, and the Docker-level restart
-validation that `tests/restart` also holds.
+a real database), Vitest in `packages/database` twice over (failure classification with nothing
+running, and data access against a real PostgreSQL), Vitest over the restart harness's helpers in
+`tests/restart`, Playwright in `tests/e2e`, and the Docker-level restart validation that
+`tests/restart` also holds.
 
 ```bash
-pnpm test         # fast: in-process source only, no builds, no browser, no database  (384)
+pnpm test         # fast: in-process source only, no builds, no browser, no database  (435)
 pnpm test:db      # the data layer, then the API's HTTP routes, both against PostgreSQL  (167)
 pnpm test:e2e     # resets the test database, builds both apps, starts them, drives Chromium  (14)
 pnpm test:restart # C4: real containers — restart, outage, recovery, migration redeploy  (6 scenarios)

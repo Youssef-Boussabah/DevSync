@@ -114,11 +114,15 @@ for a robot to paper over.
 Starts a PostgreSQL service container, installs dependencies, and runs `pnpm test:db` — the same
 command a developer runs, against a database the job created and will throw away.
 
-**That one command covers both persistence layers from C2**: the data layer's 57 tests first, then
-the API's 110 HTTP tests against the real `AppModule` and the same database. They run one after the
-other because they reset and rewrite the same schema, and the root script says so with `&&` rather
-than leaving the order to Turborepo. No fifth job was added, and no CI-only command exists — the
-step is still `pnpm test:db`.
+**That one command covers both persistence layers from C2**: the data layer's 57 database-backed
+tests first, then the API's 110 HTTP tests against the real `AppModule` and the same database. They
+run one after the other because they reset and rewrite the same schema, and the root script says so
+with `&&` rather than leaving the order to Turborepo. No fifth job was added, and no CI-only command
+exists — the step is still `pnpm test:db`.
+
+**`packages/database`'s other 51 tests are not here.** They classify driver failures, need no
+database and no generated client, and run in the `quality` job as part of `pnpm test`. Nothing runs
+in both jobs.
 
 Each suite drops the test schema and applies the committed migration before it runs, so a migration
 that does not apply cleanly fails here rather than later, in the `docker` job. Both refuse to run at
@@ -415,13 +419,32 @@ pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typeche
   until all four jobs pass.** Running every command locally proves the commands; it does not prove
   the runner-specific part — service containers, their published ports, the health options attached
   to them, the `actions/*` majors resolving, and the Docker job under a Linux daemon rather than
-  Docker Desktop. Phase C's first pull-request run is what demonstrated the difference: `quality`,
-  `database`, and `e2e` passed, and `docker` reached the CORS step and failed on the **assertion**
-  rather than on the behaviour — `grep -i` matched `Access-Control-Allow-Origin` and printed it
-  unchanged, and the shell compared that, case sensitively, against a lower-cased literal. The API
-  had sent exactly the right header. That step now compares the header **value** and matches the
-  **name** case-insensitively. **Do not describe a Phase C workflow run as green until the corrected
-  commit has actually completed one.**
+  Docker Desktop. Phase C's pull-request runs demonstrated it twice: both failures were exposed by
+  the workflow because neither the exact shell assertion nor the exact shutdown timing had been
+  exercised locally before the pull request. Once each was isolated, both **were** reproduced
+  locally — the CORS comparison directly, and the shutdown condition through a deterministic probe
+  over a `P2010` carrying a structured `57P01`. What CI proved was not that the failures were
+  unreachable from a developer's machine; it proved that nothing a developer had actually run would
+  have reached them first.
+
+  The **first** run: `quality`, `database`, and `e2e` passed, and `docker` reached the CORS step and
+  failed on the **assertion** rather than on the behaviour — `grep -i` matched
+  `Access-Control-Allow-Origin` and printed it unchanged, and the shell compared that, case
+  sensitively, against a lower-cased literal. The API had sent exactly the right header. That step
+  now compares the header **value** and matches the **name** case-insensitively.
+
+  The **second** run got past that and failed inside C4's restart validation, on the
+  database-outage scenario, on a **real defect**: PostgreSQL shut down under a live connection and
+  logged `57P01`, the driver reported it as a generic query failure, and the first persistence
+  request answered `500 INTERNAL_ERROR` where the contract says `503 DATABASE_UNAVAILABLE`. **C4's
+  container-level scenario is the layer that caught it** — earlier local runs of it had passed
+  because the connection was refused outright there, which the data layer already classified. Once
+  the CI failure identified the shape, a deterministic probe reproduced the same driver-wrapped
+  `57P01` locally, which is what the fix was written against. The classifier now reads the structured
+  condition the driver attaches, and 51 pure tests hold it in `pnpm test` so the rule no longer
+  depends on a container to be checked. **Do not describe a Phase C workflow run as green until the
+  corrected commit has actually completed one.**
+
 - **No branch protection is configured**, so a failing run does not yet block a merge. That is a
   repository setting rather than a file, and it is not something this milestone can add.
 - **Playwright browsers are downloaded on every `e2e` run** — roughly 300 MB and a minute or so.

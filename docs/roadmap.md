@@ -427,8 +427,20 @@ created with its `main.ts` atomically and may later hold none; deletion is perma
   byte-for-byte what it was.
 - **A Vitest workspace was disappearing from `pnpm test:unit`.** `packages/database` runs Vitest but
   declared no `test:unit`, so Turborepo resolved the task to nothing and said nothing — the precise
-  failure the rule in [`testing.md`](testing.md) exists to prevent. It now declares one that names
-  the command its suite really needs, so the exclusion is stated rather than silent.
+  failure the rule in [`testing.md`](testing.md) exists to prevent. It now declares one, and since
+  the fix below it runs a real suite rather than printing a notice.
+
+**One defect was first exposed after closure by the pull-request CI run.** C4's container-level
+outage scenario failed on a GitHub Actions rerun: PostgreSQL shut down under a live connection and
+reported SQLSTATE `57P01`, the driver adapter wrapped it inside a generic query failure, and the data
+layer — which recognised only Prisma's own `P1000`/`P1001`/`P1002`/`P1008`/`P1017` — classified it as
+`unknown`, so the first request during the outage answered `500` where the contract says `503`. It was
+a genuine persistence-classification gap, not a flaky harness, and **that scenario is the layer that
+caught it**; what no lower-level suite had was a deterministic regression for the adapter-wrapped
+shape. Once isolated, the shape was reproduced locally with a deterministic probe. The classifier now
+reads the structured condition the adapter attaches, over a narrow allowlist, and `packages/database`
+gained 51 pure tests that run in `pnpm test`. **No route, schema, migration, or retry behaviour
+changed.**
 
 **Completion boundary.** Every document describes the persistence that exists, every exclusion above
 is still absent, and the phase's completion boundary is met. **Met.**
