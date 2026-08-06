@@ -447,8 +447,9 @@ retry, circuit breaker, queue, schema change, or second migration was added by e
 automatic retry, or zero-downtime story, and nothing here is production-ready or safe to expose. The
 validation shows one API process recovers after one PostgreSQL returns; it says nothing about
 behaviour under load, about a request in flight when the connection drops, or about how many requests
-fail while the database is away. **No Phase C run of the GitHub Actions workflow has been observed**;
-every command in it has been run locally, which is not the same thing.
+fail while the database is away. **Local validation never stands in for CI**: running every command
+locally proves the commands, not the runner, and a pull request does not merge until all four jobs
+pass. Do not call a workflow run green until it has actually completed.
 
 Do not implement later milestones early. Specifically, do not add authentication, WebSockets, a CRDT
 library, code execution, Kubernetes, cloud deployment, release automation, or a dependency bot until

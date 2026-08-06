@@ -270,17 +270,50 @@ jobs:
       # allow-origin header to work with. Read-only, like the step above.
       - name: Verify CORS allows the web origin and no other
         run: |
-          allowed="$(curl --silent --show-error --max-time 10 --dump-header - --output /dev/null \
-            -H 'Origin: http://127.0.0.1:3000' http://127.0.0.1:3001/projects \
-            | tr -d '\r' | grep -i '^access-control-allow-origin:' || true)"
-          echo "allowed: $allowed"
-          [ "$allowed" = "access-control-allow-origin: http://127.0.0.1:3000" ]
+          # **The header NAME is matched case-insensitively; only its VALUE is
+          # compared.** HTTP header names are case-insensitive and a server may
+          # capitalise them however it likes — Express sends
+          # `Access-Control-Allow-Origin`. Comparing the whole header line is what
+          # failed the first run of this job: `grep -i` matched the line and printed
+          # it with its original capitalisation, which the shell then compared, case
+          # sensitively, against a lower-cased literal. The API was right and the
+          # assertion was wrong. `tolower()` is POSIX awk, so this needs no gawk.
+          headers_for() {
+            curl --silent --show-error --max-time 10 --dump-header - --output /dev/null \
+              -H "Origin: $1" http://127.0.0.1:3001/projects | tr -d '\r'
+          }
 
-          refused="$(curl --silent --show-error --max-time 10 --dump-header - --output /dev/null \
-            -H 'Origin: http://evil.example' http://127.0.0.1:3001/projects \
-            | tr -d '\r' | grep -ci '^access-control-allow-origin:' || true)"
-          echo "allow-origin headers for another origin: $refused"
-          [ "$refused" = "0" ]
+          allow_origin_value() {
+            printf '%s\n' "$1" | awk -F: '
+              tolower($1) == "access-control-allow-origin" {
+                sub(/^[^:]*:[ \t]*/, "")
+                print
+                exit
+              }'
+          }
+
+          allow_origin_count() {
+            printf '%s\n' "$1" | awk -F: '
+              tolower($1) == "access-control-allow-origin" { found++ }
+              END { print found + 0 }'
+          }
+
+          allowed_headers="$(headers_for 'http://127.0.0.1:3000')"
+          other_headers="$(headers_for 'http://evil.example')"
+
+          # Both requests must have been answered at all. Without this, a curl that
+          # never reached the API would return no headers and the "no allow-origin
+          # header" assertion below would pass for the wrong reason.
+          printf '%s\n' "$allowed_headers" | grep -q '^HTTP/'
+          printf '%s\n' "$other_headers" | grep -q '^HTTP/'
+
+          allowed_origin="$(allow_origin_value "$allowed_headers")"
+          echo "allowed origin: ${allowed_origin:-<none>}"
+          [ "$allowed_origin" = "http://127.0.0.1:3000" ]
+
+          other_count="$(allow_origin_count "$other_headers")"
+          echo "allow-origin headers for another origin: $other_count"
+          [ "$other_count" = "0" ]
 
       # The browser half of the same configuration: the API origin is embedded in
       # what the web image serves, and nothing about the database is.

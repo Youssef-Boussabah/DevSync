@@ -13,7 +13,9 @@ one step of the existing `docker` job, which is where a command that needs a Doc
 this document: it had claimed every official action was pinned to `@v7`, which is not a version
 `actions/checkout` or `actions/setup-node` publishes. The workflow already referenced each action's
 real current major; only the description of it was wrong. The inventory is
-[below](#node-and-pnpm).
+[below](#node-and-pnpm). **The one workflow change since is in the `docker` job's CORS step**, which
+compared a header line as text and so failed on capitalisation the first time this workflow ever ran
+— see [that step](#docker) and the limitation at the end.
 CI adds no capability to DevSync; it runs the checks that already existed, on someone else's machine,
 on every change. Every command in the workflow is one you can run yourself, which is the point — a
 red run should never require reading CI internals to reproduce.
@@ -210,6 +212,12 @@ docker compose exec -T web sh -c "grep -rlF 'http://127.0.0.1:3001' /repo/apps/w
 ! docker compose exec -T web sh -c "grep -rqE 'postgres(ql)?://|DATABASE_URL' /repo/apps/web/.next"
 ```
 
+**The header name is matched case-insensitively and only its value is compared.** HTTP header names
+are case-insensitive and a server capitalises them however it likes; the step therefore parses the
+value out with `awk` — using `tolower()`, which is POSIX and needs no gawk — instead of comparing the
+header line as text. It also asserts that both requests were answered at all, so a `curl` that never
+reached the API cannot satisfy the "no allow-origin header" half by returning nothing.
+
 The first pair proves the running API read `WEB_ORIGIN` and enforces it — the fast Jest suite proves
 the same policy against an application it configures itself, which is a different claim. The second
 proves the API origin really was embedded at build time, and that **no database value reached the
@@ -403,16 +411,17 @@ pnpm install --frozen-lockfile && pnpm format:check && pnpm lint && pnpm typeche
 
 ## Current limitations
 
-- **No Phase C run of this workflow has been observed on GitHub.** That is still true at C5 closure.
-  The workflow parses, and every command in it has been run locally against the current tree —
-  `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test` from a clean tree, `pnpm build`,
-  `pnpm test:db` covering both persistence suites, `pnpm test:e2e` covering the browser flow, the
-  full Compose stack built `--no-cache` with its migration and every HTTP, CORS, and image check, and
-  `pnpm test:restart` twice in a row. What has not been proved is the runner-specific part: service
-  containers, their published ports, the health options attached to them, the `actions/*` majors
-  resolving on a real runner, and the restart validation under a Linux Docker daemon rather than
-  Docker Desktop. **The first run against a real pull request is that proof, and it has not happened
-  — local validation and reading the workflow are not the same as watching CI.**
+- **Local validation does not replace a run of this workflow, and a pull request does not merge
+  until all four jobs pass.** Running every command locally proves the commands; it does not prove
+  the runner-specific part — service containers, their published ports, the health options attached
+  to them, the `actions/*` majors resolving, and the Docker job under a Linux daemon rather than
+  Docker Desktop. Phase C's first pull-request run is what demonstrated the difference: `quality`,
+  `database`, and `e2e` passed, and `docker` reached the CORS step and failed on the **assertion**
+  rather than on the behaviour — `grep -i` matched `Access-Control-Allow-Origin` and printed it
+  unchanged, and the shell compared that, case sensitively, against a lower-cased literal. The API
+  had sent exactly the right header. That step now compares the header **value** and matches the
+  **name** case-insensitively. **Do not describe a Phase C workflow run as green until the corrected
+  commit has actually completed one.**
 - **No branch protection is configured**, so a failing run does not yet block a merge. That is a
   repository setting rather than a file, and it is not something this milestone can add.
 - **Playwright browsers are downloaded on every `e2e` run** — roughly 300 MB and a minute or so.
