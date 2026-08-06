@@ -14,8 +14,10 @@
   },
   "devDependencies": {
     "@devsync/config": "workspace:*",
+    "@devsync/database": "workspace:*",
     "@playwright/test": "^1.62.1",
     "@types/node": "^24.0.0",
+    "dotenv": "^17.4.2",
     "eslint": "^9.39.5",
     "typescript": "^5.7.3"
   }

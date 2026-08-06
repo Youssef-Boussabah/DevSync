@@ -7,5 +7,16 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["eslint/**/*.mjs", "eslint.config.mjs"]
+
+  // `vitest/base.mjs` is named here rather than left to the wildcard below. A
+  // wildcard drops a `.mjs` whose `.d.mts` sits beside it — the declaration wins
+  // on extension priority — so the one file in this package with hand-written
+  // declarations was the one file the compiler never read, and its `// @ts-check`
+  // meant nothing outside an editor. `files` entries are literal and are not
+  // subject to that rule, so both end up in the program: the declarations describe
+  // the module to its importers, and the implementation is checked against them.
+  // `tests/restart/tsconfig.json` carries the same entry for the same reason.
+  "files": ["vitest/base.mjs"],
+
+  "include": ["eslint/**/*.mjs", "vitest/**/*.mjs", "vitest/**/*.d.mts", "eslint.config.mjs"]
 }

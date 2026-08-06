@@ -2,10 +2,16 @@
 
 The milestone sequence DevSync is being built in, and the current position within it.
 
-**Phases A and B are complete.** Everything from Phase C onward is a plan: no
-code, no dependency, and no workspace content for any of it is present in this repository. A phase
-is described here so that the order and the boundaries are decided in advance, not so that it can
-be mistaken for progress.
+**Phases A, B, and C are complete. Phase D is next.** C0 settled how persistence would be shaped;
+C1 built the storage half; C2 put an HTTP surface on it; C3 connected the browser to it; **C4 turned
+restart survival into an automated, repeatable proof through the public API**; C5 reconciled the
+phase and closed it. PostgreSQL,
+Prisma, the schema, the committed migration, the data layer, ten project and file routes, the
+contracts in `@devsync/shared`, a web application that creates, opens, edits, saves, and deletes
+projects and files through them, and an automated Docker-level validation of restart, outage,
+recovery, and migration redeployment all exist. Everything from Phase D onward is a plan. A phase is
+described here so that the order and the boundaries are decided in advance, not so that it can be
+mistaken for progress.
 
 No dates or durations appear in this document, deliberately. A phase is done when its completion
 boundary is met, and estimating that in advance would produce a number that gets quoted long
@@ -17,8 +23,8 @@ after it stopped being true.
 | ----- | ------------------------- | ------------ |
 | **A** | Project foundation        | **Complete** |
 | **B** | Local editor              | **Complete** |
-| C     | Database-backed projects  | Not started  |
-| D     | Rooms and presence        | Not started  |
+| **C** | Database-backed projects  | **Complete** |
+| D     | Rooms and presence        | **Next**     |
 | E     | Single-file collaboration | Not started  |
 | F     | Multi-file collaboration  | Not started  |
 | G     | Persistence and recovery  | Not started  |
@@ -30,10 +36,13 @@ after it stopped being true.
 | M     | Production hardening      | Not started  |
 | N     | Portfolio closure         | Not started  |
 
-**One piece of product functionality exists**: the Monaco editor on the home page, the single-file
-workspace holding its contents, and the language that file is read as — delivered by milestones B0,
-B1, and B2, covered in a real browser by B3, and closed by B4. Nothing else in the table above is
-built, and Phase C has not started.
+**The product is a persistent single-user workspace.** Phase B's Monaco editor is still the editing
+surface, and C3 put a database-backed project and file model around it: a project list, a project
+workspace, an explicit save, and work that survives a reload. **C4 added no product behaviour and
+proved what was already there**: the work also survives an API restart, a PostgreSQL restart, and a
+redeployment of the committed migration. **C5 added none either** — it audited the phase, corrected
+what the audit found, and rewrote the documentation from plan to record. Nothing else in the table
+above is built — no accounts, no collaboration, no presence, no history, and no execution.
 
 ---
 
@@ -128,8 +137,9 @@ reaches the real Monaco editor, survives a language change, and is discarded by 
 not independently prove that Monaco's change callback reaches React state: `@monaco-editor/react`
 pushes the controlled value into the model only when that value changes, so an integration whose
 callback never fired would still pass every browser assertion. That direction is proved
-compositionally by the component suites — `code-editor.test.tsx` for the callback, and
-`local-editor-workspace.test.tsx` for the state it lands in. This is test layering, not missing
+compositionally by the component suites — `code-editor.test.tsx` for the callback, and the workspace
+suite for the state it lands in. (`local-editor-workspace.test.tsx` was that suite until C3 replaced
+the local workspace; `project-workspace.test.tsx` is now.) This is test layering, not missing
 product behaviour; the editor works, and [`testing.md`](testing.md) is the full account.
 
 **Exclusions and dependencies.** No persistence, no collaboration, no CRDT, no WebSocket, no
@@ -138,30 +148,318 @@ editor works before anything else depends on it.
 
 ---
 
-## Phase C — database-backed projects
+## Phase C — database-backed projects ✅ Complete
 
 **Goal.** Projects and files that survive a restart, owned by the API and reached through one
-data-access package.
+data-access package. **Phase C is single-user**: it gives DevSync something worth collaborating on
+before any collaboration exists.
 
-**Major deliverables**
+**Milestones**
 
-- PostgreSQL added to `compose.yaml` — the first service in it that is not an application.
-- Prisma schema, migrations, and generated client in `@devsync/database`.
-- Project and file CRUD endpoints in `apps/api`, with request validation.
-- The first shared contracts published from `@devsync/shared`, consumed by both applications.
-- `apps/web` calling `apps/api` — the first real edge between the two, and the first
-  `depends_on` in Compose.
+| Milestone | Deliverable                                        | Status        |
+| --------- | -------------------------------------------------- | ------------- |
+| C0        | Persistence architecture and project data contract | **Delivered** |
+| C1        | PostgreSQL and Prisma data layer                   | **Delivered** |
+| C2        | Project and file API                               | **Delivered** |
+| C3        | Persistent web workspace                           | **Delivered** |
+| C4        | Persistence and restart validation                 | **Delivered** |
+| C5        | Phase closure                                      | **Delivered** |
 
-**Completion boundary.** A user can create a project, add files, edit them, reload the page, and
-find them unchanged. One user at a time; concurrent editing is undefined at this point.
+**What the phase had to add up to.** By C5, one person can create a project, list their projects,
+open one, rename it, and delete it; create files in it, list and open them, edit a file's contents,
+rename it, change the language it is read as, and delete it; reload the browser and find all of it
+unchanged; and restart both the API and PostgreSQL and still find it unchanged. **All of that
+holds** — C3 delivered the browser half, C4 proved the restart half, and C5 audited both.
 
-**Exclusions and dependencies.** Depends on B for something to edit. No collaboration, no
-presence, no accounts — ownership is not yet enforced, because there is nobody to enforce it
-against. Redis is explicitly not introduced here.
+**Excluded from the whole phase**, and not to be prepared for with a spare column or a placeholder
+contract: users, owners, authentication, memberships, invitations, roles, authorization, slugs,
+project visibility, archival, soft deletion, folders, paths, file trees, collaboration, presence,
+WebSockets, Yjs, CRDT behaviour, remote cursors, version history, chat, code execution, Redis, and
+horizontal scaling. Editor tabs are excluded too, unless C3 finds it cannot open a second file
+without them.
+
+**Dependencies.** Depends on B for something worth persisting. Ownership is not enforced because
+there is nobody to enforce it against — that is Phase H, and it is the phase that adds the columns
+this one leaves out.
+
+The design C0 settled is in
+[`architecture.md`](architecture.md#phase-c--the-persistence-architecture); the choices behind
+it, and what would justify revisiting each, are in [`decisions.md`](decisions.md).
+
+### C0 — persistence architecture and project data contract ✅ Delivered
+
+**Delivered.** Documentation only, and deliberately so: the shape of the data, the HTTP surface,
+the error boundary, and the package ownership are cheaper to argue about before a migration exists
+than after one has run. C0 fixed the `Project` and `ProjectFile` models and their validation rules,
+the nested REST resources and their status codes, the one error shape every route answers with, the
+dependency direction between `apps/web`, `apps/api`, `@devsync/shared`, and `@devsync/database`, the
+Prisma and migration policy, the planned environment variables, the planned Compose topology, and
+the database-testing ladder. It also fixed the Phase C exclusions above, so that later milestones
+have something to be measured against.
+
+**Completion boundary.** The architecture, decision, testing, Docker, and development documents
+describe Phase C's design as planned, agree with one another, and add no runtime artefact:
+dependencies, lockfile, application source, package source, tests, CI, Compose, and both
+Dockerfiles are untouched, and every existing check still passes. **Met.**
+
+**Excluded.** Everything that runs. No Prisma, no PostgreSQL, no Zod, no schema, no migration, no
+`DATABASE_URL`, no configuration module, no controller, no repository, no DTO, and no call from
+`apps/web` to `apps/api`.
+
+### C1 — PostgreSQL and Prisma data layer ✅ Delivered
+
+**Delivered.** PostgreSQL 18 is in `compose.yaml` — the first service there that is not an
+application — with a named volume, a `pg_isready` health check, and a one-shot `migrate` service
+the API waits on. Prisma 7 lives in `@devsync/database`: the schema, one committed migration, the
+generated client, the pool, and every query. The package exposes named operations over projects and
+files, creates a project and its first file in one transaction, moves a project's `updatedAt` when
+one of its files changes, and classifies persistence failures into four meanings so that no Prisma
+error can escape it.
+
+**`apps/api` took its first dependency on `@devsync/database`.** The API owns configuration —
+`DATABASE_URL` is required and validated before the application exists — and asks the package to
+connect during startup and disconnect during shutdown through Nest's lifecycle hooks. An unreachable
+database is a failed startup, not a service that accepts requests it cannot serve. The production
+image carries the compiled package and its generated client, and none of the Prisma CLI.
+
+Two decisions were forced by the repository rather than chosen freely, and both are recorded in
+[`decisions.md`](decisions.md): `@devsync/database` emits **CommonJS**, because the Nest service and
+its ts-jest suite cannot load an ES module; and Compose publishes PostgreSQL on **5433**, because
+5432 belongs to whatever a developer already has installed.
+
+**Completion boundary.** The API process starts, connects, serves, and shuts down cleanly; a record
+written through the package survives a disconnect and reconnect, an API restart, and a PostgreSQL
+restart; the committed migration applies to an empty database; and the integration suite refuses to
+run against a database it has not been told is disposable. **Met.**
+
+**What that restart evidence was, and what it was not.** C1's boundary is about the data layer's
+connection lifecycle, and that is the layer it was met at: `packages/database`'s automated lifecycle
+suite keeps a record across a client disconnect and reconnect, classifies a query against an
+unreachable database as unavailable, and lets no raw driver error out of the package — and the API
+and PostgreSQL restarts were checked by hand, against the development stack, by a developer watching
+the result. That evidence is real and it still stands. What it is not is repeatable: nothing recorded
+a fixture, nothing compared it field by field, and nothing ran in CI. **C4 is the layer above it** —
+an automated Docker-level run through the public HTTP routes, described in its own section below.
+
+**Excluded at C1 closure.** When C1 finished there was no project or file HTTP route, controller, or
+DTO, `@devsync/shared` exported nothing, and the API held a connection that nothing it served read
+or wrote a project through. **C2 delivered all of that**, and the section below records it.
+`apps/web` was left unchanged by C1 and remained unchanged through C2; the browser reaches none of
+this until C3.
+
+### C2 — project and file API ✅ Delivered
+
+**Delivered.** Ten routes in `apps/api` — five over projects, five over the files nested inside
+them — with the starter-file policy applied at creation, request validation at every entry point,
+and persistence failures mapped to the status codes and error codes C0 settled. A project created
+through `POST /projects` comes back with its `main.ts` already in it, written in the same
+transaction. Editing a file moves its project to the front of the listing, because the data layer
+moves the project's `updatedAt` in the transaction that changed the file.
+
+**`@devsync/shared` started exporting.** Zod 4 lives there, and with it the five supported language
+identifiers and their validator, the four request schemas, the resource and listing schemas, the
+identifier schemas, the error contract, and the TypeScript type inferred from each. It became a
+built CommonJS package for the same reason `@devsync/database` did in C1: `apps/api` runs it in a
+container with no compiler and loads it through a CommonJS registry. **`apps/api` is its only
+consumer**; `apps/web` becomes the second in C3.
+
+**One error shape, from every route.** An API-owned error type carries the status, the stable code,
+the message, and optional field-level issues; one global exception filter writes it. A malformed
+identifier is `400 INVALID_IDENTIFIER` rather than a lookup that happens to miss, an unreadable or
+oversized body is `400 VALIDATION_FAILED` rather than Express's `413`, and nothing in a response
+contains SQL, a Prisma code, a table name, a connection string, or a stack. The JSON body limit is
+**1 MiB** — the number C0 deliberately left for the milestone that could test it.
+
+**Completion boundary.** Every route in the C0 contract behaves as documented, including the
+failures: an invalid UUID, an unsupported language, an empty patch, a duplicate file name within a
+project, a file addressed through the wrong project, and a project that does not exist. A file
+mutation moves its project's `updatedAt`, so the project list orders by real recent work. **Met**,
+and held at closure by 110 integration tests against a real Nest application and a real PostgreSQL,
+plus 100 schema tests and the 46 fast API tests that existed then. (C3 added CORS coverage to that
+fast suite; [`testing.md`](testing.md) carries the current counts.)
+
+**Excluded at C2 closure, and delivered by C3.** When C2 finished, `apps/web` consumed nothing from
+`@devsync/shared`, made no request to `apps/api`, and could not save or load anything, and no CORS
+configuration existed. **C3 delivered all of that**, and the section below records it. What C2's
+exclusions still hold is authentication: every request is anonymous, and the API is published on a
+local host port, so anything that can reach that port can read and delete everything in it. That is
+acceptable only inside Phase C's local single-user development boundary, and it is why **nothing in
+Phase C may be deployed publicly**. Phase H is what makes it safe.
+
+### C3 — persistent web workspace ✅ Delivered
+
+**Delivered.** The first call `apps/web` has ever made to `apps/api`, and with it the first
+web-to-API runtime dependency, the Compose `depends_on` edge from `web` to `api`, and the first
+reason for CORS to exist. Two routes: `/` lists projects and creates, opens, renames, and deletes
+them; `/projects/[projectId]` opens one project, its files, and one file in Monaco. Files are
+created, opened, renamed, retyped, edited, and deleted, and deleting the last one is allowed.
+Phase B's `LocalEditorWorkspace` is gone — there are not two competing workspaces.
+
+**`apps/web` became the second consumer of `@devsync/shared`.** It reads the resource and request
+contracts, the error contract and its stable codes, the language identifiers, and `parseContract`,
+and it declares no Zod dependency of its own. The duplicated identifier list in
+`apps/web/src/editor/languages.ts` is gone: the file now builds its options from
+`SUPPORTED_LANGUAGE_IDS` and adds only the labels a user reads. **The derived file name is gone
+too** — a file has a stored name, and renaming it and changing its language are independent.
+
+**Saving is explicit, and the interface says what has reached the server.** A persisted snapshot and
+a browser draft are kept apart; Save is disabled until they differ, sends only the properties that
+changed, and takes the server's answer as the new authority. Saved, unsaved changes, saving, and
+failed are shown in a live region, a failed save keeps the draft, and nothing is discarded — by
+switching file, deleting, or leaving — without a deliberate confirmation. **There is no autosave and
+no browser storage.**
+
+**Two configuration values arrived**, one per side of the boundary. `NEXT_PUBLIC_API_URL` is
+validated once in `apps/web` and embedded by `next build`; `WEB_ORIGIN` is validated in `apps/api`'s
+configuration and is the one origin CORS allows — no wildcard, no credentials, and no allow-origin
+header for anything else. Both are recorded in [`decisions.md`](decisions.md) as
+[D28](decisions.md#d28--the-browser-api-url-is-a-build-time-public-variable) and
+[D29](decisions.md#d29--cors-allows-exactly-one-configured-origin).
+
+**Completion boundary.** A person opens the application, creates a project, edits a file, reloads
+the page, and finds their work exactly as they left it. **Met**, and held by 14 Playwright tests
+against a real web build, a real API, and a disposable PostgreSQL, plus 151 component and client
+tests in `apps/web` and 17 CORS tests in the API's fast suite.
+
+**Excluded, and still absent at C3's close.** No collaboration and no presence — a second browser
+sees the same data only by reloading, and two people editing the same file at once is undefined
+behaviour until Phase E. No tabs, no file tree, no autosave, no browser storage, no pagination, and
+no search. And, at the time C3 closed, **no automated full-stack restart proof** — none through the
+public API, in the production Compose topology, comparing a recorded fixture. C1 had already met its
+own, narrower boundary at the data-access layer, and had it by hand for the containers; what C3
+itself proves is a browser reload. The repeatable API restart, PostgreSQL outage and recovery, and
+migration over existing rows were C4's, and the section below records that they now hold.
+
+### C4 — persistence and restart validation ✅ Delivered
+
+**Delivered.** One command, `pnpm test:restart`, and a workspace behind it — `tests/restart`
+(`@devsync/restart`). It brings the real production images up in a Compose project of its own,
+creates a project and two files **through the public HTTP routes**, records every field of every
+resource, and then puts that fixture through four failures, comparing it exactly after each:
+
+- **An API restart.** The container is stopped, confirmed stopped, and started again; the container's
+  PID is asserted to have changed, so the scenario cannot pass against a process that never went away.
+- **A PostgreSQL outage, with the API left running.** `GET /projects/:projectId` answers
+  `503 DATABASE_UNAVAILABLE` within a bounded timeout, twice, with a body carrying exactly
+  `statusCode`, `code`, and `message` — no stack, no SQL, no ORM name, no driver error code, no table
+  name, no connection string. `GET /health` still answers, and the API's PID is unchanged.
+- **PostgreSQL coming back, without restarting the API.** The persistence route is polled until it
+  succeeds, and the PID is asserted to be the same one throughout: what recovers is the same process
+  and the same connection pool.
+- **The committed migration, redeployed over populated rows** through `docker compose run --rm
+migrate` — the real one-shot service, against the same volume. It exits 0 and the fixture is
+  identical afterwards, timestamps included.
+
+**What this adds to C1, which had a restart boundary of its own.** C1 proved the data layer's
+connection lifecycle — a record kept across a client disconnect and reconnect, an unreachable
+database classified rather than leaked — with an automated suite, and it confirmed the container
+restarts by hand. C4 raises every part of that by a level and makes it repeatable. It goes through
+the **public HTTP routes** rather than the package's API, in the **production Compose topology**
+rather than against a host PostgreSQL, restarting **real containers** rather than reconnecting a
+client. It records a fixture and compares **every field of every resource** after each failure
+instead of asserting that a lookup still finds something. It adds two cases C1 never had — the
+controlled outage contract, and the committed migration redeployed over populated rows — and it runs
+in CI, so the property is checked on every change rather than the day somebody looked. Neither
+supersedes the other: C1's suite still runs under `pnpm test:db`, and it is what catches a
+regression inside `@devsync/database` that a container-level run would only see as a failed request.
+
+**No production code needed correcting.** The scenarios were run against the C3 implementation as it
+stood, and every one of them already held. C4 is validation infrastructure and documentation; the
+only non-documentation change outside `tests/restart` is that `compose.yaml`'s three published host
+ports became variables with their existing values as defaults, so a second copy of the stack can run
+beside a developer's own.
+
+**Isolation is enforced in code.** Everything happens in the `devsync-c4-validation` Compose project,
+on ports 4321, 5434, and 4320, with its own network and its own disposable volume. The runner refuses
+to issue a Compose command against any other project, refuses to delete a volume Docker does not
+label as this project's, and proves afterwards that the `devsync` project's volumes are exactly as it
+found them. Every wait is a named condition with a deadline; there is no fixed sleep anywhere in it.
+
+**Completion boundary.** Every one of the four cases is covered by an automated, repeatable run, and
+none of them loses a record. **Met**, and held by that run plus 58 Vitest tests over the harness's own
+guards, redaction, bounded waiting, and comparison.
+
+**Excluded.** No backup and restore tooling, no load testing, and no failover — those are Phase M.
+C4 adds no retry, no circuit breaker, no queue, no schema change, and no second migration.
+
+### C5 — phase closure ✅ Delivered
+
+**Delivered.** The reconciliation pass: the implementation audited against the C0 contract, the
+drift the audit found corrected, the documentation rewritten from plan to record, and the full
+validation ladder rerun from a clean tree.
+
+**The C0 contract holds.** Every field, rule, route, status code, error code, ownership boundary,
+and exclusion C0 settled is implemented as C0 described it. No row of that contract turned out to
+be missing or contradicted, so **no schema change and no second migration was needed** — the one
+committed migration is still the only one. `Project` and `ProjectFile` carry exactly the columns
+C0 named; identifiers are database-generated UUIDs; file names are unique per project under the
+`C` collation; `Project.updatedAt` moves in the transaction that changes a file; a project is
+created with its `main.ts` atomically and may later hold none; deletion is permanent and cascades.
+
+**Four defects were found and corrected, none of them in product behaviour.**
+
+- **The two Dockerfiles had not been told about C4's workspace.** Both enumerate every workspace
+  manifest before a frozen install, but neither copied `tests/restart/package.json`, added in C4.
+  The install had been quietly resolving 10 workspace projects where the host has 11. Both now copy
+  it, and both images report the same count as the repository — and copying a manifest installs
+  nothing, so neither image gained anything from that workspace.
+
+  **The comments in both files had also been wrong about why it mattered**, and correcting them was
+  half the fix: each claimed a missing manifest fails the install. It does not. The images had built
+  cleanly for the whole of C4 with the workspace absent and said nothing about it, which is exactly
+  what made the omission survive four milestones. Both now record that the rule is kept by hand.
+
+- **[`ci.md`](ci.md) described action pins that do not exist.** It said every official action was
+  pinned to one and the same major, the one `actions/upload-artifact` is on — but neither
+  `actions/checkout` nor `actions/setup-node` has ever published a major that high, and `main`'s
+  workflow asked each of them for it anyway. Phase C had already corrected the workflow to each
+  action's real current major and left the document behind. **The workflow was right and the prose
+  was wrong**, so the prose was corrected to the actual inventory — `actions/checkout` and
+  `actions/setup-node` at `@v6`, `actions/upload-artifact` at `@v7` — with a note that the three
+  repositories release independently and are not meant to match. No workflow line changed.
+- **`// @ts-check` was decorative on four runtime `.mjs` files.** `tests/restart` had solved this
+  for its own harness in C4 and recorded exactly why; the same shape existed in four earlier files
+  and none of them was in the TypeScript program. `packages/database/tools/test-database.mjs` — the
+  gate that decides whether a schema may be dropped — and `packages/config/vitest/base.mjs` were
+  each shadowed by the `.d.mts` beside them, and `apps/api/tests/global-setup.mjs` and
+  `tests/e2e/tools/run-e2e.mjs` sat in workspaces whose compiler never reads JavaScript at all. All
+  four are now in `pnpm typecheck`, and all four pass. The emitted output of both builds is
+  byte-for-byte what it was.
+- **A Vitest workspace was disappearing from `pnpm test:unit`.** `packages/database` runs Vitest but
+  declared no `test:unit`, so Turborepo resolved the task to nothing and said nothing — the precise
+  failure the rule in [`testing.md`](testing.md) exists to prevent. It now declares one, and since
+  the fix below it runs a real suite rather than printing a notice.
+
+**One defect was first exposed after closure by the pull-request CI run, and it took two attempts to
+fix.** C4's container-level outage scenario failed on a GitHub Actions rerun: the first request
+during the outage answered `500` where the contract says `503`. It was a genuine
+persistence-classification gap, not a flaky harness, and **that scenario is the layer that caught
+it**; what no lower-level suite had was a deterministic regression for how a driver failure is
+classified.
+
+The first fix handled a real shape — PostgreSQL reporting SQLSTATE `57P01` under a live pool, which
+`@prisma/adapter-pg` publishes under `meta.driverAdapterError.cause` — and CI failed again, because
+that was not the shape it was hitting. The adapter converts only four socket codes and rethrows
+every other system error untouched; Prisma turns any error carrying a string `code` into a known
+request error **whose code is that operating-system code and whose metadata holds nothing but the
+model name**. On a Linux runner, resolving a stopped container's service name fails with
+`EAI_AGAIN`, so there was no metadata anywhere to search. Both shapes were captured from the
+production image and the CI one reproduced deterministically, and the classifier now reads the
+**whole exception** over four closed allowlists — Prisma codes, SQLSTATEs, adapter kinds, and
+transport codes — with `packages/database` holding 83 pure tests that run in `pnpm test`.
+`PersistenceError` also gained a logged-only `diagnostic` naming which rule decided, because the
+defect was invisible from a log. **No route, response schema, schema, migration, or retry behaviour
+changed.**
+
+**Completion boundary.** Every document describes the persistence that exists, every exclusion above
+is still absent, and the phase's completion boundary is met. **Met.**
+
+**Excluded.** C5 added no product behaviour, no route, no column, no migration, no dependency, and
+nothing from Phase D or later. It removed nothing that worked.
 
 ---
 
-## Phase D — rooms and presence
+## Phase D — rooms and presence ⬅ Next
 
 **Goal.** A real-time transport and the ability to see who else is in a project, without yet
 sharing document content.

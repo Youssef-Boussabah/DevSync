@@ -8,11 +8,17 @@ subjects in full; this one links to them rather than restating them.
 
 ## Prerequisites
 
-| Requirement           | Why                                                          |
-| --------------------- | ------------------------------------------------------------ |
-| **Node.js 20.9+**     | The `engines` floor. Developed and validated against Node 24 |
-| **pnpm 11**           | The only supported package manager                           |
-| **Docker Engine 25+** | Optional — only to run the applications in containers        |
+| Requirement           | Why                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Node.js 20.9+**     | The `engines` floor. Developed and validated against Node 24                                                             |
+| **pnpm 11**           | The only supported package manager                                                                                       |
+| **Docker Engine 25+** | PostgreSQL runs in a container, so `pnpm test:db`, `pnpm test:e2e`, `pnpm test:restart`, and running the API all need it |
+
+**Docker stopped being optional at C1.** The API will not start without a database, and the
+repository's PostgreSQL is a Compose service. From C4, `pnpm test:restart` needs the daemon itself:
+it builds images and starts and stops containers. You do not need Docker for `pnpm test`,
+`pnpm lint`, `pnpm typecheck`, or `pnpm build` — those neither start a service nor connect to
+one.
 
 **pnpm is pinned by the `packageManager` field**, and the pinned version is what the lockfile and
 CI use. The simplest way to get exactly that version is Corepack, which ships with Node:
@@ -45,6 +51,17 @@ pnpm install
 `pnpm install --frozen-lockfile` — what CI and the images run — to install without ever writing
 `pnpm-lock.yaml`; it fails instead if the two disagree.
 
+Copy the environment file and start PostgreSQL:
+
+```bash
+cp .env.example .env
+docker compose up -d database
+```
+
+`.env` is git-ignored, and the values in the example are the ones Compose runs with, so nothing
+needs editing to get started. The database keeps its data in a named volume: `docker compose down`
+leaves your projects alone, and only `docker compose down --volumes` deletes them.
+
 Playwright needs one extra step, once per machine, before end-to-end tests can run:
 
 ```bash
@@ -59,22 +76,24 @@ machine-level cache, which should be something you chose rather than a side effe
 Run these from the repository root. Turborepo fans each one out across the workspaces, in
 dependency order, and caches what is safe to cache.
 
-| Command                 | What it does                                                     |
-| ----------------------- | ---------------------------------------------------------------- |
-| `pnpm dev`              | Starts both development servers — web on 3000, API on 3001       |
-| `pnpm build`            | Builds the two workspaces that have a build step                 |
-| `pnpm lint`             | Lints all nine workspaces. Read-only                             |
-| `pnpm lint:fix`         | The same rules, applying every auto-fixable one                  |
-| `pnpm typecheck`        | Type-checks all nine workspaces                                  |
-| `pnpm test`             | Every in-process suite — Vitest and Jest. No builds, no browsers |
-| `pnpm test:unit`        | The Vitest layer only                                            |
-| `pnpm test:e2e`         | Playwright, against freshly built applications                   |
-| `pnpm test:e2e:install` | Downloads Chromium. Once per machine                             |
-| `pnpm test:all`         | `test` and `test:e2e` together                                   |
-| `pnpm test:coverage`    | Coverage for `apps/web` and `apps/api`                           |
-| `pnpm format`           | Formats the repository with Prettier                             |
-| `pnpm format:check`     | Verifies formatting. Read-only                                   |
-| `pnpm clean`            | Removes build outputs, coverage, reports, and Turborepo caches   |
+| Command                 | What it does                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| `pnpm dev`              | Starts both development servers — web on 3000, API on 3001                      |
+| `pnpm build`            | Builds the four workspaces that have a build step                               |
+| `pnpm lint`             | Lints all ten workspaces. Read-only                                             |
+| `pnpm lint:fix`         | The same rules, applying every auto-fixable one                                 |
+| `pnpm typecheck`        | Type-checks all ten workspaces                                                  |
+| `pnpm test`             | Every in-process source suite — Vitest and Jest. Builds nothing, starts nothing |
+| `pnpm test:unit`        | The Vitest layer only — 392 of the 469                                          |
+| `pnpm test:db`          | The data layer then the API's routes, both against a running PostgreSQL         |
+| `pnpm test:e2e`         | Playwright: resets the test database, then builds and drives both applications  |
+| `pnpm test:e2e:install` | Downloads Chromium. Once per machine                                            |
+| `pnpm test:restart`     | C4's restart, outage, recovery, and migration scenarios. **Needs Docker**       |
+| `pnpm test:all`         | `test`, then `test:db`, then `test:e2e`, in sequence. Needs PostgreSQL          |
+| `pnpm test:coverage`    | Coverage for `apps/web` and `apps/api`                                          |
+| `pnpm format`           | Formats the repository with Prettier                                            |
+| `pnpm format:check`     | Verifies formatting. Read-only                                                  |
+| `pnpm clean`            | Removes build outputs, coverage, reports, and Turborepo caches                  |
 
 **Exactly two of these modify files: `pnpm lint:fix` and `pnpm format`.** `lint` and
 `format:check` are read-only and must stay that way — they are what CI runs, and a check that
@@ -98,9 +117,9 @@ pnpm --filter @devsync/api test:watch   # Jest, watching
 pnpm --filter @devsync/api lint
 ```
 
-The nine names are `@devsync/web`, `@devsync/api`, `@devsync/config`, `@devsync/shared`,
-`@devsync/collaboration`, `@devsync/database`, `@devsync/ui`, `@devsync/test-utils`, and
-`@devsync/e2e`.
+The ten names are `@devsync/web`, `@devsync/api`, `@devsync/config`, `@devsync/shared`,
+`@devsync/collaboration`, `@devsync/database`, `@devsync/ui`, `@devsync/test-utils`,
+`@devsync/e2e`, and `@devsync/restart`.
 
 Two filter suffixes are worth knowing, because the Docker images depend on the difference:
 
@@ -121,37 +140,101 @@ weight in an image, a line in a lockfile, and a thing to keep patched.
 
 ## Ports
 
-| Port   | Used by                     | When               |
-| ------ | --------------------------- | ------------------ |
-| `3000` | `apps/web`                  | `pnpm dev`, Docker |
-| `3001` | `apps/api`                  | `pnpm dev`, Docker |
-| `4310` | `apps/web` under Playwright | `pnpm test:e2e`    |
-| `4311` | `apps/api` under Playwright | `pnpm test:e2e`    |
+| Port   | Used by                     | When                                    |
+| ------ | --------------------------- | --------------------------------------- |
+| `3000` | `apps/web`                  | `pnpm dev`, Docker                      |
+| `3001` | `apps/api`                  | `pnpm dev`, Docker                      |
+| `4310` | `apps/web` under Playwright | `pnpm test:e2e`                         |
+| `4311` | `apps/api` under Playwright | `pnpm test:e2e`                         |
+| `4321` | `apps/api` in the C4 stack  | `pnpm test:restart`                     |
+| `5433` | PostgreSQL                  | Always, whenever the database is needed |
+| `5434` | PostgreSQL in the C4 stack  | `pnpm test:restart`                     |
 
-Docker uses the same pair as local development, so `docker compose up` and `pnpm dev` cannot run
-at once — whichever starts second fails to bind. The end-to-end ports are separate precisely so
-that `pnpm test:e2e` and `pnpm dev` can run at the same time without either noticing the other.
+Docker uses the same application pair as local development, so `docker compose up` and `pnpm dev`
+cannot run at once — whichever starts second fails to bind. The end-to-end ports are separate
+precisely so that `pnpm test:e2e` and `pnpm dev` can run at the same time without either noticing
+the other.
 
-The only endpoint the API serves:
+**PostgreSQL is on 5433, not 5432**, so that it cannot collide with a PostgreSQL you already have
+installed — and so `docker compose up -d database` and `pnpm dev` work together, which is the
+ordinary development arrangement.
+
+**`pnpm test:restart` publishes nothing on the pairs above.** It brings a second copy of the stack up
+in its own Compose project, `devsync-c4-validation`, on 4321 and 5434, so it can run while your own
+stack is up. Those two numbers come from `WEB_HOST_PORT`, `API_HOST_PORT`, and `POSTGRES_HOST_PORT`
+in `compose.yaml`, which default to 3000, 3001, and 5433 — copying `.env.example` leaves every one of
+them at its default and changes nothing.
+
+Check the API is up:
 
 ```bash
 curl http://localhost:3001/health
 # {"status":"ok","service":"devsync-api"}
 ```
 
-## Testing
-
-Three layers, three runners, forty-five real tests — Vitest in `apps/web`, Jest in `apps/api`, and
-Playwright in `tests/e2e`.
+From C2 it also serves projects and the files inside them, and **from C3 the browser is what calls
+them**: open http://127.0.0.1:3000, create a project, edit a file, and press Save. An HTTP client
+still works too:
 
 ```bash
-pnpm test        # fast: in-process only, no builds and no browser
-pnpm test:e2e    # builds both applications, starts them, drives Chromium
+curl -X POST http://localhost:3001/projects \
+  -H 'Content-Type: application/json' -d '{"name":"My project"}'
+# 201, the project and the main.ts it was created with
+
+curl http://localhost:3001/projects
+# 200, most recently updated first
 ```
 
-`pnpm test` is the inner loop and must stay fast, which is why nothing in it builds or launches a
-browser. A workspace with no implementation prints that it has no tests and exits cleanly; that
-is correct, and it stays that way until there is real behaviour to cover.
+**Open DevSync at `http://127.0.0.1:3000`, not `http://localhost:3000`.** To a browser those are two
+different origins, and the API allows exactly the one in `WEB_ORIGIN`. Loading the other one leaves
+every request without an allow-origin header and the project list stuck on an error. If you prefer
+`localhost`, change `WEB_ORIGIN` **and** `NEXT_PUBLIC_API_URL` in your `.env` to match and rebuild —
+the API URL is embedded at build time.
+
+Every route is listed in [`architecture.md`](architecture.md#appsapi--implemented). **Every request
+is anonymous**, so the API is safe only on a machine you control; Phase H is what changes that. CORS
+does not change it: it constrains browsers, not clients in general.
+
+## Testing
+
+Seven layers, six hundred and fifty real tests, plus six restart scenarios — Vitest over the
+schemas in `packages/shared`, Vitest in `apps/web`, Jest in `apps/api` twice over (fast, and against
+a real database), Vitest in `packages/database` twice over (failure classification with nothing
+running, and data access against a real PostgreSQL), Vitest over the restart harness's helpers in
+`tests/restart`, Playwright in `tests/e2e`, and the Docker-level restart validation that
+`tests/restart` also holds.
+
+```bash
+pnpm test         # fast: in-process source only, no builds, no browser, no database  (469)
+pnpm test:db      # the data layer, then the API's HTTP routes, both against PostgreSQL  (167)
+pnpm test:e2e     # resets the test database, builds both apps, starts them, drives Chromium  (14)
+pnpm test:restart # C4: real containers — restart, outage, recovery, migration redeploy  (6 scenarios)
+```
+
+**`pnpm test` builds nothing at all** — no workspace build, no Prisma generation — so
+`pnpm clean && pnpm test` passes with every `dist/`, `.next/`, and generated client still absent
+afterwards. The fast suites read `@devsync/shared` and `@devsync/database` from their TypeScript
+sources, through `apps/api/jest.config.mjs` and `apps/web/vitest.config.mts`, while `pnpm build`,
+`node dist/main.js`, `next build`, and Docker all keep resolving the compiled `dist` output.
+[`testing.md`](testing.md#how-the-fast-suites-run-with-nothing-built) is the full account.
+
+`pnpm test:db` runs its two suites **in sequence**, not in parallel: they reset and rewrite the same
+schema in the same disposable database. It and `pnpm test:e2e` do build their real runtime
+dependencies, which is the point of them. `pnpm test:e2e` also **resets** the disposable database
+before it builds anything, because from C3 the browser tests write to it.
+
+`pnpm test` is the inner loop and must stay fast, which is why nothing in it builds, launches a
+browser, or connects to anything. The next two need `docker compose up -d database` first. A
+workspace with no implementation prints that it has no tests and exits cleanly; that is correct, and
+it stays that way until there is real behaviour to cover.
+
+**`pnpm test:restart` is separate from `pnpm test:all`, on purpose.** `test:all` is the host ladder —
+`test`, then `test:db`, then `test:e2e` — and every command in it runs on a machine with a PostgreSQL
+somebody started. `test:restart` is the only command that requires a **Docker daemon**: it builds the
+API and migration images, brings a Compose project of its own up on ports 4321 and 5434, stops
+containers, and removes the project and its volume afterwards. It never touches the `devsync` project
+or `devsync_postgres_data`, and it refuses, in code, to issue a Compose command against any project
+but its own. CI runs it in the `docker` job, so the split skips nothing.
 
 [`testing.md`](testing.md) is the full account: what each layer proves, why the API stays on
 Jest, how the end-to-end suite starts its servers, where artifacts go, and what is deliberately
@@ -163,7 +246,7 @@ untested.
 docker compose up -d --build   # build both images and start them
 docker compose ps              # state and health of each service
 docker compose logs -f api     # follow one service
-docker compose down            # stop and remove both
+docker compose down            # stop and remove the services; keeps the database volume
 ```
 
 Docker is an additional way to run DevSync, not a replacement for `pnpm dev`: every command above
@@ -175,18 +258,19 @@ root, the health checks, and the current limitations.
 
 ## Continuous integration
 
-One workflow with three independent jobs — `quality`, `e2e`, and `docker` — running on every pull
-request, on pushes to `main`, and on demand.
+One workflow with four independent jobs — `quality`, `database`, `e2e`, and `docker` — running on
+every pull request, on pushes to `main`, and on demand.
 
 **CI runs the same commands you run.** There is no CI-only script, so a red run is reproducible by
 typing the failing step's command locally. CI only ever reports: it runs `format:check` and
 `lint`, never `format` or `lint:fix`, and it never commits, pushes, or tags.
 
-| CI job    | Reproduce locally with                                                   |
-| --------- | ------------------------------------------------------------------------ |
-| `quality` | The one-liner in [Root commands](#root-commands)                         |
-| `e2e`     | `pnpm test:e2e:install` then `pnpm test:e2e`                             |
-| `docker`  | `docker compose build`, `docker compose up --detach --wait`, then `curl` |
+| CI job     | Reproduce locally with                                                                             |
+| ---------- | -------------------------------------------------------------------------------------------------- |
+| `quality`  | The one-liner in [Root commands](#root-commands)                                                   |
+| `database` | `docker compose up -d database` then `pnpm test:db`                                                |
+| `e2e`      | `pnpm test:e2e:install` then `pnpm test:e2e`                                                       |
+| `docker`   | `docker compose build`, `docker compose up --detach --wait`, then `curl`, then `pnpm test:restart` |
 
 [`ci.md`](ci.md) has the per-step mapping, the caching behaviour, and the failure artifacts.
 
@@ -212,21 +296,84 @@ a normal outcome.
 
 ## Environment variables
 
-**DevSync does not load `.env` files.** There is no configuration module, so a variable set in a
-file on disk is not read by anything. Set it in your shell instead:
+**DevSync loads `.env` from the repository root**, since C1. `apps/api` reads it through
+`@nestjs/config`; the database and end-to-end tooling read it through `dotenv`. A value already set
+in your shell always wins over the file, which is how Compose and CI keep control of their own
+configuration.
 
 ```bash
-API_PORT=4000 pnpm --filter @devsync/api dev
+cp .env.example .env               # the values Compose runs with
+API_PORT=4000 pnpm --filter @devsync/api dev   # the shell still overrides
 ```
 
-`.env.example` is the documented inventory of what the applications understand, which is
-currently one variable: `API_PORT`, read by `apps/api/src/main.ts`, defaulting to `3001`. The
-web application reads `PORT` and `HOSTNAME` only in its container, where `compose.yaml` sets
+`.env.example` is the documented inventory:
+
+| Variable              | Required | Read by                                   |
+| --------------------- | -------- | ----------------------------------------- |
+| `API_PORT`            | no       | `apps/api` — defaults to 3001             |
+| `DATABASE_URL`        | **yes**  | `apps/api`, passed to `@devsync/database` |
+| `WEB_ORIGIN`          | **yes**  | `apps/api` — the one origin CORS allows   |
+| `NEXT_PUBLIC_API_URL` | **yes**  | `apps/web`, **while it builds**           |
+| `TEST_DATABASE_URL`   | no       | `pnpm test:db` and `pnpm test:e2e` only   |
+| `WEB_HOST_PORT`       | no       | `compose.yaml` only — defaults to 3000    |
+| `API_HOST_PORT`       | no       | `compose.yaml` only — defaults to 3001    |
+| `POSTGRES_HOST_PORT`  | no       | `compose.yaml` only — defaults to 5433    |
+
+None of the three required values has a default: a service that guessed its database, its allowed
+origin, or its API would fail in a way that is much harder to diagnose than a refusal at startup.
+
+**The three host ports are read by Compose and by no application.** They are commented out in
+`.env.example` because their values there are the defaults, so copying the file changes nothing. They
+exist so `pnpm test:restart` can publish a second copy of the stack on other ports; set one yourself
+only if something on your machine already owns the default. Compose derives `WEB_ORIGIN` and the
+`NEXT_PUBLIC_API_URL` build argument from them, so the two halves of the browser boundary cannot
+drift apart — but changing `API_HOST_PORT` still means rebuilding the web image, because that value
+is embedded at build time.
+
+**`NEXT_PUBLIC_API_URL` is read while `apps/web` compiles, not while it runs**, and `NEXT_PUBLIC_`
+means public — whatever is in it is visible to every visitor, so no server-only value may ever be
+given such a name. Changing it means rebuilding; Turborepo knows, because the variable is part of the
+`build` task's environment hash. Next.js reads `.env` from the application's own directory rather
+than the repository root, so `apps/web/next.config.ts` loads the root file explicitly.
+
+The web application reads `PORT` and `HOSTNAME` only in its container, where `compose.yaml` sets
 them.
 
-`.env` is git-ignored and reserved for the milestone that introduces configuration loading. This
-repository contains no secrets, and none belong in it. If a future change needs one, it arrives
-with the loading mechanism, the documentation, and the ignore rules together — not on its own.
+`.env` is git-ignored, and `.dockerignore` keeps every `.env*` file out of both build contexts.
+**This repository contains no secrets**: the PostgreSQL credentials in `.env.example` and
+`compose.yaml` are development values for a database that runs on your own machine.
+
+### Working with the database
+
+The schema, the migrations, and every query live in `@devsync/database`. The commands you are
+likely to need:
+
+```bash
+docker compose up -d database                              # PostgreSQL on 5433
+pnpm --filter @devsync/database exec prisma migrate dev    # create a migration, locally only
+pnpm --filter @devsync/database migrate:deploy             # apply committed migrations
+pnpm --filter @devsync/database generate                   # regenerate Prisma Client
+pnpm test:db                                               # the integration suite
+```
+
+`prisma migrate dev` is for **creating** migrations on your own machine. `prisma migrate deploy` is
+what applies them everywhere else — CI, Compose, and anything production-shaped — and
+`prisma db push` is not part of the workflow for the tracked schema at all. **An applied migration
+is never edited**: a mistake is corrected by a new migration, because rewriting one that has
+already run somewhere leaves two databases disagreeing about their own history.
+
+You will rarely need `generate` by hand. It runs as a Turborepo task that `build`, `lint`, and
+`typecheck` all depend on, so a fresh checkout type-checks and builds without anyone remembering
+it. It reads the schema and never touches a database.
+
+`pnpm test:db` drops the test schema before it runs, so it refuses to start against any database
+that is not `devsync_test` — and against one that turns out to be the same database as
+`DATABASE_URL`. Those refusals are the point rather than an inconvenience. The API's own
+database-backed suite and the end-to-end runner both use that same gate, through
+`@devsync/database/test-database`, rather than carrying a second copy of the rules.
+
+The reasoning behind all of it is in [`architecture.md`](architecture.md#phase-c--the-persistence-architecture),
+the testing ladder in [`testing.md`](testing.md), and the Compose side in [`docker.md`](docker.md).
 
 ## Adding a new workspace
 
@@ -239,7 +386,8 @@ participate in every repository-wide command from the moment it exists:
 2. Write `package.json` with the `@devsync/*` name, `"private": true`, and `lint`, `lint:fix`,
    `typecheck`, `test`, and `clean` scripts. A workspace with nothing to test uses the same
    honest one-line `test` script the reserved packages use.
-3. Extend the right configuration from `@devsync/config`: `tsconfig.package.json` for a package,
+3. Extend the right configuration from `@devsync/config`: `tsconfig.package.json` for a package
+   consumed as source, `tsconfig.library.json` for one that builds and runs in production,
    `tsconfig.nest.json`, `tsconfig.next.json`, or `tsconfig.playwright.json` for the others.
    Keep only `include`, `outDir`, and `paths` local.
 4. Add `eslint.config.mjs` calling `createBaseConfig({ tsconfigRootDir: import.meta.dirname })`,
@@ -247,7 +395,8 @@ participate in every repository-wide command from the moment it exists:
 5. Add `@devsync/config` as a dev dependency with `workspace:*`.
 6. If it introduces a new root script, add the matching task to `turbo.json` — a root script that
    calls a task Turborepo does not know about silently does nothing. Anything that starts a
-   process or a browser sets `cache: false`.
+   process or a browser sets `cache: false`, and anything that belongs in `pnpm test` declares no
+   `dependsOn`, so the fast command keeps building nothing.
 7. Run `pnpm install`, then `pnpm lint` and `pnpm typecheck`, and confirm the task count went up.
 8. Update the workspace tables in `README.md` and [`architecture.md`](architecture.md).
 

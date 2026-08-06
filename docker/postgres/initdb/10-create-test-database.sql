@@ -1,0 +1,20 @@
+-- Creates the disposable database the integration suites truncate and re-migrate.
+--
+-- The official entrypoint runs this once, when it initialises an empty data
+-- directory, so it never sees an existing `devsync_test`.
+--
+-- A `.sql` file rather than a `.sh` one, deliberately. The entrypoint executes a
+-- shell script only when it is marked executable and **sources** it otherwise —
+-- and a Windows checkout cannot preserve that bit, so the same file would take
+-- two different paths on two machines. Sourced, any `set -e`/`set -u` inside it
+-- would alter the entrypoint's own shell for the rest of initialisation, which
+-- that script is explicitly not ready for. A `.sql` file has no such mode: it is
+-- always fed to psql with `ON_ERROR_STOP=1`, so a failure here still stops
+-- initialisation, and it needs no executable bit at all.
+--
+-- The entrypoint does not wrap these in a transaction, which is what allows
+-- CREATE DATABASE. The owner defaults to the connecting role — POSTGRES_USER.
+--
+-- The application never creates a database. This is the only place one appears
+-- outside a migration.
+CREATE DATABASE devsync_test;

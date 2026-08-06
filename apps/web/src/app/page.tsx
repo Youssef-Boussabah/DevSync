@@ -1,28 +1,27 @@
-import { LocalEditorWorkspace } from '@/editor/local-editor-workspace';
+import { ProjectListView } from '@/projects/project-list-view';
 
 export default function Home() {
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-6 py-12 font-sans">
+    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-6 py-12 font-sans">
       <header className="flex flex-col gap-3">
         <h1 className="text-4xl font-semibold tracking-tight">DevSync</h1>
         <p className="text-lg text-zinc-600 dark:text-zinc-400">
           A browser-based collaborative development environment.
         </p>
         <p className="text-sm text-zinc-500">
-          Phase B — the local editing workspace. One file, open in one editor, with its contents and
-          the language they are read as held by the application in this tab. Everything else about
-          DevSync is still a plan.
+          Phase C — projects and files stored in PostgreSQL. Create a project, edit its files, and
+          press Save: what you save is still there after a reload. Everything else about DevSync is
+          still a plan.
         </p>
       </header>
 
-      <LocalEditorWorkspace />
+      <ProjectListView />
 
       <p className="text-sm text-zinc-500">
-        One temporary file, held in this browser tab&rsquo;s memory and nowhere else. Choosing a
-        language changes how the editor reads what you have already typed; it does not open a
-        different file. Refreshing the page discards your changes and starts again from TypeScript,
-        because there is nowhere yet to save them to: no projects, no accounts, and no database.
-        Collaboration, persistence, and code execution are not implemented yet.
+        Changes are saved when you press Save, and not before — there is no autosave, and nothing is
+        kept in this browser. DevSync has no accounts yet, so everyone reaching this API sees the
+        same projects, and there is no collaboration, no presence, and no version history: a second
+        browser sees your work only after it reloads.
       </p>
     </main>
   );

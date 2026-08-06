@@ -1,4 +1,14 @@
 {
   "extends": "@devsync/config/tsconfig.playwright.json",
-  "include": ["playwright.config.ts", "specs/**/*.ts"]
+
+  // `tools/run-e2e.mjs` is plain JavaScript — it runs as a command, before
+  // Playwright and before any build — so `pnpm typecheck` only covers it if the
+  // compiler is told to read `.mjs`. It carries `// @ts-check`, and without these
+  // two options that annotation means nothing outside an editor.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true
+  },
+
+  "include": ["playwright.config.ts", "specs/**/*.ts", "tools/**/*.mjs"]
 }

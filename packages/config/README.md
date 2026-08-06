@@ -8,13 +8,14 @@ it exports is consumed at build, lint, or type-check time.
 
 ## TypeScript
 
-Five configurations, layered so that a framework only overrides what it genuinely
+Six configurations, layered so that a framework only overrides what it genuinely
 owns.
 
 | File                       | Extends              | Used by                                                     |
 | -------------------------- | -------------------- | ----------------------------------------------------------- |
-| `tsconfig.base.json`       | —                    | The four configs below; not extended directly by workspaces |
-| `tsconfig.package.json`    | `tsconfig.base.json` | Every `packages/*` library                                  |
+| `tsconfig.base.json`       | —                    | The five configs below; not extended directly by workspaces |
+| `tsconfig.package.json`    | `tsconfig.base.json` | Every `packages/*` library that emits nothing               |
+| `tsconfig.library.json`    | `tsconfig.base.json` | `packages/database`                                         |
 | `tsconfig.nest.json`       | `tsconfig.base.json` | `apps/api`                                                  |
 | `tsconfig.next.json`       | `tsconfig.base.json` | `apps/web`                                                  |
 | `tsconfig.playwright.json` | `tsconfig.base.json` | `tests/e2e`                                                 |
@@ -43,6 +44,17 @@ Two deviations are intentional and load-bearing:
 - **`tsconfig.nest.json` does not set `lib`.** It inherits the default library for
   its `target`, which is what `@types/express` and `@types/node` are checked
   against today.
+
+`tsconfig.library.json` arrived with C1, when `@devsync/database` became the first
+`packages/*` workspace that runs in production rather than being compiled by whoever
+imports it. It emits declarations and source maps, and it deliberately omits
+`verbatimModuleSyntax` for a different reason than `tsconfig.nest.json` does: the
+package emits **CommonJS**, and that flag rejects ESM syntax in a file TypeScript has
+decided is CommonJS. CommonJS is the right output because the only consumer is
+`apps/api`, which compiles to CommonJS and whose Jest suite loads modules through
+ts-jest's CommonJS registry — a registry that cannot `require` an ES module.
+`tsconfig.package.json` remains correct for the four reserved packages, which still
+emit nothing.
 
 `tsconfig.playwright.json` exists because `tests/e2e` cannot extend
 `tsconfig.package.json`: Playwright transpiles `.ts` files itself and resolves imports the way
@@ -122,12 +134,38 @@ from each file, so routing it through this package would add indirection without
 second consumer. ESLint does not run Prettier as a rule, so exactly one tool
 reformats code.
 
-**Test runner configuration.** `apps/web/vitest.config.mts` is self-contained, and
-`apps/api/jest.config.mjs` is too. Each has exactly one consumer today, so a shared
-base would add a layer of indirection while removing no duplication — the same
-argument as for Prettier above. The trigger for changing that is concrete: when a
-second workspace needs Vitest, the runner-agnostic parts of `apps/web`'s config —
-the include globs and the coverage settings — move here, the way the TypeScript and
-ESLint configuration moved here in Phase A1. What this package does own is
-`tsconfig.playwright.json`, because TypeScript strictness is centrally owned for
-every workspace regardless of how many there are.
+**Jest configuration.** `apps/api/jest.config.mjs` is self-contained and has exactly
+one consumer, so a shared base would add indirection while removing no duplication —
+the same argument as for Prettier above.
+
+## Vitest
+
+C1 added the second Vitest workspace — `packages/database`, running data-access code
+against a real PostgreSQL in Node, alongside `apps/web` rendering components in jsdom
+— which is the trigger this README recorded for moving the runner-agnostic parts
+here.
+
+`@devsync/config/vitest/base` exports three values and no builder: the test-file
+globs, the directories to skip, and the coverage defaults. A workspace spreads what
+it wants and states the rest itself, so its config still reads as its own.
+
+```js
+import { coverageDefaults, ignoredDirectories, testFileGlobs } from '@devsync/config/vitest/base';
+```
+
+What is deliberately not here: environments, plugins, aliases, setup files, and pool
+settings. Those are exactly where the two workspaces differ, and a shared file that
+tried to express both would be harder to read than either.
+
+`base.mjs` ships a hand-written `base.d.mts` beside it. This package emits nothing
+and is consumed as source, and both importers are type-checked `.mts` files — without
+the declarations, a strict `.mts` importing a `.mjs` is an implicit `any`.
+
+**`base.mjs` is named in `files` in `tsconfig.json`, not left to the `vitest/**/*.mjs`
+wildcard.** A wildcard drops a `.mjs` whose `.d.mts` sits beside it, because the
+declaration wins on extension priority — so until C5 the implementation was the one
+file here the compiler never read, and its `// @ts-check` meant nothing outside an
+editor. `files` entries are literal and are not subject to that rule, so both are in
+the program: the declarations describe the module to its importers, and the
+implementation is checked against them. `packages/database` and `tests/restart` each
+carry the same entry for the same reason; removing one silently stops checking a file.

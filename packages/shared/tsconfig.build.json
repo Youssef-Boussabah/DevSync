@@ -1,0 +1,6 @@
+{
+  // What actually ships. The type-check config above also covers the tests and
+  // the Vitest configuration; neither belongs in `dist`.
+  "extends": "./tsconfig.json",
+  "include": ["src"]
+}

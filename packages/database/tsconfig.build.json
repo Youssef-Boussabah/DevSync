@@ -1,0 +1,11 @@
+{
+  // What actually ships. The type-check config above also covers the tests, the
+  // Prisma CLI config, and the Vitest config; none of those belong in `dist`.
+  "extends": "./tsconfig.json",
+  "include": ["src"],
+  // Cleared, not inherited. `files` is a literal list that `exclude` cannot
+  // remove, so leaving the parent's `tools/test-database.mjs` in place would put
+  // the CLI tooling into `dist` and move every emitted path down a directory.
+  "files": [],
+  "exclude": ["src/**/*.test.ts", "tests"]
+}

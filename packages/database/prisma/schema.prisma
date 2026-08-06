@@ -1,0 +1,57 @@
+// DevSync's persistence schema.
+//
+// Two records and one relationship, which is the whole of Phase C. Everything a
+// later phase needs — owners, memberships, folders, history — is deliberately
+// absent rather than reserved: see docs/architecture.md.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+
+  // `apps/api` is a CommonJS NestJS service compiled by tsc, and its Jest suite
+  // runs through ts-jest's CommonJS registry. Generating ESM here would make the
+  // package unrequirable from both.
+  moduleFormat = "cjs"
+  runtime      = "nodejs"
+}
+
+// Prisma 7 removed `url` from this block. Migrations read the connection string
+// from `prisma.config.ts`; the client gets one from the `pg` driver adapter that
+// `createDatabase` builds. There is no third place for it to come from.
+datasource db {
+  provider = "postgresql"
+}
+
+model Project {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String        @db.VarChar(100)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  files     ProjectFile[]
+
+  // Listing order: most recently updated first. `updatedAt` moves when a file
+  // changes as well as when the project is renamed, so this index is what makes
+  // "recent work" cheap to ask for.
+  @@index([updatedAt(sort: Desc), id(sort: Desc)])
+  @@map("projects")
+}
+
+model ProjectFile {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId String   @map("project_id") @db.Uuid
+  name      String   @db.VarChar(255)
+  // An ordinary string, never an enum: adding a language must be a change to the
+  // supported list and its validator, not a migration.
+  language  String
+  content   String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Unique within one project and free in every other. The migration pins this
+  // column's collation to "C" so the comparison is byte-wise and therefore
+  // case-sensitive whatever locale the server was initialised with.
+  @@unique([projectId, name], map: "project_files_project_id_name_key")
+  @@index([projectId, createdAt, id])
+  @@map("project_files")
+}

@@ -1,4 +1,30 @@
 {
-  "extends": "@devsync/config/tsconfig.package.json",
-  "include": ["src"]
+  "extends": "@devsync/config/tsconfig.library.json",
+
+  // `tools/test-database.mjs` is plain JavaScript — it is a command with no
+  // compile step in front of it — so `pnpm typecheck` only covers it if the
+  // compiler is told to read `.mjs`. It carries `// @ts-check`, and without these
+  // two options that annotation means nothing outside an editor.
+  "compilerOptions": {
+    "outDir": "./dist",
+    "allowJs": true,
+    "checkJs": true
+  },
+
+  // Named here rather than left to the `tools` wildcard below. A wildcard drops a
+  // `.mjs` whose `.d.mts` sits beside it — the declaration wins on extension
+  // priority — so the file holding the gate that decides whether a schema may be
+  // dropped was the one file the compiler never read. `files` entries are literal
+  // and are not subject to that rule. `tsconfig.build.json` clears this list,
+  // because `files` also beats `exclude` and nothing here belongs in `dist`.
+  "files": ["tools/test-database.mjs"],
+
+  "include": [
+    "src",
+    "tests",
+    "tools",
+    "prisma.config.ts",
+    "vitest.config.mts",
+    "vitest.unit.config.mts"
+  ]
 }

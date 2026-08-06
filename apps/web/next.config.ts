@@ -1,9 +1,23 @@
 import path from 'node:path';
+import { config as loadDotenv } from 'dotenv';
 import type { NextConfig } from 'next';
 
 // The monorepo root. Next.js otherwise infers it by scanning upwards for lockfiles
 // and can select a directory outside the repository on some developer machines.
 const workspaceRoot = path.join(__dirname, '..', '..');
+
+// Next.js reads `.env` from the application's own directory, not from the
+// repository root — so the one environment inventory the rest of DevSync shares
+// (`.env.example` at the root, copied to `.env`) would be invisible here without
+// this. `apps/api` loads the same file through `@nestjs/config`, and the database
+// and end-to-end tooling through `dotenv`; this makes the web build the fourth
+// reader of it rather than inventing a second file to keep in step.
+//
+// dotenv never overwrites a value already in the environment, so Compose, CI, and
+// the end-to-end runner keep control of their own configuration. `NEXT_PUBLIC_*`
+// values are read while the client bundle is compiled, which is why this has to
+// happen here, in the configuration Next.js loads first, rather than at runtime.
+loadDotenv({ path: path.join(workspaceRoot, '.env'), quiet: true });
 
 const nextConfig: NextConfig = {
   turbopack: {

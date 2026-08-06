@@ -10,3 +10,8 @@ allowBuilds:
   sharp: true
   # Native module resolver used by eslint-config-next.
   unrs-resolver: true
+  # The Prisma CLI and the schema engine binary `prisma migrate` runs. No query
+  # engine is downloaded: the client reaches PostgreSQL through the `pg` driver
+  # adapter, so none of this reaches the API runtime image.
+  prisma: true
+  '@prisma/engines': true

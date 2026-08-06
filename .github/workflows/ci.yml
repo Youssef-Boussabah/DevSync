@@ -1,8 +1,9 @@
 # Continuous integration for DevSync.
 #
-# Three independent jobs, each proving a different thing and each running the same
-# commands a developer runs locally. Nothing here is CI-only: if a job fails, the
-# way to reproduce it is to run the step's command on your own machine.
+# Four independent jobs — quality, database, e2e, docker — each proving a different
+# thing and each running the same commands a developer runs locally. Nothing here
+# is CI-only: if a job fails, the way to reproduce it is to run the step's command
+# on your own machine.
 #
 # The jobs deliberately do not depend on one another. Sharing a build between them
 # would make the end-to-end and Docker jobs prove less than they appear to — each
@@ -34,6 +35,20 @@ env:
   NODE_VERSION: '24'
   # Corepack otherwise asks for confirmation before downloading the pinned pnpm.
   COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+  # Published on 5433 to match `compose.yaml`, so this URL is character-for-
+  # character the one in `.env.example` and nothing has to be translated between
+  # a local run and a CI run.
+  TEST_DATABASE_URL: postgresql://devsync:devsync@127.0.0.1:5433/devsync_test
+  # Runners have no `.env`, and `apps/web` refuses to build without knowing where
+  # its API is. This is the development value from `.env.example`; the `e2e` job
+  # does not use it, because `pnpm test:e2e` sets the port that suite builds for.
+  NEXT_PUBLIC_API_URL: http://127.0.0.1:3001
+
+# The PostgreSQL image is deliberately NOT a variable here. A service container's
+# `image:` cannot read the `env` context, so a variable would have to be repeated
+# at each use anyway — and one that looked authoritative while being ignored would
+# be worse than the literal. It is pinned to the same tag as `compose.yaml`, and
+# the two are changed together.
 
 jobs:
   quality:
@@ -41,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
 
       # Before setup-node, because its pnpm cache resolves the store by running
       # `pnpm store path` — which needs the Corepack shim to already exist.
@@ -49,7 +64,7 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -76,17 +91,75 @@ jobs:
       - name: Build
         run: pnpm build
 
-  e2e:
-    name: End-to-end
+  database:
+    name: Database
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # A disposable PostgreSQL for this job alone. `POSTGRES_DB` creates the test
+    # database directly, so the job needs none of Compose's initialisation.
+    # `DATABASE_URL` is deliberately unset: nothing here should be able to reach
+    # a database that is not this one.
+    services:
+      postgres:
+        image: postgres:18.3-alpine3.23
+        env:
+          POSTGRES_USER: devsync
+          POSTGRES_PASSWORD: devsync
+          POSTGRES_DB: devsync_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready --username=devsync --dbname=devsync_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
 
       - name: Enable Corepack
         run: corepack enable
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The same command a developer runs. It drops the test schema, applies the
+      # committed migration, and only then runs the suite — and it refuses to
+      # start at all against a database it cannot prove is disposable.
+      - name: Run database integration tests
+        run: pnpm test:db
+
+  e2e:
+    name: End-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # From C1 the API refuses to start without a database, so the suite that
+    # starts the real API needs one. Same image, same port, same URL as above.
+    services:
+      postgres:
+        image: postgres:18.3-alpine3.23
+        env:
+          POSTGRES_USER: devsync
+          POSTGRES_PASSWORD: devsync
+          POSTGRES_DB: devsync_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready --username=devsync --dbname=devsync_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -124,10 +197,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
 
-      # No Node or pnpm setup in this job: both images install and build everything
-      # they need internally, which is the property being tested.
+      # Node and pnpm are here only to *drive* Docker: `pnpm test:restart` is a
+      # plain Node script with no dependencies of its own, and it runs no build.
+      # Both images still install and build everything they need internally, which
+      # is the property the steps below test — nothing about it is weakened by the
+      # host having a Node on PATH. There is deliberately no `pnpm install` and no
+      # store cache, because the restart runner needs neither.
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - name: Validate the Compose file
         run: docker compose config --quiet
 
@@ -136,9 +220,25 @@ jobs:
 
       # `--wait` blocks until every service reports healthy and exits non-zero if one
       # does not, so the health checks declared in compose.yaml are the gate rather
-      # than a fixed sleep.
+      # than a fixed sleep. The API cannot become healthy until PostgreSQL is
+      # healthy and the migration service has exited successfully, which is what
+      # its `depends_on` conditions say.
       - name: Start services and wait for health
-        run: docker compose up --detach --wait --wait-timeout 180
+        run: docker compose up --detach --wait --wait-timeout 240
+
+      - name: Verify PostgreSQL is healthy
+        run: |
+          status="$(docker inspect --format '{{.State.Health.Status}}' devsync-database-1)"
+          echo "database: $status"
+          [ "$status" = "healthy" ]
+
+      # A one-shot service: what matters is that it finished, and finished well.
+      - name: Verify the migration applied cleanly
+        run: |
+          docker compose logs migrate --no-color
+          code="$(docker inspect --format '{{.State.ExitCode}}' devsync-migrate-1)"
+          echo "migrate exit code: $code"
+          [ "$code" = "0" ]
 
       - name: Verify the web application responds
         run: |
@@ -154,13 +254,108 @@ jobs:
           echo "$body"
           [ "$body" = '{"status":"ok","service":"devsync-api"}' ]
 
-      # Before the cleanup step below, so the containers still exist to be read from.
+      # A read-only reach through the whole stack: the route exists, the API is
+      # talking to PostgreSQL, and the migration created a table it can list. It
+      # writes nothing, so the job leaves no data behind to clean up.
+      - name: Verify the project route reaches the database
+        run: |
+          status="$(curl --silent --show-error --max-time 10 --output /tmp/projects.json --write-out '%{http_code}' http://127.0.0.1:3001/projects)"
+          echo "HTTP $status"
+          cat /tmp/projects.json
+          [ "$status" = "200" ]
+          grep -q '^\[' /tmp/projects.json
+
+      # C3's cross-origin boundary, proved through the real stack without a
+      # browser: the configured origin is allowed and any other gets no
+      # allow-origin header to work with. Read-only, like the step above.
+      - name: Verify CORS allows the web origin and no other
+        run: |
+          # **The header NAME is matched case-insensitively; only its VALUE is
+          # compared.** HTTP header names are case-insensitive and a server may
+          # capitalise them however it likes — Express sends
+          # `Access-Control-Allow-Origin`. Comparing the whole header line is what
+          # failed the first run of this job: `grep -i` matched the line and printed
+          # it with its original capitalisation, which the shell then compared, case
+          # sensitively, against a lower-cased literal. The API was right and the
+          # assertion was wrong. `tolower()` is POSIX awk, so this needs no gawk.
+          headers_for() {
+            curl --silent --show-error --max-time 10 --dump-header - --output /dev/null \
+              -H "Origin: $1" http://127.0.0.1:3001/projects | tr -d '\r'
+          }
+
+          allow_origin_value() {
+            printf '%s\n' "$1" | awk -F: '
+              tolower($1) == "access-control-allow-origin" {
+                sub(/^[^:]*:[ \t]*/, "")
+                print
+                exit
+              }'
+          }
+
+          allow_origin_count() {
+            printf '%s\n' "$1" | awk -F: '
+              tolower($1) == "access-control-allow-origin" { found++ }
+              END { print found + 0 }'
+          }
+
+          allowed_headers="$(headers_for 'http://127.0.0.1:3000')"
+          other_headers="$(headers_for 'http://evil.example')"
+
+          # Both requests must have been answered at all. Without this, a curl that
+          # never reached the API would return no headers and the "no allow-origin
+          # header" assertion below would pass for the wrong reason.
+          printf '%s\n' "$allowed_headers" | grep -q '^HTTP/'
+          printf '%s\n' "$other_headers" | grep -q '^HTTP/'
+
+          allowed_origin="$(allow_origin_value "$allowed_headers")"
+          echo "allowed origin: ${allowed_origin:-<none>}"
+          [ "$allowed_origin" = "http://127.0.0.1:3000" ]
+
+          other_count="$(allow_origin_count "$other_headers")"
+          echo "allow-origin headers for another origin: $other_count"
+          [ "$other_count" = "0" ]
+
+      # The browser half of the same configuration: the API origin is embedded in
+      # what the web image serves, and nothing about the database is.
+      - name: Verify the web image carries the API URL and no database configuration
+        run: |
+          docker compose exec -T web sh -c \
+            "grep -rlF 'http://127.0.0.1:3001' /repo/apps/web/.next/static >/dev/null"
+          ! docker compose exec -T web sh -c \
+            "grep -rqE 'postgres(ql)?://|DATABASE_URL' /repo/apps/web/.next"
+
+      # C4. The same command a developer runs, and the only place in CI where a
+      # record is written, a process is restarted, and a database is taken away
+      # underneath it.
+      #
+      # It runs in its own Compose project — `devsync-c4-validation`, on ports
+      # 4320, 4321, and 5434 — so it cannot see, stop, or delete anything
+      # belonging to the `devsync` stack this job has running above it, and it
+      # brings that project up and tears it down itself. It builds the `api` and
+      # `migrate` images again under its own project name; every layer is already
+      # in the BuildKit cache from the step above, so what that costs is a re-tag
+      # rather than a rebuild. It prints its own container states and redacted
+      # logs when it fails.
+      - name: Run the C4 restart validation
+        run: pnpm test:restart
+
+      # Before the cleanup steps below, so the containers still exist to be read from.
       - name: Show container status and logs
         if: failure()
         run: |
           docker compose ps --all
           docker compose logs --no-color
 
+      # `--volumes` here and nowhere else. A runner is disposable by definition,
+      # so dropping the database volume with it is right; the same flag on a
+      # developer's machine deletes their projects.
       - name: Stop and remove containers
         if: always()
         run: docker compose down --volumes --remove-orphans
+
+      # Belt and braces for the validation project only, named explicitly, in case
+      # the runner above was killed before its own cleanup ran. It cannot reach the
+      # `devsync` project: a Compose command is scoped to the project it names.
+      - name: Remove the C4 validation project
+        if: always()
+        run: docker compose --project-name devsync-c4-validation down --volumes --remove-orphans

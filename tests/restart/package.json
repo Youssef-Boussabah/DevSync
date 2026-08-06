@@ -1,0 +1,22 @@
+{
+  "name": "@devsync/restart",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Docker-level restart, outage, and migration-redeploy validation for the DevSync stack.",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "clean": "node -e \"['coverage','.turbo','tsconfig.tsbuildinfo'].forEach((p) => require('fs').rmSync(p, { recursive: true, force: true }))\""
+  },
+  "devDependencies": {
+    "@devsync/config": "workspace:*",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.39.5",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -24,9 +24,19 @@ RUN corepack enable
 WORKDIR /repo
 
 # --- Dependencies -------------------------------------------------------------
-# Manifests only, so this layer survives every source change. All of them are
-# copied because pnpm resolves the whole workspace graph before it can honour a
-# filter, and a missing manifest fails the install rather than being ignored.
+# Manifests only, so this layer survives every source change.
+#
+# All of them are copied, deliberately: pnpm reads the whole workspace graph before
+# it applies a filter, so the install should see the same graph the repository has.
+#
+# **A manifest missing for a workspace nothing here depends on does not necessarily
+# fail the install.** C5 found `tests/restart` absent from this list and the frozen
+# install resolving 10 of the repository's 11 workspace projects without a word
+# about it. The omission is therefore silent, and the rule has to be kept by hand:
+# **a new workspace must be added here and to `apps/api/Dockerfile`.**
+#
+# Copying a manifest installs nothing from that workspace — the `--filter` below is
+# what decides that.
 FROM base AS deps
 COPY pnpm-lock.yaml pnpm-workspace.yaml .npmrc package.json ./
 COPY apps/api/package.json apps/api/
@@ -38,18 +48,38 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/test-utils/package.json packages/test-utils/
 COPY packages/ui/package.json packages/ui/
 COPY tests/e2e/package.json tests/e2e/
+COPY tests/restart/package.json tests/restart/
 # `--filter @devsync/web...` installs the web application and its dependencies and
 # nothing else: no NestJS, no Jest, no Playwright. That is also why no browser is
-# ever downloaded into an application image.
+# ever downloaded into an application image. From C3 it also installs
+# `@devsync/shared`, which `apps/web` now imports the request and response
+# contracts from.
 RUN pnpm install --frozen-lockfile --filter @devsync/web...
 
 # --- Build --------------------------------------------------------------------
 FROM deps AS builder
-# `@devsync/config` owns the TypeScript configuration `apps/web` extends, so the
-# build needs its files and not merely its manifest.
+
+# Where the browser will reach the API. **Embedded into the JavaScript this build
+# emits**, so it is a build argument rather than a runtime variable: an image built
+# for one API origin cannot be pointed at another by restarting it with a different
+# environment. Compose passes the value; there is no default, because a wrong
+# default would produce an image that looks fine and cannot save anything.
+#
+# It must be an address the **user's browser** can resolve. A Compose service name
+# such as `http://api:3001` resolves only inside the Compose network, and the
+# browser is not in it.
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+# `@devsync/config` owns the TypeScript configuration both workspaces extend, so
+# the build needs its files and not merely its manifest. `packages/shared` is
+# built first: `apps/web` resolves it through its `exports` map to `dist`, which
+# does not exist until its own build has run.
 COPY packages/config packages/config
+COPY packages/shared packages/shared
 COPY apps/web apps/web
-RUN pnpm --filter @devsync/web build
+RUN pnpm --filter @devsync/shared build \
+  && pnpm --filter @devsync/web build
 
 # --- Runtime ------------------------------------------------------------------
 # A clean Node image. No pnpm, no Corepack cache, no sources, no dev
