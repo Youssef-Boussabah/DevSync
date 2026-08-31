@@ -2,7 +2,7 @@
 
 // Integration tests for the DevSync server. Every case runs against a real child
 // process speaking real HTTP and real Socket.IO; nothing outside this machine is
-// contacted, and code execution is pointed at a fake judge started here.
+// contacted, and code execution is pointed at a fake JDoodle started here.
 
 const assert = require("node:assert/strict");
 const http = require("node:http");
@@ -24,9 +24,33 @@ const SILENCE_WINDOW_MS = 500;
 const ROOM_EMPTY_GRACE_MS = 15 * 1000;
 const GRACE_MARGIN_MS = 2000;
 
-// Not a credential: the fake judge below is the only thing that ever sees it.
-const FAKE_JUDGE_KEY = "fake-judge-key-for-tests";
-const FAKE_JUDGE_HOST = "fake-judge.invalid";
+// Mirrors EXECUTION_TIMEOUT_MS in src/server.cjs, and is waited out the same way.
+const EXECUTION_TIMEOUT_MS = 15 * 1000;
+
+// Not credentials: the fake JDoodle below is the only thing that ever sees these.
+const FAKE_CLIENT_ID = "fake-client-id-for-tests";
+const FAKE_CLIENT_SECRET = "fake-client-secret-for-tests";
+
+// The mapping src/server.cjs owns. Duplicated here on purpose: the point of the test is
+// that the server, not the browser, decides which runtime a language name reaches.
+const EXPECTED_RUNTIMES = {
+  javascript: { language: "nodejs", versionIndex: "5" },
+  typescript: { language: "typescript", versionIndex: "1" },
+  python: { language: "python3", versionIndex: "6" },
+  cpp: { language: "cpp17", versionIndex: "3" },
+  java: { language: "java", versionIndex: "5" },
+};
+
+// Every field DevSync sends upstream, and nothing else — JDoodle takes no per-request
+// CPU or memory limit, so none is sent.
+const EXPECTED_REQUEST_FIELDS = [
+  "clientId",
+  "clientSecret",
+  "language",
+  "script",
+  "stdin",
+  "versionIndex",
+];
 
 const openSockets = new Set();
 let roomCounter = 0;
@@ -57,12 +81,12 @@ async function startServer(env = {}) {
       ...process.env,
       PORT: String(port),
       FRONTEND_URL: "http://localhost:3000",
-      // Blanked so a developer's own Judge0 settings can never leak into a test run.
-      // The address is unroutable, so a test that forgets to configure the fake judge
+      // Blanked so a developer's own JDoodle credentials can never leak into a test run.
+      // The address is unroutable, so a test that forgets to configure the fake upstream
       // fails locally rather than reaching a real service.
-      JUDGE0_API_KEY: "",
-      JUDGE0_API_HOST: FAKE_JUDGE_HOST,
-      JUDGE0_API_URL: "http://127.0.0.1:1",
+      JDOODLE_CLIENT_ID: "",
+      JDOODLE_CLIENT_SECRET: "",
+      JDOODLE_API_URL: "http://127.0.0.1:1/v1/execute",
       ...env,
     },
   });
@@ -198,20 +222,24 @@ async function postExecution(url, body, headers = {}) {
   };
 }
 
-function judgeAccepted(stdout) {
+// A clean JDoodle run, in the shape the real API answers with.
+function jdoodleRan(output) {
   return {
-    stdout: Buffer.from(stdout, "utf8").toString("base64"),
-    stderr: null,
-    compile_output: null,
-    message: null,
-    status: { id: 3, description: "Accepted" },
+    output,
+    statusCode: 200,
+    memory: "8968",
+    cpuTime: "0.02",
+    compilationStatus: null,
+    isCompiled: true,
+    isExecutionSuccess: true,
   };
 }
 
-// Stands in for Judge0 so the proxy can be exercised without a credential or a network.
-async function startFakeJudge() {
+// Stands in for JDoodle so the proxy can be exercised without credentials or a network.
+// A reply body given as a string is sent verbatim, which is how a non-JSON answer is faked.
+async function startFakeJDoodle() {
   const received = [];
-  let reply = () => ({ status: 200, body: judgeAccepted("") });
+  let reply = () => ({ status: 200, body: jdoodleRan("") });
 
   const server = http.createServer((req, res) => {
     let raw = "";
@@ -228,14 +256,16 @@ async function startFakeJudge() {
       });
       const { status, body } = reply(received.length);
       res.writeHead(status, { "content-type": "application/json" });
-      res.end(JSON.stringify(body));
+      res.end(typeof body === "string" ? body : JSON.stringify(body));
     });
   });
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 
   return {
-    url: `http://127.0.0.1:${server.address().port}`,
+    // The execute path is part of the address, so the server's own default endpoint is
+    // never involved and the path DevSync posts to is observable in `received`.
+    url: `http://127.0.0.1:${server.address().port}/v1/execute`,
     received,
     respondWith(next) {
       reply = next;
@@ -245,6 +275,30 @@ async function startFakeJudge() {
       await new Promise((resolve) => server.close(resolve));
     },
   };
+}
+
+// Accepts the request and never answers it, so DevSync's own abort is what ends the call.
+async function startSilentUpstream() {
+  const server = http.createServer(() => {});
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+  return {
+    url: `http://127.0.0.1:${server.address().port}/v1/execute`,
+    async stop() {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+// Starts a server wired to a fake JDoodle with credentials that exist only in this file.
+async function startServerWithFakeJDoodle(upstreamUrl, env = {}) {
+  return startServer({
+    JDOODLE_CLIENT_ID: FAKE_CLIENT_ID,
+    JDOODLE_CLIENT_SECRET: FAKE_CLIENT_SECRET,
+    JDOODLE_API_URL: upstreamUrl,
+    ...env,
+  });
 }
 
 describe("collaboration", () => {
@@ -441,60 +495,156 @@ describe("collaboration", () => {
   });
 });
 
+// Seven requests, against a limiter that allows ten a minute per client. Each execution
+// suite gets its own server process for that reason, and its own fresh counter with it.
 describe("code execution", () => {
-  let judge;
+  let jdoodle;
   let server;
 
   before(async () => {
-    judge = await startFakeJudge();
-    server = await startServer({
-      JUDGE0_API_KEY: FAKE_JUDGE_KEY,
-      JUDGE0_API_HOST: FAKE_JUDGE_HOST,
-      JUDGE0_API_URL: judge.url,
-    });
+    jdoodle = await startFakeJDoodle();
+    server = await startServerWithFakeJDoodle(jdoodle.url);
   }, { timeout: START_TIMEOUT_MS + 5000 });
 
   after(async () => {
     await server.stop();
-    await judge.stop();
+    await jdoodle.stop();
   });
 
-  it("runs UTF-8 source through the judge and returns its output", async () => {
+  it("posts UTF-8 source to the JDoodle execute endpoint and returns its output", async () => {
     const source = 'console.log("café 👋")';
-    judge.respondWith(() => ({ status: 200, body: judgeAccepted("café 👋\n") }));
+    jdoodle.respondWith(() => ({ status: 200, body: jdoodleRan("café 👋\n") }));
 
     const response = await postExecution(server.url, { sourceCode: source, language: "javascript" });
 
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, { output: "café 👋\n", error: "", status: "Success" });
 
-    const submission = judge.received.at(-1);
+    const submission = jdoodle.received.at(-1);
     assert.equal(submission.method, "POST");
-    assert.equal(submission.url, "/submissions?base64_encoded=true&wait=true");
-    assert.equal(submission.body.language_id, 102);
-    assert.equal(submission.body.cpu_time_limit, 5);
-    assert.equal(submission.body.memory_limit, 256000);
-    assert.equal(Buffer.from(submission.body.source_code, "base64").toString("utf8"), source);
+    assert.equal(submission.url, "/v1/execute");
+    // Source travels as plain text now, so a non-Latin-1 program has to arrive verbatim.
+    assert.equal(submission.body.script, source);
+    assert.equal(submission.body.stdin, "");
+    assert.deepEqual(Object.keys(submission.body).sort(), EXPECTED_REQUEST_FIELDS);
   });
 
-  it("sends the judge credential upstream and never back to the caller", async () => {
-    judge.respondWith(() => ({ status: 200, body: judgeAccepted("ok\n") }));
+  it("maps each offered language to the runtime the server chose for it", async () => {
+    jdoodle.respondWith(() => ({ status: 200, body: jdoodleRan("ok\n") }));
+
+    for (const [language, runtime] of Object.entries(EXPECTED_RUNTIMES)) {
+      const response = await postExecution(server.url, { sourceCode: "print", language });
+
+      assert.equal(response.status, 200, `${language} should have run`);
+      assert.deepEqual(
+        {
+          language: jdoodle.received.at(-1).body.language,
+          versionIndex: jdoodle.received.at(-1).body.versionIndex,
+        },
+        runtime,
+        `${language} should reach ${runtime.language} @ ${runtime.versionIndex}`,
+      );
+    }
+  });
+
+  it("sends the credentials upstream and never back to the caller", async () => {
+    jdoodle.respondWith(() => ({ status: 200, body: jdoodleRan("ok\n") }));
 
     const response = await postExecution(server.url, {
       sourceCode: "console.log('ok')",
       language: "javascript",
     });
 
-    const submission = judge.received.at(-1);
-    assert.equal(submission.headers["x-rapidapi-key"], FAKE_JUDGE_KEY);
-    assert.equal(submission.headers["x-rapidapi-host"], FAKE_JUDGE_HOST);
+    const submission = jdoodle.received.at(-1);
+    assert.equal(submission.body.clientId, FAKE_CLIENT_ID);
+    assert.equal(submission.body.clientSecret, FAKE_CLIENT_SECRET);
 
     const returned = JSON.stringify(response.headers) + JSON.stringify(response.body);
-    assert.ok(!returned.includes(FAKE_JUDGE_KEY), "the judge key must not reach the caller");
+    assert.ok(!returned.includes(FAKE_CLIENT_ID), "the client id must not reach the caller");
+    assert.ok(!returned.includes(FAKE_CLIENT_SECRET), "the client secret must not reach the caller");
+  });
+});
+
+describe("code that does not run cleanly", () => {
+  let jdoodle;
+  let server;
+
+  before(async () => {
+    jdoodle = await startFakeJDoodle();
+    server = await startServerWithFakeJDoodle(jdoodle.url);
+  }, { timeout: START_TIMEOUT_MS + 5000 });
+
+  after(async () => {
+    await server.stop();
+    await jdoodle.stop();
+  });
+
+  it("returns a compilation failure as a normal result carrying the compiler output", async () => {
+    const diagnostic = "jdoodle.cpp:3:5: error: 'coutt' was not declared in this scope\n";
+    jdoodle.respondWith(() => ({
+      status: 200,
+      body: {
+        output: diagnostic,
+        statusCode: 200,
+        memory: null,
+        cpuTime: null,
+        compilationStatus: "Compilation failed",
+        isCompiled: false,
+        isExecutionSuccess: false,
+      },
+    }));
+
+    const response = await postExecution(server.url, {
+      sourceCode: "int main() { coutt << 1; }",
+      language: "cpp",
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      output: "",
+      error: diagnostic,
+      status: "Compilation Error",
+    });
+  });
+
+  it("returns a failing run as a normal result rather than an infrastructure error", async () => {
+    const traceback = "Traceback (most recent call last):\nNameError: name 'nope' is not defined\n";
+    jdoodle.respondWith(() => ({
+      status: 200,
+      body: {
+        output: traceback,
+        statusCode: 200,
+        memory: "9000",
+        cpuTime: "0.03",
+        compilationStatus: null,
+        isCompiled: true,
+        isExecutionSuccess: false,
+      },
+    }));
+
+    const response = await postExecution(server.url, { sourceCode: "nope()", language: "python" });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { output: "", error: traceback, status: "Runtime Error" });
+  });
+});
+
+describe("execution requests DevSync refuses on its own", () => {
+  let jdoodle;
+  let server;
+
+  before(async () => {
+    jdoodle = await startFakeJDoodle();
+    server = await startServerWithFakeJDoodle(jdoodle.url);
+  }, { timeout: START_TIMEOUT_MS + 5000 });
+
+  after(async () => {
+    await server.stop();
+    await jdoodle.stop();
   });
 
   it("rejects a language it does not know", async () => {
-    const before = judge.received.length;
+    const before = jdoodle.received.length;
 
     const response = await postExecution(server.url, {
       sourceCode: "fn main() {}",
@@ -503,7 +653,26 @@ describe("code execution", () => {
 
     assert.equal(response.status, 400);
     assert.deepEqual(response.body, { error: "Unsupported language." });
-    assert.equal(judge.received.length, before);
+    assert.equal(jdoodle.received.length, before);
+  });
+
+  it("rejects a malformed request", async () => {
+    const before = jdoodle.received.length;
+
+    const wrongTypes = await postExecution(server.url, { sourceCode: 42, language: "javascript" });
+    assert.equal(wrongTypes.status, 400);
+    assert.deepEqual(wrongTypes.body, { error: "Invalid execution request." });
+
+    // Not JSON at all: the parser turns this away before the route ever runs.
+    const unparseable = await fetch(`${server.url}/api/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{ this is not json",
+    });
+    assert.equal(unparseable.status, 400);
+    assert.deepEqual(await unparseable.json(), { error: "Invalid execution request." });
+
+    assert.equal(jdoodle.received.length, before);
   });
 
   it("rejects source above the UTF-8 byte limit", async () => {
@@ -511,66 +680,152 @@ describe("code execution", () => {
     // counted as the bytes the limit is actually written in.
     const source = "é".repeat(33 * 1024);
     assert.ok(source.length < 64 * 1024 && Buffer.byteLength(source, "utf8") > 64 * 1024);
-    const before = judge.received.length;
+    const before = jdoodle.received.length;
 
     const response = await postExecution(server.url, { sourceCode: source, language: "javascript" });
 
     assert.equal(response.status, 413);
     assert.deepEqual(response.body, { error: "Code is too large to run." });
-    assert.equal(judge.received.length, before);
+    assert.equal(jdoodle.received.length, before);
+  });
+});
+
+describe("when JDoodle refuses or misbehaves", () => {
+  let jdoodle;
+  let server;
+
+  before(async () => {
+    jdoodle = await startFakeJDoodle();
+    server = await startServerWithFakeJDoodle(jdoodle.url);
+  }, { timeout: START_TIMEOUT_MS + 5000 });
+
+  after(async () => {
+    await server.stop();
+    await jdoodle.stop();
   });
 
-  it("returns a failing run as a normal result rather than an infrastructure error", async () => {
-    judge.respondWith(() => ({
-      status: 200,
-      body: {
-        stdout: null,
-        stderr: Buffer.from("ReferenceError: nope is not defined\n").toString("base64"),
-        compile_output: null,
-        message: null,
-        status: { id: 11, description: "Runtime Error (NZEC)" },
-      },
+  const run = () =>
+    postExecution(server.url, { sourceCode: "console.log(1)", language: "javascript" });
+
+  it("hides a rejected credential behind a safe infrastructure failure", async () => {
+    jdoodle.respondWith(() => ({
+      status: 401,
+      body: { error: "Invalid Client ID", statusCode: 401 },
     }));
 
-    const response = await postExecution(server.url, {
-      sourceCode: "nope()",
-      language: "javascript",
-    });
+    const response = await run();
 
-    assert.equal(response.status, 200);
-    assert.deepEqual(response.body, {
-      output: "",
-      error: "ReferenceError: nope is not defined\n",
-      status: "Runtime Error (NZEC)",
-    });
+    assert.equal(response.status, 502);
+    assert.deepEqual(response.body, { error: "Execution service is unavailable. Try again." });
+    const returned = JSON.stringify(response.headers) + JSON.stringify(response.body);
+    assert.ok(!returned.includes("Invalid Client ID"), "the upstream payload must not be echoed");
   });
 
-  it("answers with a safe message when the judge itself fails", async () => {
-    judge.respondWith(() => ({ status: 503, body: { message: "judge unavailable" } }));
+  it("reports a spent daily allowance plainly, and does not retry it", async () => {
+    jdoodle.respondWith(() => ({
+      status: 429,
+      body: { error: "Daily limit reached", statusCode: 429 },
+    }));
+    const before = jdoodle.received.length;
 
-    const response = await postExecution(server.url, {
-      sourceCode: "console.log(1)",
-      language: "javascript",
+    const response = await run();
+
+    assert.equal(response.status, 429);
+    assert.deepEqual(response.body, {
+      error: "Daily code-execution limit reached. Try again tomorrow.",
     });
+    assert.equal(jdoodle.received.length, before + 1, "a 429 must cost exactly one credit");
+  });
+
+  it("answers with a safe message when JDoodle itself fails", async () => {
+    jdoodle.respondWith(() => ({ status: 500, body: { error: "Server Error", statusCode: 500 } }));
+
+    const response = await run();
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(response.body, { error: "Execution service is unavailable. Try again." });
+  });
+
+  it("answers with a safe message when the upstream body is not JSON", async () => {
+    jdoodle.respondWith(() => ({ status: 200, body: "<html>gateway</html>" }));
+
+    const response = await run();
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(response.body, { error: "Execution service is unavailable. Try again." });
+  });
+
+  it("answers with a safe message when the upstream shape is unrecognisable", async () => {
+    jdoodle.respondWith(() => ({ status: 200, body: { statusCode: 200, isExecutionSuccess: true } }));
+
+    const response = await run();
 
     assert.equal(response.status, 502);
     assert.deepEqual(response.body, { error: "Execution service is unavailable. Try again." });
   });
 });
 
-describe("code execution without a configured judge", () => {
+// Waits out the real 15-second production timeout rather than shortening it for CI, the
+// same way the empty-room grace window is tested.
+describe("an upstream that never answers", () => {
+  let upstream;
   let server;
+  let response;
+  let elapsedMs;
+
+  before(async () => {
+    upstream = await startSilentUpstream();
+    server = await startServerWithFakeJDoodle(upstream.url);
+
+    const startedAt = Date.now();
+    response = await postExecution(server.url, {
+      sourceCode: "while (true) {}",
+      language: "javascript",
+    });
+    elapsedMs = Date.now() - startedAt;
+  }, { timeout: START_TIMEOUT_MS + EXECUTION_TIMEOUT_MS + 15000 });
+
+  after(async () => {
+    await server.stop();
+    await upstream.stop();
+  });
+
+  it("gives up after DevSync's own timeout and says so", () => {
+    assert.equal(response.status, 504);
+    assert.deepEqual(response.body, { error: "Execution service timed out. Try again." });
+    assert.ok(
+      elapsedMs >= EXECUTION_TIMEOUT_MS - 1000,
+      `gave up after ${elapsedMs} ms, before the ${EXECUTION_TIMEOUT_MS} ms timeout`,
+    );
+  });
+});
+
+describe("code execution without configured credentials", () => {
+  let server;
+  let halfConfigured;
 
   before(async () => {
     server = await startServer();
+    halfConfigured = await startServer({ JDOODLE_CLIENT_ID: FAKE_CLIENT_ID });
   }, { timeout: START_TIMEOUT_MS + 5000 });
 
   after(async () => {
     await server.stop();
+    await halfConfigured.stop();
   });
 
   it("reports the feature as unavailable instead of failing open", async () => {
     const response = await postExecution(server.url, {
+      sourceCode: "console.log(1)",
+      language: "javascript",
+    });
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(response.body, { error: "Code execution is unavailable." });
+  });
+
+  it("stays unavailable when only half the credential is set", async () => {
+    const response = await postExecution(halfConfigured.url, {
       sourceCode: "console.log(1)",
       language: "javascript",
     });
@@ -583,20 +838,16 @@ describe("code execution without a configured judge", () => {
 // Its own server process: the limiter counts per minute, so no other execution test may
 // share this counter.
 describe("the execution rate limit", () => {
-  let judge;
+  let jdoodle;
   let server;
   let statuses;
   let spoofed;
   let submissionsReceived;
 
   before(async () => {
-    judge = await startFakeJudge();
-    server = await startServer({
-      JUDGE0_API_KEY: FAKE_JUDGE_KEY,
-      JUDGE0_API_HOST: FAKE_JUDGE_HOST,
-      JUDGE0_API_URL: judge.url,
-    });
-    judge.respondWith(() => ({ status: 200, body: judgeAccepted("ok\n") }));
+    jdoodle = await startFakeJDoodle();
+    server = await startServerWithFakeJDoodle(jdoodle.url);
+    jdoodle.respondWith(() => ({ status: 200, body: jdoodleRan("ok\n") }));
 
     const run = (headers) =>
       postExecution(server.url, { sourceCode: "console.log(1)", language: "javascript" }, headers);
@@ -606,19 +857,19 @@ describe("the execution rate limit", () => {
 
     // This server is not on Render, so the header below is just something a caller sent.
     spoofed = await run({ "CF-Connecting-IP": "203.0.113.55" });
-    submissionsReceived = judge.received.length;
+    submissionsReceived = jdoodle.received.length;
   }, { timeout: START_TIMEOUT_MS + 15000 });
 
   after(async () => {
     await server.stop();
-    await judge.stop();
+    await jdoodle.stop();
   });
 
   it("lets ten runs through and turns the eleventh away", () => {
     assert.deepEqual(statuses, [200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 429]);
   });
 
-  it("never reaches the judge for a run it turned away", () => {
+  it("never reaches JDoodle for a run it turned away", () => {
     assert.equal(submissionsReceived, 10);
   });
 
@@ -634,21 +885,16 @@ describe("the execution rate limit behind the Render edge", () => {
   const FIRST_CLIENT = "203.0.113.10";
   const SECOND_CLIENT = "198.51.100.20";
 
-  let judge;
+  let jdoodle;
   let server;
   let firstClientStatuses;
   let secondClientStatus;
   let submissionsReceived;
 
   before(async () => {
-    judge = await startFakeJudge();
-    server = await startServer({
-      RENDER: "true",
-      JUDGE0_API_KEY: FAKE_JUDGE_KEY,
-      JUDGE0_API_HOST: FAKE_JUDGE_HOST,
-      JUDGE0_API_URL: judge.url,
-    });
-    judge.respondWith(() => ({ status: 200, body: judgeAccepted("ok\n") }));
+    jdoodle = await startFakeJDoodle();
+    server = await startServerWithFakeJDoodle(jdoodle.url, { RENDER: "true" });
+    jdoodle.respondWith(() => ({ status: 200, body: jdoodleRan("ok\n") }));
 
     const runAs = (client) =>
       postExecution(
@@ -665,12 +911,12 @@ describe("the execution rate limit behind the Render edge", () => {
     // Same socket, same edge, different client. Every request in this suite arrives from
     // 127.0.0.1, so a limiter keyed on the connection alone would have exhausted this too.
     secondClientStatus = (await runAs(SECOND_CLIENT)).status;
-    submissionsReceived = judge.received.length;
+    submissionsReceived = jdoodle.received.length;
   }, { timeout: START_TIMEOUT_MS + 15000 });
 
   after(async () => {
     await server.stop();
-    await judge.stop();
+    await jdoodle.stop();
   });
 
   it("stops one Render client's eleventh run", () => {
@@ -681,7 +927,7 @@ describe("the execution rate limit behind the Render edge", () => {
     assert.equal(secondClientStatus, 200);
   });
 
-  it("forwards every allowed run to the judge and no rejected one", () => {
+  it("forwards every allowed run to JDoodle and no rejected one", () => {
     assert.equal(submissionsReceived, 11);
   });
 });

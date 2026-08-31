@@ -55,22 +55,23 @@ Set in the Render dashboard, not in the blueprint:
 | Variable | Purpose |
 | -------- | ------- |
 | `FRONTEND_URL` | The exact Vercel production origin. The only origin CORS and Socket.IO accept. |
-| `JUDGE0_API_KEY` | The Judge0 (RapidAPI) credential. Server-side only. |
+| `JDOODLE_CLIENT_ID` | The JDoodle Compiler API Client ID. Server-side only. |
+| `JDOODLE_CLIENT_SECRET` | The matching Client Secret. Server-side only. |
 
-Declared in the blueprint with their defaults:
+Declared in the blueprint with its fixed value:
 
 | Variable | Purpose |
 | -------- | ------- |
-| `JUDGE0_API_HOST` | Judge0 host header. Defaults to the RapidAPI Judge0 CE host. |
-| `JUDGE0_API_URL` | Judge0 endpoint. Defaults to the RapidAPI Judge0 CE URL. |
+| `JDOODLE_API_URL` | The JDoodle execute endpoint, `https://api.jdoodle.com/v1/execute`. Not a secret. |
 
-`FRONTEND_URL` and `JUDGE0_API_KEY` are marked `sync: false`, so the blueprint carries
-the names and Render prompts for both values when the blueprint is first created. No
-credential is in the repository — both `.env.example` files are templates, and real
-`.env` files are ignored.
+`FRONTEND_URL`, `JDOODLE_CLIENT_ID` and `JDOODLE_CLIENT_SECRET` are marked `sync: false`,
+so the blueprint carries the names and Render prompts for all three values when the
+blueprint is first created. No credential is in the repository — both `.env.example`
+files are templates, and real `.env` files are ignored.
 
-`JUDGE0_API_KEY` must never be given a `NEXT_PUBLIC_` name or copied into the Vercel
-environment. See [execution.md](execution.md).
+Both JDoodle credentials are required: with either missing, `/api/execute` answers 503
+and the rest of DevSync works normally. Neither may ever be given a `NEXT_PUBLIC_` name
+or copied into the Vercel environment. See [execution.md](execution.md).
 
 ## Order of deployment
 
@@ -78,10 +79,11 @@ The backend allows exactly one origin, and the frontend needs the backend's addr
 Neither URL exists before its service is created, so the two have to be introduced to
 each other in order:
 
-1. **Create the Render blueprint.** Because both are `sync: false`, Render prompts for
-   two values during creation:
-   - `JUDGE0_API_KEY` — the real Judge0 (RapidAPI) key, typed into Render directly. It
-     is never written into the repository or into any file.
+1. **Create the Render blueprint.** Because all three are `sync: false`, Render prompts
+   for three values during creation:
+   - `JDOODLE_CLIENT_ID` and `JDOODLE_CLIENT_SECRET` — the real JDoodle Compiler API
+     credentials, typed into Render directly. Neither is ever written into the repository
+     or into any file.
    - `FRONTEND_URL` — a temporary `http://localhost:3000`. The Vercel origin does not
      exist yet, and this placeholder lets the service start and pass its health check.
 2. **Deploy the backend** and note the Render service's actual public URL.
@@ -110,7 +112,7 @@ not a list, not a pattern, not `*`.
 `credentials: true` and a wildcard origin are mutually exclusive in the CORS spec
 anyway, but the deeper reason is that this backend is a credentialed proxy in front of a
 metered third-party API. A permissive origin would let any page on the internet spend
-the Judge0 quota through it.
+the JDoodle quota through it — and on the free plan that is 20 API credits a day.
 
 ### Vercel preview deployments will not work
 

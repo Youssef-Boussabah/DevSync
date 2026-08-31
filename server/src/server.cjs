@@ -19,26 +19,26 @@ const MAX_CODE_BYTES = 1024 * 1024; // 1 MiB of UTF-8, not characters
 // survive a refresh or a brief network drop; short enough that DevSync stays ephemeral.
 const ROOM_EMPTY_GRACE_MS = 15 * 1000;
 
-// Code execution is proxied here so the Judge0 credential stays on the server and
-// never reaches the browser. Everything below is the server side of that boundary.
+// Code execution is proxied here so the JDoodle credentials stay on the server and
+// never reach the browser. Everything below is the server side of that boundary.
 const MAX_EXECUTION_CODE_BYTES = 64 * 1024;
 const EXECUTION_WINDOW_MS = 60 * 1000;
 const EXECUTION_MAX_REQUESTS = 10;
-const JUDGE0_TIMEOUT_MS = 15 * 1000;
+const EXECUTION_TIMEOUT_MS = 15 * 1000;
 
-// The browser sends a language name; the Judge0 ids live only on the server.
+// The browser sends a language name; the JDoodle runtime and the version index behind it
+// live only on the server, so no caller can ask for a runtime DevSync does not offer.
 const EXECUTION_LANGUAGES = {
-  javascript: 102,
-  typescript: 101,
-  python: 109,
-  cpp: 105,
-  java: 91
+  javascript: { language: "nodejs", versionIndex: "5" },     // Node.js 20.9.0
+  typescript: { language: "typescript", versionIndex: "1" }, // TypeScript 5.9.3
+  python: { language: "python3", versionIndex: "6" },        // Python 3.14.3
+  cpp: { language: "cpp17", versionIndex: "3" },             // C++17, GCC 15.2.1
+  java: { language: "java", versionIndex: "5" }              // JDK 21.0.0
 };
 
-const JUDGE0_API_KEY = process.env.JUDGE0_API_KEY;
-const JUDGE0_API_HOST = process.env.JUDGE0_API_HOST || "judge0-ce.p.rapidapi.com";
-const JUDGE0_API_URL = process.env.JUDGE0_API_URL || "https://judge0-ce.p.rapidapi.com";
-const JUDGE0_SUBMISSION_URL = `${JUDGE0_API_URL.replace(/\/+$/, "")}/submissions?base64_encoded=true&wait=true`;
+const JDOODLE_CLIENT_ID = process.env.JDOODLE_CLIENT_ID;
+const JDOODLE_CLIENT_SECRET = process.env.JDOODLE_CLIENT_SECRET;
+const JDOODLE_API_URL = process.env.JDOODLE_API_URL || "https://api.jdoodle.com/v1/execute";
 
 const app = express();
 app.use(cors(corsOptions));
@@ -83,12 +83,6 @@ const executionLimiter = rateLimit({
   message: { error: "Too many runs. Try again in a minute." }
 });
 
-// Judge0 returns its text fields base64-encoded, and any of them may be null.
-function decodeBase64(value) {
-  if (typeof value !== "string" || value === "") return "";
-  return Buffer.from(value, "base64").toString("utf8");
-}
-
 // The body parser is mounted on this route only, so Socket.IO's traffic is untouched
 // and a rate-limited caller is turned away before its body is read.
 app.post("/api/execute", executionLimiter, express.json({ limit: "256kb" }), async (req, res) => {
@@ -110,70 +104,84 @@ app.post("/api/execute", executionLimiter, express.json({ limit: "256kb" }), asy
     return res.status(413).json({ error: "Code is too large to run." });
   }
 
-  if (!JUDGE0_API_KEY) {
-    console.warn("Rejected execution: JUDGE0_API_KEY is not configured");
+  // Both halves of the credential are needed and neither has a usable default, so a
+  // half-configured server stays safely unavailable rather than calling upstream.
+  if (!JDOODLE_CLIENT_ID || !JDOODLE_CLIENT_SECRET) {
+    console.warn("Rejected execution: the JDoodle credentials are not configured");
     return res.status(503).json({ error: "Code execution is unavailable." });
   }
 
+  const runtime = EXECUTION_LANGUAGES[language];
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), JUDGE0_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), EXECUTION_TIMEOUT_MS);
 
   let result;
   try {
-    const upstream = await fetch(JUDGE0_SUBMISSION_URL, {
+    // JDoodle authenticates in the body rather than in a header, and takes the source as
+    // plain UTF-8 text — no base64 hop, and no per-request CPU or memory limits to send.
+    const upstream = await fetch(JDOODLE_API_URL, {
       method: "POST",
-      headers: {
-        "x-rapidapi-key": JUDGE0_API_KEY,
-        "x-rapidapi-host": JUDGE0_API_HOST,
-        "content-type": "application/json"
-      },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        // Buffer encodes the full UTF-8 string; the browser's btoa threw on anything non-Latin-1.
-        source_code: Buffer.from(sourceCode, "utf8").toString("base64"),
-        language_id: EXECUTION_LANGUAGES[language],
+        clientId: JDOODLE_CLIENT_ID,
+        clientSecret: JDOODLE_CLIENT_SECRET,
+        script: sourceCode,
         stdin: "",
-        expected_output: null,
-        cpu_time_limit: 5,
-        memory_limit: 256000,
-        compiler_options: ""
+        language: runtime.language,
+        versionIndex: runtime.versionIndex
       }),
       signal: controller.signal
     });
 
+    // A spent daily allowance is the one upstream refusal worth naming: it is not a fault
+    // and waiting will not clear it today, so it is reported plainly and never retried —
+    // a retry would only spend another credit against the same exhausted quota.
+    if (upstream.status === 429) {
+      console.warn("JDoodle refused the run: the daily credit allowance is spent");
+      return res.status(429).json({ error: "Daily code-execution limit reached. Try again tomorrow." });
+    }
+
+    // Everything else — a rejected credential included — is infrastructure as far as the
+    // caller is concerned, and the answer says nothing about which of the two it was.
     if (!upstream.ok) {
-      console.warn(`Judge0 request failed with status ${upstream.status}`);
+      console.warn(`JDoodle request failed with status ${upstream.status}`);
       return res.status(502).json({ error: "Execution service is unavailable. Try again." });
     }
 
     result = await upstream.json();
   } catch (error) {
     if (error.name === "AbortError") {
-      console.warn(`Judge0 request timed out after ${JUDGE0_TIMEOUT_MS} ms`);
+      console.warn(`JDoodle request timed out after ${EXECUTION_TIMEOUT_MS} ms`);
       return res.status(504).json({ error: "Execution service timed out. Try again." });
     }
-    console.warn("Judge0 request failed before a usable response arrived");
+    // Also the landing place for a 200 whose body is not JSON: upstream.json() rejects.
+    console.warn("JDoodle request failed before a usable response arrived");
     return res.status(502).json({ error: "Execution service is unavailable. Try again." });
   } finally {
     clearTimeout(timeout);
   }
 
-  if (!result || typeof result.status !== "object" || result.status === null) {
-    console.warn("Judge0 returned an unrecognised response shape");
+  if (!result || typeof result !== "object" || typeof result.output !== "string") {
+    console.warn("JDoodle returned an unrecognised response shape");
     return res.status(502).json({ error: "Execution service is unavailable. Try again." });
   }
 
-  // Judge0 status 3 is "Accepted". Every other status is the submitted code failing, not
-  // an infrastructure problem, so it comes back as a normal result carrying a diagnostic.
-  if (result.status.id === 3) {
-    return res.json({ output: decodeBase64(result.stdout), error: "", status: "Success" });
+  // JDoodle folds compiler diagnostics and program output into the one `output` field;
+  // the two booleans are what say which kind of result arrived. Neither a compile error
+  // nor a failed run is an infrastructure problem, so both come back as a normal 200
+  // carrying the diagnostic, and only a flag that is explicitly false counts as failure.
+  if (result.isCompiled === false) {
+    const compilation = typeof result.compilationStatus === "string" ? result.compilationStatus : "";
+    const diagnostic = [result.output, compilation].find((text) => text.trim() !== "");
+    return res.json({ output: "", error: diagnostic || "Compilation failed.", status: "Compilation Error" });
   }
 
-  const description = typeof result.status.description === "string" ? result.status.description : "Error";
-  const diagnostic = [result.stderr, result.compile_output, result.message]
-    .map(decodeBase64)
-    .find((text) => text.trim() !== "");
+  if (result.isExecutionSuccess === false) {
+    const diagnostic = result.output.trim() !== "" ? result.output : "The program did not finish successfully.";
+    return res.json({ output: "", error: diagnostic, status: "Runtime Error" });
+  }
 
-  return res.json({ output: "", error: diagnostic || description, status: description });
+  return res.json({ output: result.output, error: "", status: "Success" });
 });
 
 // express.json rejects oversized or malformed bodies before the route runs; answer those

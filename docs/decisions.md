@@ -29,8 +29,8 @@ in-memory room state. Next.js API routes and Vercel's platform are serverless an
 request-scoped: instances are ephemeral and there is no shared memory between them.
 Rooms as this product defines them cannot live there.
 
-**The execution proxy needs a trusted process.** Something has to hold the Judge0
-credential and not be the browser. A backend that already exists for the socket is the
+**The execution proxy needs a trusted process.** Something has to hold the JDoodle
+credentials and not be the browser. A backend that already exists for the socket is the
 natural place for it.
 
 The cost is two deploy targets and a CORS boundary between them.
@@ -171,34 +171,60 @@ For an ephemeral turn-taking editor, the added complexity buys a guarantee the p
 does not currently promise. The right time to adopt it is when simultaneous editing
 becomes a requirement, and at that point it should be designed for, not retrofitted.
 
-## Judge0 is proxied through the backend
+## The execution provider is proxied through the backend
 
-The browser could call Judge0 directly. It must not.
+The browser could call the execution provider directly. It must not.
 
-Judge0 via RapidAPI is authenticated with a key and metered. A key in the browser is a
-key anyone can read from the bundle and spend — and in a Next.js app, anything the
-client can read is public by definition. Proxying is the only way to keep a metered
-third-party credential private while still letting a browser trigger runs.
+The JDoodle Compiler API is authenticated with a Client ID and Client Secret and is
+metered. A credential in the browser is a credential anyone can read from the bundle and
+spend — and in a Next.js app, anything the client can read is public by definition.
+Proxying is the only way to keep a metered third-party credential private while still
+letting a browser trigger runs.
 
 Proxying also puts DevSync in control of the submission: the browser sends a language
-*name*, and the server owns the mapping to a runtime id, the CPU and memory limits, and
-the timeout. A client cannot request a runtime the product does not offer or ask for
-looser limits.
+*name*, and the server owns the mapping to a runtime and version index, the size limit,
+the rate limit and the timeout. A client cannot request a runtime the product does not
+offer, pin a version index of its own, or ask for looser limits.
 
 The cost is a hop and a service that must be up for execution to work. Collaboration is
-unaffected: with no key configured, `/api/execute` answers 503 and everything else keeps
-working.
+unaffected: with no credentials configured, `/api/execute` answers 503 and everything
+else keeps working.
+
+## JDoodle rather than Judge0 on RapidAPI
+
+DevSync originally proxied Judge0 CE through RapidAPI. That listing became pay-per-use,
+and DevSync is meant to cost nothing to run and to show.
+
+JDoodle's free Compiler API plan gives 20 API credits a day at no cost, covers all five
+languages the editor offers, and answers a single POST with the finished result — no
+token to poll for. The trade is a much smaller daily allowance and the loss of Judge0's
+per-request `cpu_time_limit` and `memory_limit`: JDoodle's execute call accepts neither,
+so DevSync no longer states any CPU or memory guarantee for a run. What it still owns is
+the source-size cap, the per-client rate limit and the 15-second upstream timeout.
+
+The switch cost one backend module, its tests, and the documentation naming the vendor.
+Nothing in the frontend changed: it posts to `POST /api/execute` and reads
+`{ output, error, status }`, exactly as before. That the migration was invisible to the
+browser is the proxy earning its keep.
 
 ## Execution is rate- and size-limited
 
 The proxy spends a metered quota on behalf of anonymous callers, which is exactly the
 shape of thing that gets abused.
 
-- **10 requests per minute per client** bounds the quota one caller can burn.
+- **10 requests per minute per client** bounds how much of the daily quota one caller can
+  burn — and with only 20 credits a day, that matters more than it did on a metered plan.
 - **64 KiB of UTF-8** bounds the payload, checked in bytes because that is the unit the
   limit is written in.
-- **5 seconds CPU, 256000 KB (~256 MB) of memory, 15-second upstream timeout** bound a single run, so a
-  deliberate infinite loop costs a known amount and returns a normal diagnostic.
+- **A 15-second upstream timeout** bounds how long a single run may hold a connection, so
+  a deliberate infinite loop returns a normal diagnostic rather than hanging the request.
+
+DevSync sends JDoodle no per-request CPU or memory limit, because the execute call does
+not accept one. Whatever ceilings the sandbox applies are JDoodle's, and this project
+does not claim them as its own.
+
+When the day's 20 credits are gone JDoodle answers 429 and DevSync says so plainly rather
+than retrying — a retry would spend another credit against the same exhausted quota.
 
 The limiter is mounted on the execution route alone — the health check, room joins and
 document sync are never throttled — and runs before the body parser, so a throttled

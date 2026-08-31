@@ -6,7 +6,7 @@ export type ExecutionResult = {
 
 const FALLBACK_ERROR = "Execution service is unavailable. Try again."
 
-// Execution goes through the DevSync server, which holds the Judge0 credential and maps
+// Execution goes through the DevSync server, which holds the JDoodle credentials and maps
 // the language name to a runtime. The browser never talks to the execution vendor.
 export async function executeCode(sourceCode: string, language: string): Promise<ExecutionResult> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL

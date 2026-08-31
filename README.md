@@ -18,8 +18,8 @@ edit together, run the code, and download the shared source.
   refresh or a brief network drop does not discard anyone's work.
 - **Code execution.** JavaScript, TypeScript, Python, C++ and Java run through the backend,
   with stdout and errors shown in an output panel.
-- **A server-side execution proxy.** The Judge0 credential lives on the backend; the
-  browser never sees it.
+- **A server-side execution proxy.** The JDoodle credentials live on the backend; the
+  browser never sees them.
 - **Execution limits.** 10 runs per minute per client and a 64 KiB source limit.
 - **Language-aware download.** Download the current shared source as the conventional file
   type for the selected language.
@@ -33,11 +33,11 @@ edit together, run the code, and download the shared source.
 flowchart TD
     browser["Browser — Next.js frontend"]
     server["Express + Socket.IO backend"]
-    judge["Judge0 (RapidAPI)"]
+    provider["JDoodle Compiler API"]
 
     browser -->|"Socket.IO: rooms, document sync, presence"| server
     browser -->|"HTTP: POST /api/execute"| server
-    server -->|"server-side credential"| judge
+    server -->|"server-side credentials"| provider
 ```
 
 | Path      | Responsibility                                                                                                    |
@@ -46,8 +46,8 @@ flowchart TD
 | `server/` | Express + Socket.IO backend: room membership, document relay, the empty-room grace timer, and the execution proxy.  |
 
 The frontend never talks to the execution vendor. It opens one Socket.IO connection for
-collaboration and posts to `/api/execute` for runs; the backend holds the Judge0 key, maps
-the language name to a runtime, and returns only the result.
+collaboration and posts to `/api/execute` for runs; the backend holds the JDoodle
+credentials, maps the language name to a runtime, and returns only the result.
 
 Rooms live in the backend's process memory and are ephemeral. There is no database: a
 restart drops every active room. Full detail in
@@ -62,7 +62,7 @@ The deeper documentation lives in [`docs/`](docs/README.md):
 | [architecture.md](docs/architecture.md) | System shape, responsibility boundary, room state, single-instance rationale. |
 | [collaboration.md](docs/collaboration.md) | Rooms, identity, join/leave, document events, typing, reconnect, the grace window. |
 | [execution.md](docs/execution.md) | The run path, the proxy, every limit, error semantics, download. |
-| [testing.md](docs/testing.md) | What all 63 tests assert, and what CI runs. |
+| [testing.md](docs/testing.md) | What all 72 tests assert, and what CI runs. |
 | [deployment.md](docs/deployment.md) | Vercel + Render, environment variables, CORS, cold starts, scaling. |
 | [decisions.md](docs/decisions.md) | Why the design is what it is, and what each choice cost. |
 
@@ -76,7 +76,8 @@ with Prism for highlighting, Socket.IO client.
 **Testing** — Vitest and Testing Library for the frontend, Node's built-in `node:test`
 runner for the backend integration suite, GitHub Actions for CI.
 
-**Execution** — Judge0 via RapidAPI, reached only through the backend proxy.
+**Execution** — the JDoodle Compiler API, reached only through the backend proxy. The
+free plan allows 20 API credits per day.
 
 ## Project structure
 
@@ -96,9 +97,9 @@ devsync-v1/
 ## Prerequisites
 
 - Node.js 24 and npm.
-- A Judge0 (RapidAPI) key, **only** if you want code execution to work. Collaboration —
-  rooms, editing, presence, download — works without one; `/api/execute` simply answers
-  that execution is unavailable.
+- A JDoodle Compiler API Client ID and Client Secret, **only** if you want code execution
+  to work. Collaboration — rooms, editing, presence, download — works without them;
+  `/api/execute` simply answers that execution is unavailable.
 - No database.
 
 ## Local setup
@@ -143,17 +144,18 @@ This one is public by design: `NEXT_PUBLIC_` values are compiled into the browse
 
 **`server/` — `.env`**
 
-| Variable           | Purpose                                                                             |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| `FRONTEND_URL`     | The single origin allowed by CORS and Socket.IO. Defaults to `http://localhost:3000`. |
-| `PORT`             | Port the server listens on. Defaults to `5000`.                                       |
-| `JUDGE0_API_KEY`   | **Secret. Server-side only.** Judge0 (RapidAPI) key for `POST /api/execute`. Leave it empty to run DevSync without code execution. |
-| `JUDGE0_API_HOST`  | Judge0 host header. Defaults to `judge0-ce.p.rapidapi.com`.                            |
-| `JUDGE0_API_URL`   | Judge0 endpoint. Defaults to `https://judge0-ce.p.rapidapi.com`.                       |
+| Variable                  | Purpose                                                                             |
+| ------------------------- | ----------------------------------------------------------------------------------- |
+| `FRONTEND_URL`            | The single origin allowed by CORS and Socket.IO. Defaults to `http://localhost:3000`. |
+| `PORT`                    | Port the server listens on. Defaults to `5000`.                                       |
+| `JDOODLE_CLIENT_ID`       | **Secret. Server-side only.** JDoodle Compiler API Client ID for `POST /api/execute`.  |
+| `JDOODLE_CLIENT_SECRET`   | **Secret. Server-side only.** The matching Client Secret. Both are required; leave either empty to run DevSync without code execution. |
+| `JDOODLE_API_URL`         | JDoodle execute endpoint. Not a secret. Defaults to `https://api.jdoodle.com/v1/execute`. |
 
-`JUDGE0_API_KEY` must never be given a `NEXT_PUBLIC_` name or copied into the frontend
-environment. It belongs to the server process alone. Real values are never committed —
-both `.env.example` files are templates, and the real `.env` files are ignored by Git.
+Neither JDoodle credential may ever be given a `NEXT_PUBLIC_` name or copied into the
+frontend environment. They belong to the server process alone. Real values are never
+committed — both `.env.example` files are templates, and the real `.env` files are
+ignored by Git.
 
 ## Development commands
 
@@ -178,7 +180,7 @@ both `.env.example` files are templates, and the real `.env` files are ignored b
 
 ## Testing
 
-63 automated tests: 39 on the frontend and 24 on the backend.
+72 automated tests: 39 on the frontend and 33 on the backend.
 
 ```
 cd web && npm test
@@ -187,8 +189,8 @@ cd server && npm test
 
 The frontend suite runs under Vitest in jsdom. The backend suite is integration-level: it
 starts the real server as a child process and talks to it over real HTTP and real
-Socket.IO, with execution tested against a fake Judge0 the tests start themselves, so it
-needs no credential and no network.
+Socket.IO, with execution tested against a fake JDoodle the tests start themselves, so it
+needs no credentials and no network.
 
 A GitHub Actions workflow runs both suites plus lint, typecheck, build, a syntax check and
 dependency audits on pushes and pull requests. Neither job needs a secret. The workflow has
@@ -201,8 +203,8 @@ Case-by-case detail in [docs/testing.md](docs/testing.md).
 
 The frontend deploys to Vercel (root directory `web`) and the backend to Render (root
 directory `server`, described by `render.yaml`). Two values are set in the Render dashboard
-rather than in the blueprint: `FRONTEND_URL`, the exact Vercel production origin, and
-`JUDGE0_API_KEY`.
+rather than in the blueprint: `FRONTEND_URL`, the exact Vercel production origin, and the
+two JDoodle credentials.
 
 Because the backend allows exactly one frontend origin, the two deployments have to be
 introduced to each other in order: deploy the backend first to obtain its URL, deploy the
@@ -226,8 +228,10 @@ These are the deliberate boundaries of this version, not defects.
 - The backend is intentionally a single instance. Room membership, the document, the
   cleanup timers and the rate-limiter counters all live in one process, so running several
   instances would need shared external infrastructure that this version does not have.
-- Code execution depends on Judge0 through RapidAPI. If that service is unavailable or no
-  key is configured, collaboration keeps working and runs report the failure.
+- Code execution depends on the JDoodle Compiler API. If that service is unavailable or
+  no credentials are configured, collaboration keeps working and runs report the failure.
+- The free JDoodle plan allows 20 API credits per day, and each run spends one. Once the
+  day's credits are gone, runs report that the daily limit is reached until the next day.
 - On Render's free tier an idle service spins down, and the next request or WebSocket
   connection wakes it. That first connection can take up to about a minute, during which
   the UI shows its connecting and reconnecting states.
@@ -238,8 +242,9 @@ The reasoning behind each is in [docs/decisions.md](docs/decisions.md).
 
 ## Security notes
 
-- The Judge0 credential stays in the backend's environment. The browser calls
-  `POST /api/execute` on the DevSync server and never contacts the execution vendor.
+- The JDoodle Client ID and Client Secret stay in the backend's environment and are sent
+  only in the upstream request body. The browser calls `POST /api/execute` on the DevSync
+  server and never contacts the execution vendor.
 - Execution source is capped at 64 KiB of UTF-8, and runs are limited to 10 per minute per
   client. Behind Render's edge the limiter identifies clients by the trusted
   `CF-Connecting-IP` header, and only there — nowhere else is a proxy header believed, and

@@ -62,7 +62,7 @@ jobs:
 
       # Integration tests: they start the server as a child process and talk to it over
       # real HTTP and Socket.IO. Nothing outside the runner is contacted, and code
-      # execution runs against a fake judge the tests start themselves.
+      # execution runs against a fake JDoodle the tests start themselves.
       - name: Test
         run: npm test
 

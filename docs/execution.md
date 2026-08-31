@@ -19,26 +19,29 @@ shows `Running…` and is disabled meanwhile.
 
 The toolbar offers exactly five:
 
-| Toolbar label | Value sent | Prism grammar | Judge0 runtime |
-| ------------- | ---------- | ------------- | -------------- |
-| JavaScript    | `javascript` | javascript  | 102 |
-| TypeScript    | `typescript` | typescript  | 101 |
-| Python        | `python`     | python      | 109 |
-| C++           | `cpp`        | cpp (and c) | 105 |
-| Java          | `java`       | java        | 91  |
+| Toolbar label | Value sent | Prism grammar | JDoodle runtime | `versionIndex` |
+| ------------- | ---------- | ------------- | --------------- | -------------- |
+| JavaScript    | `javascript` | javascript  | `nodejs` — Node.js 20.9.0    | `5` |
+| TypeScript    | `typescript` | typescript  | `typescript` — TypeScript 5.9.3 | `1` |
+| Python        | `python`     | python      | `python3` — Python 3.14.3    | `6` |
+| C++           | `cpp`        | cpp (and c) | `cpp17` — GCC 15.2.1         | `3` |
+| Java          | `java`       | java        | `java` — JDK 21.0.0          | `5` |
 
-The browser sends the **name**. The runtime ids live only in
+The browser sends the **name**. The JDoodle language code and version index live only in
 `EXECUTION_LANGUAGES` in `server/src/server.cjs`; a language the server does not
-recognise is rejected with 400 before anything is submitted upstream. Changing which
-runtimes DevSync uses is a server-side change, not a client one.
+recognise is rejected with 400 before anything is submitted upstream. A client cannot
+name a JDoodle runtime or pin a version index of its own — changing which runtimes
+DevSync uses is a server-side change, not a client one.
 
 ## The request path
 
 ```
-browser  ──POST /api/execute──▶  DevSync backend  ──POST /submissions──▶  Judge0 CE
-         { sourceCode,                             x-rapidapi-key           (RapidAPI)
-           language }                              x-rapidapi-host
-         ◀── { output, error, status } ──          base64 source
+browser  ──POST /api/execute──▶  DevSync backend  ──POST /v1/execute──▶  JDoodle
+         { sourceCode,                             { clientId,           Compiler API
+           language }                                clientSecret,
+         ◀── { output, error, status } ──            script, stdin,
+                                                     language,
+                                                     versionIndex }
 ```
 
 `executeCode` posts to `${NEXT_PUBLIC_BACKEND_URL}/api/execute`, stripping any trailing
@@ -46,31 +49,32 @@ slash from the configured URL so the path is never doubled. The body carries onl
 source and the language name — nothing else about the room, the participant, or the
 session.
 
-The backend submits to `/submissions?base64_encoded=true&wait=true`, so one request
-covers submit-and-collect rather than polling for a token.
+The backend posts once to `https://api.jdoodle.com/v1/execute` and gets the finished
+result back in that same response; there is no token to poll for. `JDOODLE_API_URL`
+overrides the endpoint, which is what lets the test suite point the proxy at a fake
+upstream.
 
-## Why the credential stays on the server
+## Why the credentials stay on the server
 
-`JUDGE0_API_KEY` is read from the backend's environment and sent as the `x-rapidapi-key`
-header on the upstream call. It is never returned to the caller, never logged, and never
-present in any response body.
+`JDOODLE_CLIENT_ID` and `JDOODLE_CLIENT_SECRET` are read from the backend's environment
+and sent in the upstream request **body**, which is where JDoodle expects them. Neither
+is returned to the caller, logged, or present in any response body — and the upstream
+payload is never forwarded verbatim, so an error JDoodle attributes to a bad credential
+reaches the browser as a generic infrastructure failure.
 
 Anything reaching the browser in a Next.js app is public: `NEXT_PUBLIC_` values are
 compiled into the bundle, and even a non-prefixed value would be visible if it were sent
-to the client. A RapidAPI key in the browser is a key anyone can read from the page and
-spend. Proxying the call is the only way to keep a metered third-party credential
-private while still letting a browser trigger runs.
+to the client. A JDoodle client secret in the browser is a credential anyone can read
+from the page and spend. Proxying the call is the only way to keep a metered
+third-party credential private while still letting a browser trigger runs.
 
-The frontend has no configuration for Judge0 at all. Its only execution-related setting
+The frontend has no configuration for JDoodle at all. Its only execution-related setting
 is the backend's address.
 
 ## UTF-8 handling
 
-Judge0 takes base64 source. The backend encodes with `Buffer.from(sourceCode, "utf8")`
-rather than the browser's `btoa`, which throws on anything outside Latin-1 — accented
-identifiers, non-Latin strings and emoji in source all survive. Judge0's `stdout`,
-`stderr`, `compile_output` and `message` come back base64-encoded and possibly null, and
-are decoded the same way, with a null or empty field treated as an empty string.
+JDoodle takes the source as plain text in `script`, so there is no base64 hop in either
+direction: accented identifiers, non-Latin strings and emoji travel as themselves.
 
 The size limit is measured the same way it is enforced: `Buffer.byteLength(source, "utf8")`,
 so the limit is in bytes, not characters. Source that fits under 64 K *characters* can
@@ -84,9 +88,13 @@ backend test suite checks.
 | Execution source | 64 KiB of UTF-8 | rejected with 413 before any upstream call |
 | Request body | 256 kb | `express.json` on this route only |
 | Rate limit | 10 requests / minute / client | `express-rate-limit`, this route only |
-| CPU time | 5 seconds | sent to Judge0 as `cpu_time_limit` |
-| Memory | 256000 KB (~256 MB) | sent to Judge0 as `memory_limit` |
 | Upstream timeout | 15 seconds | `AbortController` on the fetch |
+| Provider daily quota | 20 API credits / day | JDoodle's free Compiler API plan |
+
+Everything in that table except the last row is DevSync's own. DevSync sends JDoodle no
+per-request CPU or memory limit — the JDoodle execute call does not accept one — so the
+sandbox's own ceilings are whatever JDoodle applies, and this project makes no promise
+about them.
 
 The rate limiter and the body parser are mounted on `/api/execute` alone. The health
 check, room joins and document sync are never throttled, and Socket.IO's traffic is
@@ -99,21 +107,47 @@ backend is a single instance.
 Document sync has its own, separate ceiling: 1 MiB of UTF-8 per `codeChange`. The 64 KiB
 figure is about what may be *run*, not what may be *typed*.
 
+## The daily provider quota
+
+JDoodle's free Compiler API plan allows **20 API credits per day**, and every
+`/api/execute` call that reaches JDoodle spends one — including a run whose code fails
+to compile. When the day's credits are gone JDoodle answers **429**, and DevSync turns
+that into:
+
+```json
+{ "error": "Daily code-execution limit reached. Try again tomorrow." }
+```
+
+also as a 429. It is not retried: a retry would spend another credit against the same
+exhausted quota and fail the same way. Nothing is charged — the free plan refuses rather
+than bills — and DevSync's own 10-per-minute limiter stays in force independently, since
+one caller should not be able to burn the whole day's credits in a few seconds.
+
+Collaboration is unaffected. A spent quota makes runs temporarily unavailable until the
+next day; rooms, editing, presence and download keep working.
+
 ## User-code errors versus infrastructure errors
 
 This distinction drives the whole response shape.
 
-**The submitted code failing is a normal result.** Judge0 status `3` is "Accepted";
-every other status means the code did not run cleanly — a compile error, a runtime
-error, a timeout inside the sandbox. Those return **HTTP 200** with the diagnostic in
-`error`:
+**The submitted code failing is a normal result.** JDoodle folds compiler diagnostics
+and program output into one `output` field and reports the kind of result in two
+booleans: `isCompiled` and `isExecutionSuccess`. Either being `false` means the code did
+not run cleanly, and both return **HTTP 200** with the diagnostic in `error`:
 
 ```json
-{ "output": "", "error": "SyntaxError: ...", "status": "Compilation Error" }
+{ "output": "", "error": "jdoodle.cpp:3:5: error: ...", "status": "Compilation Error" }
 ```
 
-The diagnostic is the first non-empty of `stderr`, `compile_output` and `message`,
-falling back to the status description. A failed program is not a failed request.
+| Upstream | DevSync `status` | DevSync `error` |
+| -------- | ---------------- | --------------- |
+| `isCompiled: false` | `Compilation Error` | `output`, or `compilationStatus` if `output` is empty |
+| `isExecutionSuccess: false` | `Runtime Error` | `output` |
+| neither false | `Success` | empty; `output` carries the program's output |
+
+Only a flag that is explicitly `false` counts as a failure, so an interpreted language
+that omits `isCompiled` is not mistaken for a compile error. A failed program is not a
+failed request.
 
 **Infrastructure problems are HTTP failures**, each with a message written for the
 person who pressed Run:
@@ -122,22 +156,26 @@ person who pressed Run:
 | ------ | ---- |
 | 400 | malformed body, or a language the server does not know |
 | 413 | source over 64 KiB, or a body over the parser limit |
-| 429 | rate limit exceeded |
-| 502 | Judge0 returned a non-2xx, an unrecognisable shape, or the request failed |
-| 503 | `JUDGE0_API_KEY` is not configured |
-| 504 | Judge0 did not answer within 15 seconds |
+| 429 | DevSync's rate limit exceeded, **or** JDoodle's daily credit limit reached |
+| 502 | JDoodle returned a non-2xx (a rejected credential included), a body that is not JSON, an unrecognisable shape, or the request failed |
+| 503 | `JDOODLE_CLIENT_ID` or `JDOODLE_CLIENT_SECRET` is not configured |
+| 504 | JDoodle did not answer within 15 seconds |
+
+The two 429s are told apart by their message, not their status: "Too many runs. Try
+again in a minute." is DevSync's own limiter, "Daily code-execution limit reached. Try
+again tomorrow." is the provider quota.
 
 The client shows the server's message as-is rather than wrapping it, and falls back to a
 generic "Execution service is unavailable. Try again." when a failure carries no usable
 JSON, when the request never reaches the server at all, or when
 `NEXT_PUBLIC_BACKEND_URL` is not configured.
 
-### Running without a key
+### Running without credentials
 
-If `JUDGE0_API_KEY` is empty, `/api/execute` answers 503 and says execution is
-unavailable. It does not fail open and does not attempt an unauthenticated upstream
-call. Everything else — rooms, editing, presence, download — works normally, so DevSync
-is fully usable for collaboration without any credential.
+If either `JDOODLE_CLIENT_ID` or `JDOODLE_CLIENT_SECRET` is empty, `/api/execute` answers
+503 and says execution is unavailable. It does not fail open and does not attempt an
+unauthenticated upstream call. Everything else — rooms, editing, presence, download —
+works normally, so DevSync is fully usable for collaboration without any credential.
 
 ## Client identity behind Render's edge
 

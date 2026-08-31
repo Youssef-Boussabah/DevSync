@@ -33,14 +33,15 @@ one Socket.IO connection plus one HTTP endpoint.
                     │  GET  /             health check     │
                     └───────────────────┬──────────────────┘
                                         │
-                          x-rapidapi-key │ (server-held credential)
+                clientId + clientSecret │ (server-held, sent in the body)
                                         ▼
                     ┌──────────────────────────────────────┐
-                    │  Judge0 CE via RapidAPI              │
+                    │  JDoodle Compiler API                │
+                    │  POST api.jdoodle.com/v1/execute     │
                     └──────────────────────────────────────┘
 ```
 
-The browser never contacts Judge0. It knows one address — `NEXT_PUBLIC_BACKEND_URL` —
+The browser never contacts JDoodle. It knows one address — `NEXT_PUBLIC_BACKEND_URL` —
 and uses it for both the socket and the execution request.
 
 ## Responsibility boundary
@@ -63,8 +64,9 @@ and uses it for both the socket and the execution request.
 - The empty-room grace timer.
 - Authority over identity: a socket's room and display name are what the server
   recorded at join time, not what a later payload claims.
-- The execution proxy: holding the Judge0 credential, mapping a language name to a
-  runtime id, enforcing size and rate limits, and normalising the upstream answer.
+- The execution proxy: holding the JDoodle credentials, mapping a language name to a
+  runtime and version index, enforcing size and rate limits, and normalising the
+  upstream answer — including turning a spent daily quota into a plain message.
 - A `GET /` health check, used by Render.
 
 ## Room state
@@ -108,9 +110,9 @@ else. See [collaboration.md](collaboration.md).
 
 **Execution.** The Run button (or `Ctrl+Alt+N`) calls `executeCode`, which posts the
 editor's text and the selected language name to `POST /api/execute`. The backend checks
-the language, the size and the rate limit, base64-encodes the source, submits it to
-Judge0 with `wait=true`, and returns a normalised `{ output, error, status }`. See
-[execution.md](execution.md).
+the language, the size and the rate limit, posts the source to JDoodle's execute
+endpoint with the credentials in the body, and returns a normalised
+`{ output, error, status }`. See [execution.md](execution.md).
 
 ## Deployment topology
 

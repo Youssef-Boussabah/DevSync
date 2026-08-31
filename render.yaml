@@ -19,14 +19,17 @@ services:
       - key: FRONTEND_URL
         sync: false
 
-      # Judge0 credential. Server-side only, set in the dashboard, never committed.
-      - key: JUDGE0_API_KEY
+      # JDoodle Compiler API credentials. Server-side only, set in the dashboard, never
+      # committed. Both are required for code execution; without them /api/execute
+      # answers 503 and the rest of DevSync works normally.
+      - key: JDOODLE_CLIENT_ID
+        sync: false
+      - key: JDOODLE_CLIENT_SECRET
         sync: false
 
-      - key: JUDGE0_API_HOST
-        value: judge0-ce.p.rapidapi.com
-      - key: JUDGE0_API_URL
-        value: https://judge0-ce.p.rapidapi.com
+      # Not a secret: the public JDoodle execute endpoint.
+      - key: JDOODLE_API_URL
+        value: https://api.jdoodle.com/v1/execute
 
 # PORT is supplied by Render and read straight from the environment.
 # DevSync keeps room state in process memory, so this stays a single instance.
