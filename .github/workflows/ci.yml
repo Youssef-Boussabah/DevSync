@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      # Fails on new high or critical advisories. Lower-severity findings are reported by
+      # `npm audit` locally and reviewed there rather than blocking every build.
+      - name: Audit
+        run: npm audit --audit-level=high
+
+  server:
+    name: server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # Integration tests: they start the server as a child process and talk to it over
+      # real HTTP and Socket.IO. Nothing outside the runner is contacted, and code
+      # execution runs against a fake judge the tests start themselves.
+      - name: Test
+        run: npm test
+
+      - name: Syntax check
+        run: node --check src/server.cjs
+
+      - name: Audit
+        run: npm audit --audit-level=high

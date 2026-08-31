@@ -1,0 +1,25 @@
+{
+  "name": "devsync-v1-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DevSync v1 real-time collaboration server",
+  "main": "src/server.cjs",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.cjs",
+    "dev": "nodemon src/server.cjs",
+    "test": "node --test tests/server.test.cjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^4.22.2",
+    "express-rate-limit": "^8.7.0",
+    "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "socket.io-client": "^4.8.3"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  }
+}

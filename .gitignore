@@ -1,0 +1,33 @@
+# ---------------------------------------------
+# DevSync v1 — root ignores (web/ + server/)
+# ---------------------------------------------
+
+# Dependencies
+node_modules/
+
+# Build output / generated
+.next/
+out/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Deployment tooling
+.vercel/
+
+# Logs
+*.log
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
