@@ -195,7 +195,8 @@ frontend build needs no runtime environment.
 
 ### CI status
 
-The workflow has not run on GitHub yet — the repository has not been published. What is
-verified today is that the **same commands pass locally**: all 72 tests, lint, typecheck,
-build, the backend syntax check, and both audits at zero vulnerabilities. Hosted CI will
-be confirmed after the first push.
+The workflow runs on GitHub for every push and pull request, and its current status is on
+the [Actions tab](https://github.com/Youssef-Boussabah/DevSync/actions/workflows/ci.yml) —
+the badge at the top of the [root README](../README.md) reports the same thing. The same
+commands also pass locally: all 72 tests, lint, typecheck, build, the backend syntax check,
+and both audits at zero vulnerabilities.

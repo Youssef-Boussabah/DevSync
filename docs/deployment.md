@@ -1,12 +1,37 @@
 # Deployment
 
-The intended production model: the frontend on Vercel, the backend on Render, one
-instance of each.
+The frontend on Vercel, the backend on Render, one instance of each.
 
-Neither has been deployed yet, so this document describes the configuration the
-repository ships with rather than a running system. There are no URLs to quote.
+## Current production deployment
 
-## Frontend — Vercel
+DevSync is deployed and live. These are the running services:
+
+| Component | Platform | Plan | URL |
+| --------- | -------- | ---- | --- |
+| Frontend | Vercel | Hobby | <https://dev-sync-beryl.vercel.app> |
+| Backend | Render | Free | <https://devsync-server-3dko.onrender.com> |
+| Execution | JDoodle Compiler API | Free | — |
+
+Two public values wire the halves together:
+
+| Set on | Variable | Value |
+| ------ | -------- | ----- |
+| Vercel | `NEXT_PUBLIC_BACKEND_URL` | `https://devsync-server-3dko.onrender.com` |
+| Render | `FRONTEND_URL` | `https://dev-sync-beryl.vercel.app` |
+
+Both are public by nature. The first is compiled into the browser bundle — it is the
+Socket.IO endpoint and the execution endpoint, and the browser genuinely needs it. The
+second is the origin the backend names in its CORS headers, which any client can read.
+
+The JDoodle Client ID and Client Secret are set in the Render dashboard. They are not
+public, they are not in this repository, and they are never given a `NEXT_PUBLIC_` name.
+
+The rest of this document describes how to deploy another instance of DevSync, and the
+constraints that apply to any deployment of it.
+
+## Deploying another instance
+
+### Frontend — Vercel
 
 | Setting | Value |
 | ------- | ----- |
@@ -27,7 +52,7 @@ It is `NEXT_PUBLIC_` because the browser genuinely needs it — it is the Socket
 endpoint and the execution endpoint. It is compiled into the client bundle and is public
 by design. Nothing secret may be given a `NEXT_PUBLIC_` name.
 
-## Backend — Render
+### Backend — Render
 
 `render.yaml` at the repository root describes the service:
 
@@ -48,7 +73,7 @@ against.
 
 `PORT` is supplied by Render and read straight from the environment.
 
-### Environment variables
+#### Environment variables
 
 Set in the Render dashboard, not in the blueprint:
 
@@ -73,7 +98,7 @@ Both JDoodle credentials are required: with either missing, `/api/execute` answe
 and the rest of DevSync works normally. Neither may ever be given a `NEXT_PUBLIC_` name
 or copied into the Vercel environment. See [execution.md](execution.md).
 
-## Order of deployment
+### Order of deployment
 
 The backend allows exactly one origin, and the frontend needs the backend's address.
 Neither URL exists before its service is created, so the two have to be introduced to
@@ -127,7 +152,8 @@ can be exercised locally against a local backend.
 ## Free-tier cold starts
 
 Render's free tier spins a service down when idle. The next request or WebSocket
-connection wakes it, and that first connection can take up to about a minute.
+connection wakes it, and that first connection can take noticeably longer than a normal
+one.
 
 While it happens, the UI shows its connecting and reconnecting states — the same states
 used for a network drop, so the behaviour is already handled rather than being a special

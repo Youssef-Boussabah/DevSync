@@ -1,57 +1,132 @@
 # DevSync
 
-A lightweight real-time collaborative code editor. Create a room, share the invite link,
-edit together, run the code, and download the shared source.
+A lightweight real-time collaborative code editor. Create a room, share the link, edit
+together, run the code, and download the shared source — no account required.
+
+[![CI](https://github.com/Youssef-Boussabah/DevSync/actions/workflows/ci.yml/badge.svg)](https://github.com/Youssef-Boussabah/DevSync/actions/workflows/ci.yml)
+
+**Live demo:** <https://dev-sync-beryl.vercel.app> · **Repository:**
+<https://github.com/Youssef-Boussabah/DevSync>
+
+![The DevSync landing page](docs/images/devsync-home.png)
+
+Everyone in a room sees the same document as it is typed, along with who else is present
+and who is currently typing. A room is a URL: open it, pick a display name, and you are
+in. Nothing is saved anywhere — rooms live in the backend's memory and are meant to be
+temporary.
+
+The editor highlights JavaScript, TypeScript, Python, C++ and Java, and can run all five
+through a server-side execution proxy, showing program output and compiler diagnostics in
+an output panel. The current source can be downloaded as the conventional file type for
+the selected language.
+
+## Live demo
+
+<https://dev-sync-beryl.vercel.app>
+
+1. Click **Start a room** and enter a display name.
+2. Copy the room URL from the header and open it in a second browser or a private window —
+   or send it to someone else.
+3. Edit together. Every keystroke appears on the other side.
+4. Optionally pick a language and press **Run** to execute the shared code.
+
+The backend runs on Render's free tier, so the first request after a period of inactivity
+may take longer while the service wakes. The UI shows its connecting state meanwhile, and
+responds normally once the service is up.
+
+Code execution uses the JDoodle Compiler API's free plan, which provides 20 API credits per
+day for the whole demo, and each run spends one. If the day's credits are gone, runs report
+that the daily limit has been reached; collaboration is unaffected either way.
 
 ## Features
 
-- **Shareable rooms.** Every room is a `/room/<id>` link. Anyone who opens it picks a
-  display name and joins.
-- **Real-time editing.** The document is synchronised across everyone in the room as it is
-  typed.
-- **Presence and typing.** The participant list shows who is in the room and who is
-  currently typing.
-- **Distinct participants.** Two people may use the same display name and stay separate;
+**Real-time collaboration**
+
+- Shareable rooms. Every room is a `/room/<id>` link; anyone who opens it picks a display
+  name and joins.
+- A synchronised document, updated across everyone in the room as it is typed.
+- Participant presence in the room header.
+- Typing indicators, labelled with the name a participant joined under.
+- Distinct participants. Two people may use the same display name and stay separate;
   membership is keyed on the connection, not the name.
-- **Reconnect handling.** A dropped connection reconnects and rejoins its room on its own.
-- **A 15-second grace window.** An empty room keeps its document for 15 seconds, so a
-  refresh or a brief network drop does not discard anyone's work.
-- **Code execution.** JavaScript, TypeScript, Python, C++ and Java run through the backend,
-  with stdout and errors shown in an output panel.
-- **A server-side execution proxy.** The JDoodle credentials live on the backend; the
-  browser never sees them.
-- **Execution limits.** 10 runs per minute per client and a 64 KiB source limit.
-- **Language-aware download.** Download the current shared source as the conventional file
-  type for the selected language.
-- **Responsive UI.** The editor and the room controls work on a phone as well as a desktop.
-- **Automated tests and CI.** A test suite covering both halves of the project, wired to
-  GitHub Actions.
+- Reconnect recovery. A dropped connection reconnects and rejoins its room on its own.
+- A 15-second grace window. An empty room keeps its document for 15 seconds, so a refresh
+  or a brief network drop does not discard anyone's work.
+
+**Editor**
+
+- Syntax highlighting for all five supported languages.
+- Language selection, chosen per participant.
+- Language-aware download of the current shared source.
+- A responsive layout that works on a phone as well as a desktop.
+
+**Execution**
+
+- Five languages: JavaScript, TypeScript, Python, C++ and Java.
+- A server-side execution proxy — the browser never holds provider credentials.
+- Program output, compiler diagnostics and runtime errors in an output panel.
+- Per-client rate limiting and a source-size cap.
+
+**Infrastructure**
+
+- Frontend on Vercel, backend on Render, execution through the JDoodle Compiler API.
+- GitHub Actions CI on every push and pull request.
+
+![Two participants editing the same document in a DevSync room](docs/images/devsync-collaboration.png)
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    browser["Browser — Next.js frontend"]
-    server["Express + Socket.IO backend"]
+    browser["Browser"]
+    vercel["Vercel — Next.js frontend"]
+    render["Render — Express + Socket.IO backend"]
     provider["JDoodle Compiler API"]
 
-    browser -->|"Socket.IO: rooms, document sync, presence"| server
-    browser -->|"HTTP: POST /api/execute"| server
-    server -->|"server-side credentials"| provider
+    browser -->|"loads the app"| vercel
+    browser -->|"Socket.IO: rooms, document sync, presence"| render
+    browser -->|"HTTP: POST /api/execute"| render
+    render -->|"server-side credentials"| provider
 ```
 
-| Path      | Responsibility                                                                                                    |
-| --------- | ----------------------------------------------------------------------------------------------------------------- |
+Vercel serves the frontend as static assets and does not proxy anything: once the app is
+loaded, the browser talks to the Render backend directly, over one Socket.IO connection for
+collaboration and over HTTP for runs. The backend is the only place that contacts the
+execution vendor.
+
+| Path      | Responsibility                                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------------------------ |
 | `web/`    | Next.js App Router frontend: landing page, room gate, editor workspace, output panel, download.                     |
 | `server/` | Express + Socket.IO backend: room membership, document relay, the empty-room grace timer, and the execution proxy.  |
 
-The frontend never talks to the execution vendor. It opens one Socket.IO connection for
-collaboration and posts to `/api/execute` for runs; the backend holds the JDoodle
-credentials, maps the language name to a runtime, and returns only the result.
-
-Rooms live in the backend's process memory and are ephemeral. There is no database: a
-restart drops every active room. Full detail in
+Room state — the roster, the document, and the cleanup timers — lives in the backend's
+process memory. There is no database and nothing is written to disk, so rooms are
+intentionally ephemeral and a restart drops every one of them. For the same reason the
+backend runs as a **single instance**: all of that state is in one process. Full detail in
 [docs/architecture.md](docs/architecture.md).
+
+## Code execution
+
+Runs are proxied. The browser posts the editor's text and the selected language name to the
+DevSync backend, which holds the credentials, maps the language to a runtime, and returns
+only the finished result. The browser never contacts the execution vendor and never
+receives a credential.
+
+| Aspect | Value |
+| ------ | ----- |
+| Provider | JDoodle Compiler API |
+| Languages | JavaScript, TypeScript, Python, C++, Java |
+| Credentials | Server-side only, never given a `NEXT_PUBLIC_` name |
+| Source limit | 64 KiB of UTF-8 |
+| Rate limit | 10 runs per minute per client IP |
+| Upstream timeout | 15 seconds |
+| Free plan quota | 20 API credits per day |
+
+A compilation error or a failed run is the program's result, not an infrastructure failure:
+both come back as a normal response carrying the diagnostic, and the output panel shows it.
+Full detail in [docs/execution.md](docs/execution.md).
+
+![The output panel showing the result of a run](docs/images/devsync-execution.png)
 
 ## Documentation
 
@@ -63,7 +138,7 @@ The deeper documentation lives in [`docs/`](docs/README.md):
 | [collaboration.md](docs/collaboration.md) | Rooms, identity, join/leave, document events, typing, reconnect, the grace window. |
 | [execution.md](docs/execution.md) | The run path, the proxy, every limit, error semantics, download. |
 | [testing.md](docs/testing.md) | What all 72 tests assert, and what CI runs. |
-| [deployment.md](docs/deployment.md) | Vercel + Render, environment variables, CORS, cold starts, scaling. |
+| [deployment.md](docs/deployment.md) | The live deployment, environment variables, CORS, cold starts, scaling. |
 | [decisions.md](docs/decisions.md) | Why the design is what it is, and what each choice cost. |
 
 ## Tech stack
@@ -76,8 +151,7 @@ with Prism for highlighting, Socket.IO client.
 **Testing** — Vitest and Testing Library for the frontend, Node's built-in `node:test`
 runner for the backend integration suite, GitHub Actions for CI.
 
-**Execution** — the JDoodle Compiler API, reached only through the backend proxy. The
-free plan allows 20 API credits per day.
+**Execution** — the JDoodle Compiler API, reached only through the backend proxy.
 
 ## Project structure
 
@@ -90,6 +164,7 @@ devsync-v1/
 │   ├── src/
 │   └── tests/
 ├── docs/                 Technical documentation
+│   └── images/           Screenshots used by this README
 ├── .github/workflows/    CI
 └── render.yaml           Backend deployment blueprint
 ```
@@ -189,36 +264,39 @@ cd server && npm test
 
 The frontend suite runs under Vitest in jsdom. The backend suite is integration-level: it
 starts the real server as a child process and talks to it over real HTTP and real
-Socket.IO, with execution tested against a fake JDoodle the tests start themselves, so it
-needs no credentials and no network.
+Socket.IO, with execution tested against a fake JDoodle the tests start themselves — so it
+needs no credentials, no network, and spends no production API credits.
 
-A GitHub Actions workflow runs both suites plus lint, typecheck, build, a syntax check and
-dependency audits on pushes and pull requests. Neither job needs a secret. The workflow has
-not run on GitHub yet — the repository has not been published — but the same commands pass
-locally, including both audits at zero vulnerabilities.
+CI runs on every push and pull request. The frontend job runs the tests, lint, typecheck, a
+production build and a dependency audit; the backend job runs the tests, a syntax check and
+a dependency audit. Neither job needs a secret.
 
 Case-by-case detail in [docs/testing.md](docs/testing.md).
 
 ## Deployment
 
-The frontend deploys to Vercel (root directory `web`) and the backend to Render (root
-directory `server`, described by `render.yaml`). Two values are set in the Render dashboard
-rather than in the blueprint: `FRONTEND_URL`, the exact Vercel production origin, and the
-two JDoodle credentials.
+DevSync is deployed and live.
 
-Because the backend allows exactly one frontend origin, the two deployments have to be
-introduced to each other in order: deploy the backend first to obtain its URL, deploy the
-frontend with `NEXT_PUBLIC_BACKEND_URL` pointing at it, then set `FRONTEND_URL` on Render
-and restart the backend.
+| Half | Platform | URL |
+| ---- | -------- | --- |
+| Frontend | Vercel (Hobby), root directory `web` | <https://dev-sync-beryl.vercel.app> |
+| Backend | Render (Free), root directory `server`, described by `render.yaml` | <https://devsync-server-3dko.onrender.com> |
+| Execution | JDoodle Compiler API (Free) | — |
 
-Neither half is deployed yet. Full procedure in
-[docs/deployment.md](docs/deployment.md).
+The two halves are wired to each other by exactly two public values:
+`NEXT_PUBLIC_BACKEND_URL` on Vercel points at the Render backend, and `FRONTEND_URL` on
+Render is the Vercel origin — the only origin CORS and Socket.IO accept. The JDoodle
+credentials are set in the Render dashboard and exist nowhere else.
+
+Deploying another instance, the order the two services have to be created in, and what
+horizontal scaling would require are in [docs/deployment.md](docs/deployment.md).
 
 ## Limitations
 
 These are the deliberate boundaries of this version, not defects.
 
 - Rooms are held in the backend's memory. A restart or a redeploy drops every active room.
+  There is no database and no persistence.
 - An empty room keeps its document for 15 seconds and is then discarded.
 - Synchronisation sends the whole document, last write wins. There is no CRDT and no
   operational transform, so two people typing in the same place at the same moment can
@@ -228,15 +306,15 @@ These are the deliberate boundaries of this version, not defects.
 - The backend is intentionally a single instance. Room membership, the document, the
   cleanup timers and the rate-limiter counters all live in one process, so running several
   instances would need shared external infrastructure that this version does not have.
-- Code execution depends on the JDoodle Compiler API. If that service is unavailable or
-  no credentials are configured, collaboration keeps working and runs report the failure.
+- Code execution depends on the JDoodle Compiler API. If that service is unavailable or no
+  credentials are configured, collaboration keeps working and runs report the failure.
 - The free JDoodle plan allows 20 API credits per day, and each run spends one. Once the
   day's credits are gone, runs report that the daily limit is reached until the next day.
 - On Render's free tier an idle service spins down, and the next request or WebSocket
-  connection wakes it. That first connection can take up to about a minute, during which
-  the UI shows its connecting and reconnecting states.
-- There are no accounts, no database, and no per-project file tree. A room is one shared
-  document.
+  connection wakes it. That first connection can take noticeably longer, during which the
+  UI shows its connecting and reconnecting states.
+- There are no accounts, no authentication, and no per-project file tree. A room is one
+  shared document.
 
 The reasoning behind each is in [docs/decisions.md](docs/decisions.md).
 

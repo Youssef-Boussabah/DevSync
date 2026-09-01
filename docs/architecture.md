@@ -118,5 +118,7 @@ endpoint with the credentials in the body, and returns a normalised
 
 The two halves deploy to different providers: the frontend to Vercel with root
 directory `web`, the backend to Render with root directory `server`. The backend allows
-exactly one CORS origin, so the two have to be introduced to each other in order. See
-[deployment.md](deployment.md).
+exactly one CORS origin, so the two have to be introduced to each other in order.
+
+Both are live: the frontend at <https://dev-sync-beryl.vercel.app> and the backend at
+<https://devsync-server-3dko.onrender.com>. See [deployment.md](deployment.md).
